@@ -1042,6 +1042,10 @@ public abstract class AbstractRegionMap
           } finally {
             if (done && result) {
               initialImagePutEntry(newRe);
+              if (owner instanceof BucketRegionQueue) {
+                BucketRegionQueue brq = (BucketRegionQueue) owner;
+                brq.addToEventQueue(key, done, event);
+              }
             }
             if (!done) {
               removeEntry(key, newRe, false);

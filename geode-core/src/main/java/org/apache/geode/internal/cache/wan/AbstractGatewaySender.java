@@ -1095,6 +1095,7 @@ public abstract class AbstractGatewaySender implements GatewaySender, Distributi
     }
 
     statistics.setQueueSize(0);
+    statistics.setSecondaryQueueSize(0);
     statistics.setTempQueueSize(0);
   }
 
@@ -1249,6 +1250,11 @@ public abstract class AbstractGatewaySender implements GatewaySender, Distributi
   public int getEventQueueSize() {
     AbstractGatewaySenderEventProcessor localProcessor = this.eventProcessor;
     return localProcessor == null ? 0 : localProcessor.eventQueueSize();
+  }
+
+  public int getEventSecondaryQueueSize() {
+    AbstractGatewaySenderEventProcessor localProcessor = this.eventProcessor;
+    return localProcessor == null ? 0 : localProcessor.eventSecondaryQueueSize();
   }
 
   public void setEnqueuedAllTempQueueEvents(boolean enqueuedAllTempQueueEvents) {

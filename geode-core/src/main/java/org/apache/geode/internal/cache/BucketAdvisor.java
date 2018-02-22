@@ -282,6 +282,8 @@ public class BucketAdvisor extends CacheDistributionAdvisor {
           if (this.getBucket() instanceof BucketRegionQueue) {
             BucketRegionQueue brq = (BucketRegionQueue) this.getBucket();
             brq.decQueueSize(brq.size());
+            // TODO should check if secondary stats exists
+            brq.incSecondaryQueueSize(brq.size());
           }
           sendProfileUpdate();
         }
@@ -1192,6 +1194,7 @@ public class BucketAdvisor extends CacheDistributionAdvisor {
           if (br instanceof BucketRegionQueue) { // Shouldn't it be AbstractBucketRegionQueue
             BucketRegionQueue brq = (BucketRegionQueue) br;
             brq.incQueueSize(brq.size());
+            brq.decSecondaryQueueSize(brq.size());
           }
           if (br != null && br instanceof BucketRegion) {
             ((BucketRegion) br).afterAcquiringPrimaryState();

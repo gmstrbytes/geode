@@ -52,8 +52,6 @@ public class AsyncEventQueueStatsJUnitTest extends MBeanStatsTestCase {
     sample();
 
     assertEquals(0, getEventQueueSize());
-
-
   }
 
   private int getEventQueueSize() {
