@@ -16,6 +16,7 @@
 package org.apache.geode.cache.lucene.internal;
 
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
 
 import org.apache.geode.CancelException;
 import org.apache.geode.cache.AttributesFactory;
@@ -25,6 +26,7 @@ import org.apache.geode.cache.PartitionAttributesFactory;
 import org.apache.geode.cache.PartitionResolver;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.RegionAttributes;
+import org.apache.geode.cache.RegionDestroyedException;
 import org.apache.geode.cache.RegionShortcut;
 import org.apache.geode.cache.execute.FunctionService;
 import org.apache.geode.cache.execute.ResultCollector;
@@ -36,10 +38,11 @@ import org.apache.geode.cache.lucene.internal.partition.BucketTargetingResolver;
 import org.apache.geode.cache.lucene.internal.repository.RepositoryManager;
 import org.apache.geode.cache.lucene.internal.repository.serializer.HeterogeneousLuceneSerializer;
 import org.apache.geode.cache.partition.PartitionListener;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.ReplyException;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
+import org.apache.geode.internal.cache.BucketRegion;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.PartitionedRegion;
 
@@ -49,26 +52,46 @@ public class LuceneIndexForPartitionedRegion extends LuceneIndexImpl {
 
   public static final String FILES_REGION_SUFFIX = ".files";
 
+  private final ExecutorService waitingThreadPoolFromDM;
+
   public LuceneIndexForPartitionedRegion(String indexName, String regionPath, InternalCache cache) {
     super(indexName, regionPath, cache);
+    this.waitingThreadPoolFromDM =
+        cache.getDistributionManager().getExecutors().getWaitingThreadPool();
 
     final String statsName = indexName + "-" + regionPath;
     this.fileSystemStats = new FileSystemStats(cache.getDistributedSystem(), statsName);
   }
 
+  @Override
   protected RepositoryManager createRepositoryManager(LuceneSerializer luceneSerializer) {
     LuceneSerializer mapper = luceneSerializer;
     if (mapper == null) {
       mapper = new HeterogeneousLuceneSerializer();
     }
     PartitionedRepositoryManager partitionedRepositoryManager =
-        new PartitionedRepositoryManager(this, mapper);
+        new PartitionedRepositoryManager(this, mapper, this.waitingThreadPoolFromDM);
     return partitionedRepositoryManager;
   }
 
+  @Override
+  public boolean isIndexingInProgress() {
+    PartitionedRegion userRegion = (PartitionedRegion) cache.getRegion(this.getRegionPath());
+    Set<Integer> fileRegionPrimaryBucketIds =
+        this.getFileAndChunkRegion().getDataStore().getAllLocalPrimaryBucketIds();
+    for (Integer bucketId : fileRegionPrimaryBucketIds) {
+      BucketRegion userBucket = userRegion.getDataStore().getLocalBucketById(bucketId);
+      if (!userBucket.isEmpty() && !this.isIndexAvailable(bucketId)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  @Override
   protected void createLuceneListenersAndFileChunkRegions(
-      AbstractPartitionedRepositoryManager partitionedRepositoryManager) {
-    partitionedRepositoryManager.setUserRegionForRepositoryManager();
+      PartitionedRepositoryManager partitionedRepositoryManager) {
+    partitionedRepositoryManager.setUserRegionForRepositoryManager((PartitionedRegion) dataRegion);
     RegionShortcut regionShortCut;
     final boolean withPersistence = withPersistence();
     RegionAttributes regionAttributes = dataRegion.getAttributes();
@@ -90,13 +113,13 @@ public class LuceneIndexForPartitionedRegion extends LuceneIndexImpl {
     // create PR fileAndChunkRegion, but not to create its buckets for now
     final String fileRegionName = createFileRegionName();
     PartitionAttributes partitionAttributes = dataRegion.getPartitionAttributes();
-    DM dm = this.cache.getInternalDistributedSystem().getDistributionManager();
+    DistributionManager dm = this.cache.getInternalDistributedSystem().getDistributionManager();
     LuceneBucketListener lucenePrimaryBucketListener =
         new LuceneBucketListener(partitionedRepositoryManager, dm);
 
     if (!fileRegionExists(fileRegionName)) {
-      fileAndChunkRegion = createFileRegion(regionShortCut, fileRegionName, partitionAttributes,
-          regionAttributes, lucenePrimaryBucketListener);
+      fileAndChunkRegion = createRegion(fileRegionName, regionShortCut, this.regionPath,
+          partitionAttributes, regionAttributes, lucenePrimaryBucketListener);
     }
 
     fileSystemStats
@@ -114,13 +137,6 @@ public class LuceneIndexForPartitionedRegion extends LuceneIndexImpl {
 
   boolean fileRegionExists(String fileRegionName) {
     return cache.getRegion(fileRegionName) != null;
-  }
-
-  Region createFileRegion(final RegionShortcut regionShortCut, final String fileRegionName,
-      final PartitionAttributes partitionAttributes, final RegionAttributes regionAttributes,
-      PartitionListener listener) {
-    return createRegion(fileRegionName, regionShortCut, this.regionPath, partitionAttributes,
-        regionAttributes, listener);
   }
 
   public String createFileRegionName() {
@@ -197,9 +213,15 @@ public class LuceneIndexForPartitionedRegion extends LuceneIndexImpl {
     // localDestroyRegion can't be used because locally destroying regions is not supported on
     // colocated regions
     if (initiator) {
-      fileAndChunkRegion.destroyRegion();
-      if (logger.isDebugEnabled()) {
-        logger.debug("Destroyed fileAndChunkRegion=" + fileAndChunkRegion.getName());
+      try {
+        fileAndChunkRegion.destroyRegion();
+        if (logger.isDebugEnabled()) {
+          logger.debug("Destroyed fileAndChunkRegion=" + fileAndChunkRegion.getName());
+        }
+      } catch (RegionDestroyedException e) {
+        if (logger.isDebugEnabled()) {
+          logger.debug("Already destroyed fileAndChunkRegion=" + fileAndChunkRegion.getName());
+        }
       }
     }
 
@@ -209,10 +231,16 @@ public class LuceneIndexForPartitionedRegion extends LuceneIndexImpl {
     }
   }
 
+  @Override
+  public boolean isIndexAvailable(int id) {
+    PartitionedRegion fileAndChunkRegion = getFileAndChunkRegion();
+    return (fileAndChunkRegion.get(IndexRepositoryFactory.APACHE_GEODE_INDEX_COMPLETE, id) != null
+        || !LuceneServiceImpl.LUCENE_REINDEX);
+  }
+
   private void destroyOnRemoteMembers() {
-    PartitionedRegion pr = (PartitionedRegion) getDataRegion();
-    DM dm = pr.getDistributionManager();
-    Set<InternalDistributedMember> recipients = pr.getRegionAdvisor().adviseAllPRNodes();
+    DistributionManager dm = getDataRegion().getDistributionManager();
+    Set<InternalDistributedMember> recipients = dm.getOtherNormalDistributionManagerIds();
     if (!recipients.isEmpty()) {
       if (logger.isDebugEnabled()) {
         logger.debug("LuceneIndexForPartitionedRegion: About to send destroy message recipients="
@@ -228,7 +256,17 @@ public class LuceneIndexForPartitionedRegion extends LuceneIndexImpl {
       try {
         processor.waitForReplies();
       } catch (ReplyException e) {
-        if (!(e.getCause() instanceof CancelException)) {
+        Throwable cause = e.getCause();
+        if (cause instanceof IllegalArgumentException) {
+          // If the IllegalArgumentException is index not found, then its ok; otherwise rethrow it.
+          String fullRegionPath =
+              regionPath.startsWith(Region.SEPARATOR) ? regionPath : Region.SEPARATOR + regionPath;
+          String indexNotFoundMessage = String.format("Lucene index %s was not found in region %s",
+              indexName, fullRegionPath);
+          if (!cause.getLocalizedMessage().equals(indexNotFoundMessage)) {
+            throw e;
+          }
+        } else if (!(cause instanceof CancelException)) {
           throw e;
         }
       } catch (InterruptedException e) {

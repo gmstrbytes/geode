@@ -29,8 +29,8 @@ import org.apache.logging.log4j.Logger;
 import org.apache.geode.CancelException;
 import org.apache.geode.cache.partition.PartitionMemberInfo;
 import org.apache.geode.cache.partition.PartitionRebalanceInfo;
-import org.apache.geode.distributed.internal.DM;
 import org.apache.geode.distributed.internal.DistributionConfig;
+import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.MembershipListener;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.Assert;
@@ -49,13 +49,11 @@ import org.apache.geode.internal.cache.partitioned.rebalance.BucketOperator;
 import org.apache.geode.internal.cache.partitioned.rebalance.BucketOperatorImpl;
 import org.apache.geode.internal.cache.partitioned.rebalance.BucketOperatorWrapper;
 import org.apache.geode.internal.cache.partitioned.rebalance.ParallelBucketOperator;
-import org.apache.geode.internal.cache.partitioned.rebalance.PartitionedRegionLoadModel;
-import org.apache.geode.internal.cache.partitioned.rebalance.PartitionedRegionLoadModel.AddressComparor;
 import org.apache.geode.internal.cache.partitioned.rebalance.RebalanceDirector;
 import org.apache.geode.internal.cache.partitioned.rebalance.SimulatedBucketOperator;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
+import org.apache.geode.internal.cache.partitioned.rebalance.model.AddressComparor;
+import org.apache.geode.internal.cache.partitioned.rebalance.model.PartitionedRegionLoadModel;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * This class performs a rebalance on a single partitioned region.
@@ -195,7 +193,7 @@ public class PartitionedRegionRebalanceOp {
       Map<PartitionedRegion, InternalPRInfo> detailsMap = fetchDetails(cache);
       BucketOperatorWrapper serialOperator = getBucketOperator(detailsMap);
       ParallelBucketOperator parallelOperator = new ParallelBucketOperator(MAX_PARALLEL_OPERATIONS,
-          cache.getDistributionManager().getWaitingThreadPool(), serialOperator);
+          cache.getDistributionManager().getExecutors().getWaitingThreadPool(), serialOperator);
       model = buildModel(parallelOperator, detailsMap, resourceManager);
       for (PartitionRebalanceDetailsImpl details : serialOperator.getDetailSet()) {
         details.setPartitionMemberDetailsBefore(
@@ -254,9 +252,7 @@ public class PartitionedRegionRebalanceOp {
         } catch (CancelException e) {
           // lock service has been destroyed
         } catch (Exception e) {
-          logger.error(
-              LocalizedMessage.create(
-                  LocalizedStrings.PartitionedRegionRebalanceOp_UNABLE_TO_RELEASE_RECOVERY_LOCK),
+          logger.error("Unable to release recovery lock",
               e);
         }
       }
@@ -267,15 +263,13 @@ public class PartitionedRegionRebalanceOp {
           InternalResourceManager.getResourceObserver().recoveryFinished(targetRegion);
         }
       } catch (Exception e) {
-        logger.error(LocalizedMessage
-            .create(LocalizedStrings.PartitionedRegionRebalanceOp_ERROR_IN_RESOURCE_OBSERVER), e);
+        logger.error("Error in resource observer", e);
       }
 
       try {
         leaderRegion.getRegionAdvisor().removeMembershipListener(listener);
       } catch (Exception e) {
-        logger.error(LocalizedMessage
-            .create(LocalizedStrings.PartitionedRegionRebalanceOp_ERROR_IN_RESOURCE_OBSERVER), e);
+        logger.error("Error in resource observer", e);
       }
     }
   }
@@ -392,8 +386,7 @@ public class PartitionedRegionRebalanceOp {
       try {
         InternalResourceManager.getResourceObserver().recoveryFinished(targetRegion);
       } catch (Exception e) {
-        logger.debug(LocalizedMessage
-            .create(LocalizedStrings.PartitionedRegionRebalanceOp_ERROR_IN_RESOURCE_OBSERVER), e);
+        logger.debug("Error in resource observer", e);
       }
     }
   }
@@ -430,8 +423,6 @@ public class PartitionedRegionRebalanceOp {
    * Build a model of the load on the partitioned region, which can determine which buckets to move,
    * etc.
    *
-   * @param detailsMap
-   * @param resourceManager
    */
   private PartitionedRegionLoadModel buildModel(BucketOperator operator,
       Map<PartitionedRegion, InternalPRInfo> detailsMap, InternalResourceManager resourceManager) {
@@ -439,14 +430,16 @@ public class PartitionedRegionRebalanceOp {
 
     final boolean isDebugEnabled = logger.isDebugEnabled();
 
-    final DM dm = leaderRegion.getDistributionManager();
+    final DistributionManager dm = leaderRegion.getDistributionManager();
     AddressComparor comparor = new AddressComparor() {
 
+      @Override
       public boolean areSameZone(InternalDistributedMember member1,
           InternalDistributedMember member2) {
         return dm.areInSameZone(member1, member2);
       }
 
+      @Override
       public boolean enforceUniqueZones() {
         return dm.enforceUniqueZone();
       }
@@ -456,7 +449,7 @@ public class PartitionedRegionRebalanceOp {
     int redundantCopies = leaderRegion.getRedundantCopies();
     int totalNumberOfBuckets = leaderRegion.getTotalNumberOfBuckets();
     Set<InternalDistributedMember> criticalMembers =
-        resourceManager.getResourceAdvisor().adviseCritialMembers();;
+        resourceManager.getResourceAdvisor().adviseCriticalMembers();;
     boolean removeOverRedundancy = true;
 
     debug("Building Model for rebalancing " + leaderRegion + ". redundantCopies=" + redundantCopies
@@ -610,7 +603,9 @@ public class PartitionedRegionRebalanceOp {
 
   private class MembershipChangeListener implements MembershipListener {
 
-    public void memberDeparted(InternalDistributedMember id, boolean crashed) {
+    @Override
+    public void memberDeparted(DistributionManager distributionManager,
+        InternalDistributedMember id, boolean crashed) {
       if (logger.isDebugEnabled()) {
         logger.debug(
             "PartitionedRegionRebalanceOP - membership changed, restarting rebalancing for region {}",
@@ -619,7 +614,9 @@ public class PartitionedRegionRebalanceOp {
       membershipChange = true;
     }
 
-    public void memberJoined(InternalDistributedMember id) {
+    @Override
+    public void memberJoined(DistributionManager distributionManager,
+        InternalDistributedMember id) {
       if (logger.isDebugEnabled()) {
         logger.debug(
             "PartitionedRegionRebalanceOP - membership changed, restarting rebalancing for region {}",
@@ -628,12 +625,14 @@ public class PartitionedRegionRebalanceOp {
       membershipChange = true;
     }
 
-    public void memberSuspect(InternalDistributedMember id, InternalDistributedMember whoSuspected,
-        String reason) {
+    @Override
+    public void memberSuspect(DistributionManager distributionManager, InternalDistributedMember id,
+        InternalDistributedMember whoSuspected, String reason) {
       // do nothing.
     }
 
-    public void quorumLost(Set<InternalDistributedMember> failures,
-        List<InternalDistributedMember> remaining) {}
+    @Override
+    public void quorumLost(DistributionManager distributionManager,
+        Set<InternalDistributedMember> failures, List<InternalDistributedMember> remaining) {}
   }
 }

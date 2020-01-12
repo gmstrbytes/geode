@@ -17,35 +17,38 @@ package org.apache.geode.management.internal.cli.commands;
 
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.logging.log4j.Logger;
 import org.springframework.shell.core.annotation.CliCommand;
 import org.springframework.shell.core.annotation.CliOption;
 
+import org.apache.geode.annotations.VisibleForTesting;
+import org.apache.geode.cache.configuration.CacheConfig;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.management.DistributedSystemMXBean;
 import org.apache.geode.management.cli.CliMetaData;
 import org.apache.geode.management.cli.ConverterHint;
-import org.apache.geode.management.cli.Result;
+import org.apache.geode.management.cli.SingleGfshCommand;
 import org.apache.geode.management.internal.cli.functions.CliFunctionResult;
 import org.apache.geode.management.internal.cli.functions.GatewaySenderDestroyFunction;
 import org.apache.geode.management.internal.cli.functions.GatewaySenderDestroyFunctionArgs;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.cli.result.CommandResult;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
-import org.apache.geode.management.internal.configuration.domain.XmlEntity;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.management.internal.security.ResourceOperation;
 import org.apache.geode.security.ResourcePermission;
 
-public class DestroyGatewaySenderCommand implements GfshCommand {
+public class DestroyGatewaySenderCommand extends SingleGfshCommand {
   private static final Logger logger = LogService.getLogger();
+  private static final int MBEAN_DELETION_WAIT_TIME = 10000;
 
   @CliCommand(value = CliStrings.DESTROY_GATEWAYSENDER,
       help = CliStrings.DESTROY_GATEWAYSENDER__HELP)
   @CliMetaData(relatedTopic = CliStrings.TOPIC_GEODE_WAN)
   @ResourceOperation(resource = ResourcePermission.Resource.CLUSTER,
       operation = ResourcePermission.Operation.MANAGE, target = ResourcePermission.Target.GATEWAY)
-  public Result destroyGatewaySender(
+  public ResultModel destroyGatewaySender(
       @CliOption(key = {CliStrings.GROUP, CliStrings.GROUPS},
           optionContext = ConverterHint.MEMBERGROUP,
           help = CliStrings.DESTROY_GATEWAYSENDER__GROUP__HELP) String[] onGroups,
@@ -66,22 +69,32 @@ public class DestroyGatewaySenderCommand implements GfshCommand {
     List<CliFunctionResult> functionResults = executeAndGetFunctionResult(
         GatewaySenderDestroyFunction.INSTANCE, gatewaySenderDestroyFunctionArgs, members);
 
-    CommandResult result = ResultBuilder.buildResult(functionResults);
-    XmlEntity xmlEntity = findXmlEntity(functionResults);
+    ResultModel resultModel = ResultModel.createMemberStatusResult(functionResults);
+    resultModel.setConfigObject(id);
 
-    // no xml needs to be updated, simply return
-    if (xmlEntity == null) {
-      return result;
+    if (!waitForGatewaySenderMBeanDeletion(id, members)) {
+      resultModel.addInfo()
+          .addLine("Did not complete waiting for GatewaySenderMBean proxy deletion");
     }
 
-    // has xml but unable to persist to cluster config, need to print warning message and return
-    if (onMember != null || getSharedConfiguration() == null) {
-      result.setCommandPersisted(false);
-      return result;
-    }
+    return resultModel;
+  }
 
-    // update cluster config
-    getSharedConfiguration().deleteXmlEntity(xmlEntity, onGroups);
-    return result;
+  /*
+   * Wait for up tp 3 seconds for the proxy MBeans to be deleted.
+   */
+  @VisibleForTesting
+  boolean waitForGatewaySenderMBeanDeletion(String id, Set<DistributedMember> members) {
+    DistributedSystemMXBean dsMXBean = getManagementService().getDistributedSystemMXBean();
+
+    return poll(MBEAN_DELETION_WAIT_TIME, TimeUnit.MILLISECONDS, () -> members.stream()
+        .noneMatch(m -> CreateGatewaySenderCommand.gatewaySenderBeanExists(dsMXBean,
+            m.getName(), id)));
+  }
+
+  @Override
+  public boolean updateConfigForGroup(String group, CacheConfig config, Object id) {
+    config.getGatewaySenders().removeIf((sender) -> sender.getId().equals(id));
+    return true;
   }
 }

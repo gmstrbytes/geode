@@ -22,10 +22,11 @@ import java.util.Properties;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.DataSerializer;
-import org.apache.geode.distributed.internal.DM;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * A message that is sent in response to a {@link LicenseInfoRequest}.
@@ -38,7 +39,8 @@ public class LicenseInfoResponse extends AdminResponse {
   /**
    * Returns a {@code LicenseInfoResponse} that will be returned to the specified recipient.
    */
-  public static LicenseInfoResponse create(DM dm, InternalDistributedMember recipient) {
+  public static LicenseInfoResponse create(DistributionManager dm,
+      InternalDistributedMember recipient) {
     LicenseInfoResponse m = new LicenseInfoResponse();
     m.setRecipient(recipient);
     m.p = new Properties();
@@ -50,19 +52,22 @@ public class LicenseInfoResponse extends AdminResponse {
     return p;
   }
 
+  @Override
   public int getDSFID() {
     return LICENSE_INFO_RESPONSE;
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     DataSerializer.writeObject(this.p, out);
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     this.p = (Properties) DataSerializer.readObject(in);
   }
 

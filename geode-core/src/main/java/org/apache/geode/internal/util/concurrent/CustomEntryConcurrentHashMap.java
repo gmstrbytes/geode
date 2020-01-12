@@ -53,18 +53,18 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
-import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import org.apache.geode.CancelException;
-import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.internal.cache.RegionEntry;
 import org.apache.geode.internal.cache.entries.OffHeapRegionEntry;
 import org.apache.geode.internal.cache.wan.GatewaySenderEventImpl;
 import org.apache.geode.internal.offheap.OffHeapRegionEntryHelper;
 import org.apache.geode.internal.size.SingleObjectSizer;
 import org.apache.geode.internal.util.ArrayUtils;
+import org.apache.geode.logging.internal.executors.LoggingThread;
 
 /**
  * A hash table supporting full concurrency of retrievals and adjustable expected concurrency for
@@ -112,13 +112,17 @@ import org.apache.geode.internal.util.ArrayUtils;
  * This class is a member of the <a href="{@docRoot} /../technotes/guides/collections/index.html">
  * Java Collections Framework</a>.
  *
+ * <p>
+ * Modifications made to the Java {@link java.util.Hashtable} implementation
+ * are indicated using comments to mark the beginning and end of Geode changes.
+ *
  * @since Java 1.5
  * @author Doug Lea
  * @param <K> the type of keys maintained by this map
  * @param <V> the type of mapped values
  */
 public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
-    implements ConcurrentMap<K, V>, Serializable {
+    implements ConcurrentMapWithReusableEntries<K, V>, Serializable {
 
   private static final long serialVersionUID = -7056732555635108300L;
 
@@ -165,14 +169,14 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
    */
   static final int RETRIES_BEFORE_LOCK = 2;
 
-  // GemStone addition
+  // Geode addition
   /**
    * Token object to indicate that {@link #remove(Object)} does not need to compare against provided
    * value before removing from segment.
    */
   private static final Object NO_OBJECT_TOKEN = new Object();
 
-  // End GemStone addition
+  // End Geode addition
 
   /* ---------------- Fields -------------- */
 
@@ -205,7 +209,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
 
   transient Set<K> keySet;
   transient Set<Map.Entry<K, V>> entrySet;
-  transient Set<Map.Entry<K, V>> reusableEntrySet; // GemStone addition
+  transient Set<Map.Entry<K, V>> reusableEntrySet; // Geode addition
   transient Collection<V> values;
 
   /* ---------------- Small Utilities -------------- */
@@ -243,8 +247,8 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
 
   /* ---------------- Inner Classes -------------- */
 
-  // GemStone addition
-  // GemStone changed HashEntry to be an interface with original HashEntry
+  // Geode addition
+  // Geode changed HashEntry to be an interface with original HashEntry
   // as the default implementation HashEntryImpl.
 
   /**
@@ -256,7 +260,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
    * {@link org.apache.geode.internal.util.concurrent.CustomEntryConcurrentHashMap.HashEntry}
    * objects for each entry in the map.
    */
-  public static interface HashEntry<K, V> {
+  public interface HashEntry<K, V> {
 
     /**
      * Get the key object for this entry.
@@ -327,6 +331,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
     /**
      * @see CustomEntryConcurrentHashMap.HashEntry#getKey()
      */
+    @Override
     public K getKey() {
       return this.key;
     }
@@ -334,6 +339,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
     /**
      * @see CustomEntryConcurrentHashMap.HashEntry#getMapValue()
      */
+    @Override
     public V getMapValue() {
       return this.value;
     }
@@ -341,6 +347,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
     /**
      * @see CustomEntryConcurrentHashMap.HashEntry#setMapValue(Object)
      */
+    @Override
     public void setMapValue(V newValue) {
       this.value = newValue;
     }
@@ -348,6 +355,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
     /**
      * @see CustomEntryConcurrentHashMap.HashEntry#getEntryHash()
      */
+    @Override
     public int getEntryHash() {
       return this.hash;
     }
@@ -355,6 +363,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
     /**
      * @see CustomEntryConcurrentHashMap.HashEntry#getNextEntry()
      */
+    @Override
     public HashEntry<K, V> getNextEntry() {
       return this.next;
     }
@@ -362,6 +371,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
     /**
      * @see CustomEntryConcurrentHashMap.HashEntry#setNextEntry
      */
+    @Override
     public void setNextEntry(final HashEntry<K, V> n) {
       this.next = n;
     }
@@ -377,22 +387,22 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
    * {@link org.apache.geode.internal.util.concurrent.CustomEntryConcurrentHashMap.HashEntry}
    * objects by caller. This can be used, for example, to return GemFire RegionEntries directly.
    */
-  public static interface HashEntryCreator<K, V> {
+  public interface HashEntryCreator<K, V> {
 
     /**
      * Create a new
      * {@link org.apache.geode.internal.util.concurrent.CustomEntryConcurrentHashMap.HashEntry}
      * given the key, hash, value and next element.
      */
-    public HashEntry<K, V> newEntry(K key, int hash, HashEntry<K, V> next, V value);
+    HashEntry<K, V> newEntry(K key, int hash, HashEntry<K, V> next, V value);
 
     /**
      * Get the hashCode for given key object.
      */
-    public int keyHashCode(Object key, boolean compareValues);
+    int keyHashCode(Object key, boolean compareValues);
   }
 
-  // End GemStone addition
+  // End Geode addition
 
   /**
    * Segments are specialized versions of hash tables. This subclasses from ReentrantLock
@@ -463,7 +473,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
      */
     final float loadFactor;
 
-    // GemStone addition
+    // Geode addition
 
     /**
      * {@link org.apache.geode.internal.util.concurrent.CustomEntryConcurrentHashMap.HashEntryCreator}
@@ -479,7 +489,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
      */
     final ReentrantReadWriteLock listUpdateLock;
 
-    // End GemStone addition
+    // End Geode addition
 
     Segment(final int initialCapacity, final float lf, final HashEntryCreator<K, V> entryCreator) {
       this.loadFactor = lf;
@@ -493,7 +503,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
       return new Segment[i];
     }
 
-    // GemStone added the method below
+    // Geode added the method below
     @SuppressWarnings("unchecked")
     static <K, V> HashEntry<K, V>[] newEntryArray(final int size) {
       return new HashEntry[size];
@@ -553,7 +563,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
 
     V get(final Object key, final int hash) {
       if (this.count != 0) { // read-volatile
-        // GemStone change to acquire the read lock on list updates
+        // Geode change to acquire the read lock on list updates
         final ReentrantReadWriteLock.ReadLock listLock = this.listUpdateLock.readLock();
         listLock.lock();
         boolean lockAcquired = true;
@@ -582,7 +592,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
 
     V getNoLock(final Object key, final int hash, final boolean lockListForRead) {
       if (this.count != 0) { // read-volatile
-        // GemStone change to acquire the read lock on list updates
+        // Geode change to acquire the read lock on list updates
         ReentrantReadWriteLock.ReadLock listLock = null;
         if (lockListForRead) {
           listLock = this.listUpdateLock.readLock();
@@ -607,7 +617,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
 
     boolean containsKey(final Object key, final int hash) {
       if (this.count != 0) { // read-volatile
-        // GemStone change to acquire the read lock on list updates
+        // Geode change to acquire the read lock on list updates
         final ReentrantReadWriteLock.ReadLock listLock = this.listUpdateLock.readLock();
         listLock.lock();
         HashEntry<K, V> e = getFirst(hash);
@@ -627,7 +637,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
 
     boolean containsValue(final Object value) {
       if (this.count != 0) { // read-volatile
-        // GemStone change to acquire the read lock on list updates
+        // Geode change to acquire the read lock on list updates
         ReentrantReadWriteLock.ReadLock readLock = this.listUpdateLock.readLock();
         RETRYLOOP: for (;;) {
           readLock.lock();
@@ -637,7 +647,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
             for (HashEntry<K, V> e = tab[i]; e != null; e = e.getNextEntry()) {
               V v = e.getMapValue();
               if (v == null) {
-                // GemStone changes BEGIN
+                // Geode changes BEGIN
                 // go back and retry from the very start with segment read lock
                 readLock.unlock();
                 readLock = super.readLock();
@@ -645,7 +655,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
                 /*
                  * (original code) v = readValueUnderLock(e);
                  */
-                // GemStone changes END
+                // Geode changes END
               }
               if (equalityCompare(value, v)) {
                 readLock.unlock();
@@ -734,7 +744,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
       }
     }
 
-    // GemStone additions
+    // Geode additions
 
     <C, P> V create(final K key, final int hash, final MapCallback<K, V, C, P> valueCreator,
         final C context, final P createParams, final boolean lockForRead) {
@@ -827,7 +837,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
       return null;
     }
 
-    // End GemStone additions
+    // End Geode additions
 
     void rehash() {
       final HashEntry<K, V>[] oldTable = this.table;
@@ -875,7 +885,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
             newTable[lastIdx] = lastRun;
 
             // Clone all remaining nodes
-            // GemStone changes BEGIN
+            // Geode changes BEGIN
             // update the next entry instead of cloning the nodes in newTable;
             // this is primarily because we don't want to change
             // the underlying RegionEntry that may be used elsewhere;
@@ -920,7 +930,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
              * p.hash & sizeMask; final HashEntry<K, V> n = newTable[k]; newTable[k] =
              * this.entryCreator.newEntry(p.key, p.hash, n, p.value); }
              */
-            // GemStone changes END
+            // Geode changes END
           }
         }
       }
@@ -930,11 +940,11 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
     /**
      * Remove; match on key only if value null, else match both.
      */
-    // GemStone change
+    // Geode change
     // added "condition" and "removeParams" parameters
     <C, P> V remove(final Object key, final int hash, final Object value,
         final MapCallback<K, V, C, P> condition, final C context, final P removeParams) {
-      // End GemStone change
+      // End Geode change
       final ReentrantReadWriteLock.WriteLock writeLock = super.writeLock();
       writeLock.lock();
       try {
@@ -943,7 +953,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
         final int index = hash & (tab.length - 1);
         final HashEntry<K, V> first = tab[index];
         HashEntry<K, V> e = first;
-        // GemStone change
+        // Geode change
         // the entry previous to the matched one, if any
         HashEntry<K, V> p = null;
         while (e != null && (e.getEntryHash() != hash || !equalityKeyCompare(key, e))) {
@@ -958,17 +968,17 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
         V oldValue = null;
         if (e != null) {
           final V v = e.getMapValue();
-          // GemStone change
+          // Geode change
           // allow for passing in a null object for comparison during remove;
           // also invoke the provided condition to check for removal
           if ((value == NO_OBJECT_TOKEN || equalityCompareWithNulls(v, value))
               && (condition == null || condition.doRemoveValue(v, context, removeParams))) {
-            // End GemStone change
+            // End Geode change
             oldValue = v;
             // All entries following removed node can stay in list,
             // but all preceding ones need to be cloned.
             ++this.modCount;
-            // GemStone changes BEGIN
+            // Geode changes BEGIN
             // update the next entry instead of cloning the nodes
             // this is primarily because we don't want to change
             // the underlying RegionEntry that may be used elsewhere
@@ -988,7 +998,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
              * != e; p = p.next) { newFirst = this.entryCreator.newEntry(p.key, p.hash, newFirst,
              * p.value); } tab[index] = newFirst;
              */
-            // GemStone changes END
+            // Geode changes END
             this.count = c; // write-volatile
           }
         }
@@ -999,7 +1009,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
     }
 
     /**
-     * GemStone added the clearedEntries param and the result
+     * Geode added the clearedEntries param and the result
      */
     ArrayList<HashEntry<?, ?>> clear(ArrayList<HashEntry<?, ?>> clearedEntries) {
       if (this.count != 0) {
@@ -1007,25 +1017,26 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
         writeLock.lock();
         try {
           final HashEntry<K, V>[] tab = this.table;
-          // GemStone changes BEGIN
-          boolean collectEntries = clearedEntries != null;
-          if (!collectEntries) {
-            // see if we have a map with off-heap region entries
-            for (HashEntry<K, V> he : tab) {
-              if (he != null) {
-                collectEntries = he instanceof OffHeapRegionEntry;
-                if (collectEntries) {
-                  clearedEntries = new ArrayList<HashEntry<?, ?>>();
+          // Geode changes BEGIN
+          if (clearedEntries == null) {
+            final boolean checkForGatewaySenderEvent =
+                OffHeapRegionEntryHelper.doesClearNeedToCheckForOffHeap();
+            if (checkForGatewaySenderEvent) {
+              clearedEntries = new ArrayList<HashEntry<?, ?>>();
+            } else {
+              // see if we have a map with off-heap region entries
+              for (HashEntry<K, V> he : tab) {
+                if (he != null) {
+                  if (he instanceof OffHeapRegionEntry) {
+                    clearedEntries = new ArrayList<HashEntry<?, ?>>();
+                  }
+                  // after the first non-null entry we are done
+                  break;
                 }
-                // after the first non-null entry we are done
-                break;
               }
             }
           }
-          final boolean checkForGatewaySenderEvent =
-              OffHeapRegionEntryHelper.doesClearNeedToCheckForOffHeap();
-          final boolean skipProcessOffHeap = !collectEntries && !checkForGatewaySenderEvent;
-          if (skipProcessOffHeap) {
+          if (clearedEntries == null) {
             Arrays.fill(tab, null);
           } else {
             for (int i = 0; i < tab.length; i++) {
@@ -1033,20 +1044,9 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
               if (he == null)
                 continue;
               tab[i] = null;
-              if (collectEntries) {
-                clearedEntries.add(he);
-              } else {
-                for (HashEntry<K, V> p = he; p != null; p = p.getNextEntry()) {
-                  if (p instanceof RegionEntry) {
-                    // It is ok to call GatewaySenderEventImpl release without being synced
-                    // on the region entry. It will not create an orphan.
-                    GatewaySenderEventImpl.release(((RegionEntry) p).getValue()); // OFFHEAP
-                                                                                  // _getValue ok
-                  }
-                }
-              }
+              clearedEntries.add(he);
             }
-            // GemStone changes END
+            // Geode changes END
           }
           ++this.modCount;
           this.count = 0; // write-volatile
@@ -1054,7 +1054,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
           writeLock.unlock();
         }
       }
-      return clearedEntries; // GemStone change
+      return clearedEntries; // Geode change
     }
   }
 
@@ -1117,7 +1117,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
     this(initialCapacity, loadFactor, concurrencyLevel, false, null);
   }
 
-  // GemStone addition
+  // Geode addition
 
   /**
    * Creates a new, empty map with the specified initial capacity, load factor and concurrency
@@ -1214,17 +1214,19 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
 
     private static final long serialVersionUID = 3765680607280951726L;
 
+    @Override
     public HashEntry<K, V> newEntry(final K key, final int hash, final HashEntry<K, V> next,
         final V value) {
       return new HashEntryImpl<K, V>(key, hash, next, value, null);
     }
 
+    @Override
     public int keyHashCode(final Object key, final boolean compareValues) {
       return keyHash(key, compareValues);
     }
   }
 
-  // End GemStone addition
+  // End Geode addition
 
   /**
    * Creates a new, empty map with the specified initial capacity and load factor and with the
@@ -1511,6 +1513,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
    *         mapping for the key
    * @throws NullPointerException if the specified key or value is null
    */
+  @Override
   public V putIfAbsent(final K key, final V value) {
     if (value == null) {
       throw new NullPointerException();
@@ -1520,7 +1523,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
     return segmentFor(hash).put(key, hash, value, true);
   }
 
-  // GemStone addition
+  // Geode addition
 
   /**
    * Create a given key, value mapping if the key does not exist in the map else do nothing. The
@@ -1559,7 +1562,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
    * @param <C> the type of context parameter passed to the creation/removal methods
    * @param <P> the type of extra parameter passed to the creation/removal methods
    */
-  public static interface MapCallback<K, V, C, P> {
+  public interface MapCallback<K, V, C, P> {
 
     /**
      * Create a new instance of the value object given the key and provided parameters for
@@ -1569,7 +1572,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
      * @param context any context in which this method has been invoked
      * @param createParams parameters, if any, required for construction of a new value object
      */
-    public V newValue(K key, C context, P createParams);
+    V newValue(K key, C context, P createParams);
 
     /**
      * Invoked when an existing value in map is read by the
@@ -1578,7 +1581,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
      *
      * @param value the value read by create that will be returned
      */
-    public void oldValueRead(V value);
+    void oldValueRead(V value);
 
     /**
      * Check if the existing value should be removed by the
@@ -1588,7 +1591,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
      * @param context any context in which this method has been invoked
      * @param removeParams parameters, if any, to be passed for cleanup of the object
      */
-    public boolean doRemoveValue(V value, C context, P removeParams);
+    boolean doRemoveValue(V value, C context, P removeParams);
   }
 
   /**
@@ -1600,6 +1603,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
     /**
      * @see MapCallback#newValue
      */
+    @Override
     public V newValue(K key, C context, P createParams) {
       return null;
     }
@@ -1607,11 +1611,13 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
     /**
      * @see MapCallback#oldValueRead
      */
+    @Override
     public void oldValueRead(V value) {}
 
     /**
      * @see MapCallback#doRemoveValue
      */
+    @Override
     public boolean doRemoveValue(V value, C context, P removeParams) {
       return true;
     }
@@ -1709,7 +1715,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
     return segmentFor(hash).remove(key, hash, NO_OBJECT_TOKEN, condition, context, removeParams);
   }
 
-  // End GemStone addition
+  // End Geode addition
 
   /**
    * Copies all of the mappings from the specified map to this one. These mappings replace any
@@ -1745,6 +1751,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
    *
    * @throws NullPointerException if the specified key is null
    */
+  @Override
   public boolean remove(final Object key, final Object value) {
     if (value == null) {
       return false;
@@ -1759,6 +1766,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
    *
    * @throws NullPointerException if any of the arguments are null
    */
+  @Override
   public boolean replace(final K key, final V oldValue, final V newValue) {
     if (oldValue == null || newValue == null) {
       throw new NullPointerException();
@@ -1775,6 +1783,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
    *         mapping for the key
    * @throws NullPointerException if the specified key or value is null
    */
+  @Override
   public V replace(final K key, final V value) {
     if (value == null) {
       throw new NullPointerException();
@@ -1784,11 +1793,9 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
     return segmentFor(hash).replace(key, hash, value);
   }
 
-  /**
-   * Removes all of the mappings from this map.
-   */
+  // Geode addition
   @Override
-  public void clear() {
+  public void clearWithExecutor(Executor executor) {
     ArrayList<HashEntry<?, ?>> entries = null;
     try {
       for (int i = 0; i < this.segments.length; ++i) {
@@ -1797,22 +1804,40 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
     } finally {
       if (entries != null) {
         final ArrayList<HashEntry<?, ?>> clearedEntries = entries;
-        final Runnable runnable = new Runnable() {
-          public void run() {
-            for (HashEntry<?, ?> he : clearedEntries) {
-              for (HashEntry<?, ?> p = he; p != null; p = p.getNextEntry()) {
-                synchronized (p) {
-                  ((OffHeapRegionEntry) p).release();
+        Runnable runnable;
+        if (OffHeapRegionEntryHelper.doesClearNeedToCheckForOffHeap()) {
+          runnable = new Runnable() {
+            @Override
+            public void run() {
+              for (HashEntry<?, ?> he : clearedEntries) {
+                for (HashEntry<?, ?> p = he; p != null; p = p.getNextEntry()) {
+                  if (p instanceof RegionEntry) {
+                    synchronized (p) {
+                      GatewaySenderEventImpl.release(((RegionEntry) p).getValue()); // OFFHEAP
+                    }
+                  }
                 }
               }
             }
-          }
-        };
+          };
+        } else {
+          runnable = new Runnable() {
+            @Override
+            public void run() {
+              for (HashEntry<?, ?> he : clearedEntries) {
+                for (HashEntry<?, ?> p = he; p != null; p = p.getNextEntry()) {
+                  synchronized (p) {
+                    ((OffHeapRegionEntry) p).release();
+                  }
+                }
+              }
+            }
+          };
+        }
         boolean submitted = false;
-        InternalDistributedSystem ids = InternalDistributedSystem.getConnectedInstance();
-        if (ids != null) {
+        if (executor != null) {
           try {
-            ids.getDistributionManager().getWaitingThreadPool().execute(runnable);
+            executor.execute(runnable);
             submitted = true;
           } catch (RejectedExecutionException e) {
             // fall through with submitted false
@@ -1824,13 +1849,21 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
         }
         if (!submitted) {
           String name = this.getClass().getSimpleName() + "@" + this.hashCode() + " Clear Thread";
-          Thread thread = new Thread(runnable, name);
-          thread.setDaemon(true);
+          Thread thread = new LoggingThread(name, runnable);
           thread.start();
         }
       }
     }
   }
+
+  /**
+   * Removes all of the mappings from this map.
+   */
+  @Override
+  public void clear() {
+    clearWithExecutor(null);
+  }
+  // End Geode addition
 
   /**
    * Returns a {@link Set} view of the keys contained in this map. The set is backed by the map, so
@@ -1890,31 +1923,15 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
     return (es != null) ? es : (this.entrySet = new EntrySet(false));
   }
 
-  // GemStone addition
+  // Geode addition
 
-  /**
-   * Returns a {@link Set} view of the mappings contained in this map. The set is backed by the map,
-   * so changes to the map are reflected in the set, and vice-versa. The set supports element
-   * removal, which removes the corresponding mapping from the map, via the
-   * <tt>Iterator.remove</tt>, <tt>Set.remove</tt>, <tt>removeAll</tt>, <tt>retainAll</tt>, and
-   * <tt>clear</tt> operations. It does not support the <tt>add</tt> or <tt>addAll</tt> operations.
-   *
-   * <p>
-   * The view's <tt>iterator</tt> is a "weakly consistent" iterator that will never throw
-   * {@link java.util.ConcurrentModificationException}, and guarantees to traverse elements as they
-   * existed upon construction of the iterator, and may (but is not guaranteed to) reflect any
-   * modifications subsequent to construction.
-   *
-   * <p>
-   * This set provides entries that are reused during iteration so caller cannot store the returned
-   * <code>Map.Entry</code> objects.
-   */
+  @Override
   public Set<Map.Entry<K, V>> entrySetWithReusableEntries() {
     final Set<Map.Entry<K, V>> es = this.reusableEntrySet;
     return (es != null) ? es : (this.reusableEntrySet = new EntrySet(true));
   }
 
-  // End GemStone addition
+  // End Geode addition
 
   /**
    * Returns an enumeration of the keys in this table.
@@ -1944,7 +1961,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
 
     int nextTableIndex;
 
-    // GemStone changed HashEntry<K, V>[] currentTable to currentSegment
+    // Geode changed HashEntry<K, V>[] currentTable to currentSegment
     HashEntry<K, V>[] currentTable;
 
     HashEntry<K, V> nextEntry;
@@ -1968,7 +1985,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
     }
 
     void advance() {
-      // GemStone changes BEGIN
+      // Geode changes BEGIN
       if (this.currentListIndex < this.currentList.size()) {
         this.nextEntry = this.currentList.get(this.currentListIndex++);
         return;
@@ -1998,7 +2015,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
        * while (this.nextTableIndex >= 0) { if ((this.nextEntry =
        * this.currentTable[this.nextTableIndex--]) != null) { return; } }
        */
-      // GemStone changes END
+      // Geode changes END
 
       while (this.currentSegmentIndex > 0) {
         final Segment<K, V> seg =
@@ -2022,7 +2039,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
       }
     }
 
-    // GemStone added the method below
+    // Geode added the method below
     /**
      * Copy the tail of list of current matched entry ({@link #nextEntry}) to a temporary list, so
      * that the read lock can be released after the copy.
@@ -2064,10 +2081,12 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
 
   class KeyIterator extends HashIterator implements Iterator<K>, Enumeration<K> {
 
+    @Override
     public K next() {
       return super.nextEntry().getKey();
     }
 
+    @Override
     public K nextElement() {
       return super.nextEntry().getKey();
     }
@@ -2075,10 +2094,12 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
 
   class ValueIterator extends HashIterator implements Iterator<V>, Enumeration<V> {
 
+    @Override
     public V next() {
       return super.nextEntry().getMapValue();
     }
 
+    @Override
     public V nextElement() {
       return super.nextEntry().getMapValue();
     }
@@ -2094,7 +2115,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
 
     private static final long serialVersionUID = 1591026397367910439L;
 
-    protected K key; // GemStone change; made non-final to enable reuse
+    protected K key; // Geode change; made non-final to enable reuse
 
     private V value;
 
@@ -2124,6 +2145,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
      *
      * @return the key corresponding to this entry
      */
+    @Override
     public K getKey() {
       return this.key;
     }
@@ -2133,6 +2155,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
      *
      * @return the value corresponding to this entry
      */
+    @Override
     public V getValue() {
       return this.value;
     }
@@ -2143,6 +2166,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
      * @param value new value to be stored in this entry
      * @return the old value corresponding to the entry
      */
+    @Override
     public V setValue(final V value) {
       final V oldValue = this.value;
       this.value = value;
@@ -2254,7 +2278,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
 
   class EntryIterator extends HashIterator implements Iterator<Map.Entry<K, V>> {
 
-    // GemStone change
+    // Geode change
     // added possibility to reuse a single Map.Entry for entire iteration
     final WriteThroughEntry reusableEntry;
 
@@ -2262,6 +2286,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
       this.reusableEntry = reusableEntry;
     }
 
+    @Override
     public Map.Entry<K, V> next() {
       final HashEntry<K, V> e = super.nextEntry();
       if (this.reusableEntry != null) {
@@ -2271,7 +2296,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
       }
       return new WriteThroughEntry(e.getKey(), e.getMapValue());
     }
-    // End GemStone change
+    // End Geode change
   }
 
   class KeySet extends AbstractSet<K> {
@@ -2327,7 +2352,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
 
   class EntrySet extends AbstractSet<Map.Entry<K, V>> {
 
-    // GemStone change
+    // Geode change
     // added possibility to reuse a single Map.Entry for entire iteration
     final WriteThroughEntry reusableEntry;
 
@@ -2344,7 +2369,7 @@ public class CustomEntryConcurrentHashMap<K, V> extends AbstractMap<K, V>
       return new EntryIterator(this.reusableEntry);
     }
 
-    // End GemStone change
+    // End Geode change
 
     @Override
     public boolean contains(final Object o) {

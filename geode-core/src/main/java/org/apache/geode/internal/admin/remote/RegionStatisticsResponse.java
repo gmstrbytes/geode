@@ -16,12 +16,17 @@
 
 package org.apache.geode.internal.admin.remote;
 
-import java.io.*;
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
 
-import org.apache.geode.*;
-import org.apache.geode.cache.*;
-import org.apache.geode.distributed.internal.*;
-import org.apache.geode.distributed.internal.membership.*;
+import org.apache.geode.DataSerializer;
+import org.apache.geode.cache.CacheStatistics;
+import org.apache.geode.cache.Region;
+import org.apache.geode.distributed.internal.DistributionManager;
+import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
 
 /**
  * Responds to {@link RegionStatisticsResponse}.
@@ -34,8 +39,8 @@ public class RegionStatisticsResponse extends AdminResponse {
    * Returns a <code>RegionStatisticsResponse</code> that will be returned to the specified
    * recipient. The message will contains a copy of the local manager's system config.
    */
-  public static RegionStatisticsResponse create(DM dm, InternalDistributedMember recipient,
-      Region r) {
+  public static RegionStatisticsResponse create(DistributionManager dm,
+      InternalDistributedMember recipient, Region r) {
     RegionStatisticsResponse m = new RegionStatisticsResponse();
     m.setRecipient(recipient);
     m.regionStatistics = new RemoteCacheStatistics(r.getStatistics());
@@ -47,19 +52,22 @@ public class RegionStatisticsResponse extends AdminResponse {
     return this.regionStatistics;
   }
 
+  @Override
   public int getDSFID() {
     return REGION_STATISTICS_RESPONSE;
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     DataSerializer.writeObject(this.regionStatistics, out);
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     this.regionStatistics = (RemoteCacheStatistics) DataSerializer.readObject(in);
   }
 

@@ -21,20 +21,18 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.geode.DataSerializer;
+import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.cache.CacheEvent;
 import org.apache.geode.cache.EntryNotFoundException;
-import org.apache.geode.distributed.internal.DistributionManager;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
+import org.apache.geode.distributed.internal.OperationExecutors;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.InternalDataSerializer;
-import org.apache.geode.internal.Version;
 import org.apache.geode.internal.cache.tier.sockets.ClientProxyMembershipID;
 import org.apache.geode.internal.cache.versions.RegionVersionVector;
 import org.apache.geode.internal.cache.versions.VersionTag;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
 
-/**
- *
- *
- */
 public class DistributedClearOperation extends DistributedCacheOperation {
   public static enum OperationType {
     OP_LOCK_FOR_CLEAR, OP_CLEAR,
@@ -48,6 +46,7 @@ public class DistributedClearOperation extends DistributedCacheOperation {
   /**
    * A map of all the regions that are currently locked for a clear in this VM
    */
+  @MakeNotStatic
   private static final ConcurrentHashMap<LockKey, DistributedRegion> lockedRegions =
       new ConcurrentHashMap<LockKey, DistributedRegion>();
 
@@ -75,7 +74,6 @@ public class DistributedClearOperation extends DistributedCacheOperation {
    * obtain locks on version generation in other members have them do a state-flush back to this
    * member
    *
-   * @param recipients
    */
   public static void lockAndFlushToOthers(RegionEventImpl regionEvent,
       Set<InternalDistributedMember> recipients) {
@@ -113,7 +111,6 @@ public class DistributedClearOperation extends DistributedCacheOperation {
   /**
    * Creates new instance of DistributedClearOperation
    *
-   * @param recipients
    */
   private DistributedClearOperation(OperationType op, RegionEventImpl event,
       RegionVersionVector rvv, Set<InternalDistributedMember> recipients) {
@@ -186,7 +183,7 @@ public class DistributedClearOperation extends DistributedCacheOperation {
        * okay to run this in a non-ordered executor since the operation contains its own ordering
        * information.
        */
-      return DistributionManager.HIGH_PRIORITY_EXECUTOR;
+      return OperationExecutors.HIGH_PRIORITY_EXECUTOR;
     }
 
     @Override
@@ -207,7 +204,7 @@ public class DistributedClearOperation extends DistributedCacheOperation {
     }
 
     @Override
-    protected boolean operateOnRegion(CacheEvent event, DistributionManager dm)
+    protected boolean operateOnRegion(CacheEvent event, ClusterDistributionManager dm)
         throws EntryNotFoundException {
 
       DistributedRegion region = (DistributedRegion) event.getRegion();
@@ -228,14 +225,16 @@ public class DistributedClearOperation extends DistributedCacheOperation {
       return true;
     }
 
+    @Override
     public int getDSFID() {
       return CLEAR_REGION_MESSAGE;
     }
 
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.clearOp = OperationType.values()[in.readByte()];
       this.eventID = (EventID) DataSerializer.readObject(in);
       this.rvv = (RegionVersionVector) DataSerializer.readObject(in);
@@ -243,8 +242,9 @@ public class DistributedClearOperation extends DistributedCacheOperation {
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       out.writeByte(this.clearOp.ordinal());
       DataSerializer.writeObject(this.eventID, out);
       DataSerializer.writeObject(this.rvv, out);
@@ -287,14 +287,16 @@ public class DistributedClearOperation extends DistributedCacheOperation {
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.context = DataSerializer.readObject(in);
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       DataSerializer.writeObject(this.context, out);
     }
   }

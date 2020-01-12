@@ -30,14 +30,16 @@ import org.apache.geode.CancelException;
 import org.apache.geode.cache.DiskStore;
 import org.apache.geode.cache.persistence.PersistentID;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.ReplyException;
 import org.apache.geode.internal.cache.DiskStoreImpl;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
 import org.apache.geode.internal.util.ArrayUtils;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * An instruction to all members with cache that they should compact their disk stores.
@@ -49,7 +51,7 @@ public class CompactRequest extends CliLegacyMessage {
     // do nothing
   }
 
-  public static Map<DistributedMember, Set<PersistentID>> send(DM dm) {
+  public static Map<DistributedMember, Set<PersistentID>> send(DistributionManager dm) {
     Set recipients = dm.getOtherDistributionManagerIds();
     CompactRequest request = new CompactRequest();
     request.setRecipients(recipients);
@@ -59,7 +61,7 @@ public class CompactRequest extends CliLegacyMessage {
     dm.putOutgoing(request);
 
     request.setSender(dm.getDistributionManagerId());
-    request.process((DistributionManager) dm);
+    request.process((ClusterDistributionManager) dm);
 
     try {
       replyProcessor.waitForReplies();
@@ -75,12 +77,12 @@ public class CompactRequest extends CliLegacyMessage {
   }
 
   @Override
-  protected void process(DistributionManager dm) {
+  protected void process(ClusterDistributionManager dm) {
     super.process(dm);
   }
 
   @Override
-  protected AdminResponse createResponse(DM dm) {
+  protected AdminResponse createResponse(DistributionManager dm) {
     InternalCache cache = dm.getCache();
     HashSet<PersistentID> compactedStores = new HashSet<>();
     if (cache != null && !cache.isClosed()) {
@@ -100,13 +102,15 @@ public class CompactRequest extends CliLegacyMessage {
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
   }
 
   @Override
@@ -119,7 +123,7 @@ public class CompactRequest extends CliLegacyMessage {
     Map<DistributedMember, Set<PersistentID>> results =
         Collections.synchronizedMap(new HashMap<DistributedMember, Set<PersistentID>>());
 
-    CompactReplyProcessor(DM dm, Collection initMembers) {
+    CompactReplyProcessor(DistributionManager dm, Collection initMembers) {
       super(dm, initMembers);
     }
 

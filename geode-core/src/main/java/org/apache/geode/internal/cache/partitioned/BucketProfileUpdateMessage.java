@@ -25,16 +25,19 @@ import org.apache.geode.CancelException;
 import org.apache.geode.DataSerializer;
 import org.apache.geode.SystemFailure;
 import org.apache.geode.cache.RegionDestroyedException;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.MessageWithReply;
+import org.apache.geode.distributed.internal.OperationExecutors;
 import org.apache.geode.distributed.internal.ReplyMessage;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.internal.cache.BucketAdvisor;
 import org.apache.geode.internal.cache.BucketAdvisor.BucketProfile;
 import org.apache.geode.internal.cache.PartitionedRegion;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * A Partitioned Region meta-data update message. This is used to send a bucket's meta-data to other
@@ -55,7 +58,7 @@ public class BucketProfileUpdateMessage extends DistributionMessage implements M
 
   @Override
   public int getProcessorType() {
-    return DistributionManager.WAITING_POOL_EXECUTOR;
+    return OperationExecutors.WAITING_POOL_EXECUTOR;
   }
 
   private BucketProfileUpdateMessage(Set recipients, int partitionedRegionId, int processorId,
@@ -78,7 +81,7 @@ public class BucketProfileUpdateMessage extends DistributionMessage implements M
   }
 
   @Override
-  protected void process(DistributionManager dm) {
+  protected void process(ClusterDistributionManager dm) {
     try {
       PartitionedRegion pr = PartitionedRegion.getPRFromId(this.prId);
       // pr.waitOnBucketInitialization(); // While PR doesn't directly do GII, wait on this for
@@ -124,8 +127,8 @@ public class BucketProfileUpdateMessage extends DistributionMessage implements M
    * @return an instance of reply processor if requireAck is true on which the caller can wait until
    *         the event has finished.
    */
-  public static ReplyProcessor21 send(Set recipients, DM dm, int prId, int bucketId,
-      BucketProfile bp, boolean requireAck) {
+  public static ReplyProcessor21 send(Set recipients, DistributionManager dm, int prId,
+      int bucketId, BucketProfile bp, boolean requireAck) {
     if (recipients.isEmpty()) {
       return null;
     }
@@ -141,13 +144,15 @@ public class BucketProfileUpdateMessage extends DistributionMessage implements M
     return rp;
   }
 
+  @Override
   public int getDSFID() {
     return PR_BUCKET_PROFILE_UPDATE_MESSAGE;
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     this.prId = in.readInt();
     this.bucketId = in.readInt();
     this.processorId = in.readInt();
@@ -155,8 +160,9 @@ public class BucketProfileUpdateMessage extends DistributionMessage implements M
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     out.writeInt(this.prId);
     out.writeInt(this.bucketId);
     out.writeInt(this.processorId);

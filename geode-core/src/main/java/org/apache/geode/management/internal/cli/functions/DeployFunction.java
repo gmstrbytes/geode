@@ -18,17 +18,12 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.attribute.PosixFilePermission;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import com.healthmarketscience.rmiio.RemoteInputStream;
 import com.healthmarketscience.rmiio.RemoteInputStreamClient;
@@ -38,16 +33,16 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.SystemFailure;
 import org.apache.geode.cache.CacheClosedException;
-import org.apache.geode.cache.execute.Function;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.internal.ClassPathLoader;
 import org.apache.geode.internal.DeployedJar;
-import org.apache.geode.internal.InternalEntity;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.cache.execute.InternalFunction;
+import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.management.internal.beans.FileUploader;
 
-public class DeployFunction implements Function, InternalEntity {
+public class DeployFunction implements InternalFunction {
   private static final Logger logger = LogService.getLogger();
 
   public static final String ID = DeployFunction.class.getName();
@@ -155,12 +150,7 @@ public class DeployFunction implements Function, InternalEntity {
     Map<String, File> stagedJars = new HashMap<>();
 
     try {
-      Set<PosixFilePermission> perms = new HashSet<>();
-      perms.add(PosixFilePermission.OWNER_READ);
-      perms.add(PosixFilePermission.OWNER_WRITE);
-      perms.add(PosixFilePermission.OWNER_EXECUTE);
-      Path tempDir =
-          Files.createTempDirectory("deploy-", PosixFilePermissions.asFileAttribute(perms));
+      Path tempDir = FileUploader.createSecuredTempDirectory("deploy-");
 
       for (int i = 0; i < jarNames.size(); i++) {
         Path tempJar = Paths.get(tempDir.toString(), jarNames.get(i));

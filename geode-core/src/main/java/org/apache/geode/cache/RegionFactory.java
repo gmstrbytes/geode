@@ -21,8 +21,7 @@ import org.apache.geode.cache.client.PoolManager;
 import org.apache.geode.compression.Compressor;
 import org.apache.geode.distributed.LeaseExpiredException;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.cache.LocalRegion;
-import org.apache.geode.internal.i18n.LocalizedStrings;
+import org.apache.geode.internal.cache.InternalRegion;
 
 /**
  * {@code RegionFactory} is used to create {@link Region regions} in a {@link Cache cache}.
@@ -110,10 +109,10 @@ public class RegionFactory<K, V> {
     this.cache = cache;
     RegionAttributes<K, V> ra = getCache().getRegionAttributes(regionAttributesId);
     if (ra == null) {
-      throw new IllegalStateException(LocalizedStrings.RegionFactory_NO_ATTRIBUTES_ASSOCIATED_WITH_0
-          .toLocalizedString(regionAttributesId));
+      throw new IllegalStateException(String.format("No attributes associated with %s",
+          regionAttributesId));
     }
-    this.attrsFactory = new AttributesFactory<K, V>(ra);
+    this.attrsFactory = new AttributesFactory<>(ra);
   }
 
   /**
@@ -457,9 +456,7 @@ public class RegionFactory<K, V> {
    * @deprecated as of 6.5
    */
   @Deprecated
-  public void setPublisher(boolean v) {
-    // this.attrsFactory.setPublisher(v);
-  }
+  public void setPublisher(boolean v) {}
 
   /**
    * Sets whether or not conflation is enabled for sending messages to async peers.
@@ -777,7 +774,7 @@ public class RegionFactory<K, V> {
       throws RegionExistsException {
     @SuppressWarnings("deprecation")
     RegionAttributes<K, V> ra = this.attrsFactory.create();
-    return ((LocalRegion) parent).createSubregion(name, ra);
+    return ((InternalRegion) parent).createSubregion(name, ra);
   }
 
   /**

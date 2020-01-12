@@ -21,10 +21,9 @@ import org.apache.geode.cache.RegionDestroyedException;
 import org.apache.geode.cache.TransactionDataNodeHasDepartedException;
 import org.apache.geode.cache.TransactionDataNotColocatedException;
 import org.apache.geode.cache.TransactionException;
+import org.apache.geode.internal.cache.InternalRegion;
 import org.apache.geode.internal.cache.LocalRegion;
 import org.apache.geode.internal.cache.TXStateStub;
-import org.apache.geode.internal.cache.partitioned.RemoteFetchKeysMessage;
-import org.apache.geode.internal.i18n.LocalizedStrings;
 
 public abstract class AbstractPeerTXRegionStub implements TXRegionStub {
 
@@ -34,24 +33,46 @@ public abstract class AbstractPeerTXRegionStub implements TXRegionStub {
     this.state = txstate;
   }
 
+  protected abstract InternalRegion getRegion();
+
   @Override
-  public Set getRegionKeysForIteration(LocalRegion currRegion) {
+  public Set getRegionKeysForIteration() {
     try {
       RemoteFetchKeysMessage.FetchKeysResponse response =
-          RemoteFetchKeysMessage.send(currRegion, state.getTarget());
+          RemoteFetchKeysMessage.send((LocalRegion) getRegion(), state.getTarget());
       return response.waitForKeys();
-    } catch (RegionDestroyedException e) {
+    } catch (RegionDestroyedException regionDestroyedException) {
       throw new TransactionDataNotColocatedException(
-          LocalizedStrings.RemoteMessage_REGION_0_NOT_COLOCATED_WITH_TRANSACTION
-              .toLocalizedString(e.getRegionFullPath()),
-          e);
-    } catch (CacheClosedException e) {
+          String.format("Region %s not colocated with other regions in transaction",
+              regionDestroyedException.getRegionFullPath()),
+          regionDestroyedException);
+    } catch (CacheClosedException cacheClosedException) {
       throw new TransactionDataNodeHasDepartedException("Cache was closed while fetching keys");
-    } catch (Exception e) {
-      throw new TransactionException(e);
+    } catch (TransactionException transactionException) {
+      throw transactionException;
+    } catch (Exception exception) {
+      throw new TransactionException(exception);
     }
   }
 
-
-
+  @Override
+  public int entryCount() {
+    try {
+      RemoteSizeMessage.SizeResponse response =
+          RemoteSizeMessage.send(this.state.getTarget(), getRegion());
+      return response.waitForSize();
+    } catch (RegionDestroyedException regionDestroyedException) {
+      throw new TransactionDataNotColocatedException(
+          String.format("Region %s not colocated with other regions in transaction",
+              regionDestroyedException.getRegionFullPath()),
+          regionDestroyedException);
+    } catch (CacheClosedException cacheClosedException) {
+      throw new TransactionDataNodeHasDepartedException(
+          "Cache was closed while performing size operation");
+    } catch (TransactionException transactionException) {
+      throw transactionException;
+    } catch (Exception exception) {
+      throw new TransactionException(exception);
+    }
+  }
 }

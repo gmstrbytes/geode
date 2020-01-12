@@ -84,7 +84,6 @@ public class GetEventValueOp {
           throw new ServerOperationException(s, (Throwable) part.getObject());
           // Get the exception toString part.
           // This was added for c++ thin client and not used in java
-          // Part exceptionToStringPart = msg.getPart(1);
         } else if (isErrorResponse(msgType)) {
           throw new ServerOperationException(part.getString());
         } else {
@@ -94,18 +93,22 @@ public class GetEventValueOp {
       }
     }
 
+    @Override
     protected boolean isErrorResponse(int msgType) {
       return msgType == MessageType.REQUESTDATAERROR;
     }
 
+    @Override
     protected long startAttempt(ConnectionStats stats) {
       return stats.startGet();
     }
 
+    @Override
     protected void endSendAttempt(ConnectionStats stats, long start) {
       stats.endGetSend(start, hasFailed());
     }
 
+    @Override
     protected void endAttempt(ConnectionStats stats, long start) {
       stats.endGet(start, hasTimedOut(), hasFailed());
     }

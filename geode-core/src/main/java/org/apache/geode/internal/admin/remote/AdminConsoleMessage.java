@@ -12,31 +12,26 @@
  * or implied. See the License for the specific language governing permissions and limitations under
  * the License.
  */
-
-
 package org.apache.geode.internal.admin.remote;
 
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 
-import org.apache.logging.log4j.Logger;
-
-import org.apache.geode.distributed.internal.DistributionManager;
+import org.apache.geode.alerting.internal.spi.AlertLevel;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.PooledDistributionMessage;
 import org.apache.geode.internal.admin.Alert;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.ManagerLogWriter;
-import org.apache.geode.internal.logging.log4j.AlertAppender;
-import org.apache.geode.internal.logging.log4j.LogWriterLogger;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
 
 /**
  * A message that is sent to a particular distribution manager to let it know that the sender is an
- * administation console that just connected.
+ * administration console that just connected.
  */
 public class AdminConsoleMessage extends PooledDistributionMessage {
   // instance variables
-  int level;
+  private int level;
 
   public static AdminConsoleMessage create(int level) {
     AdminConsoleMessage m = new AdminConsoleMessage();
@@ -49,32 +44,35 @@ public class AdminConsoleMessage extends PooledDistributionMessage {
   }
 
   @Override
-  public void process(DistributionManager dm) {
-    if (this.level != Alert.OFF) {
-      AlertAppender.getInstance().addAlertListener(this.getSender(), this.level);
+  public void process(ClusterDistributionManager dm) {
+    if (level != Alert.OFF) {
+      dm.getAlertingService().addAlertListener(getSender(), AlertLevel.find(level));
     }
-    dm.addAdminConsole(this.getSender());
+    dm.addAdminConsole(getSender());
   }
 
+  @Override
   public int getDSFID() {
     return ADMIN_CONSOLE_MESSAGE;
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
-    out.writeInt(this.level);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
+    out.writeInt(level);
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
-    this.level = in.readInt();
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
+    level = in.readInt();
   }
 
   @Override
   public String toString() {
-    return "AdminConsoleMessage from " + this.getSender() + " level=" + level;
+    return "AdminConsoleMessage from " + getSender() + " level=" + level;
   }
 
 }

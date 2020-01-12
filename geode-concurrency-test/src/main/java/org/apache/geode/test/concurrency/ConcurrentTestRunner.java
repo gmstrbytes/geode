@@ -14,16 +14,10 @@
  */
 package org.apache.geode.test.concurrency;
 
-import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.List;
 
-import gov.nasa.jpf.Config;
-import gov.nasa.jpf.JPF;
-import gov.nasa.jpf.JPFListener;
 import junit.framework.AssertionFailedError;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.simple.SimpleLoggerContextFactory;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.Description;
@@ -34,7 +28,7 @@ import org.junit.runners.model.FrameworkMethod;
 import org.junit.runners.model.InitializationError;
 
 import org.apache.geode.test.concurrency.annotation.ConcurrentTestConfig;
-import org.apache.geode.test.concurrency.jpf.JpfRunner;
+import org.apache.geode.test.concurrency.loop.LoopRunner;
 
 
 /**
@@ -44,9 +38,7 @@ import org.apache.geode.test.concurrency.jpf.JpfRunner;
  * test can use to invoke code in parallel.
  *
  * This test run will try to exercise the test method to flush out any concurrent bugs in the
- * parallel execution. Currently this runner is using Java PathFinder to run the test with *all*
- * possible thread interleavings, but other methods such as invoking the method multiple times in a
- * normal JVM may be supported in the feature.
+ * parallel execution.
  *
  * All test logic and state *must* be encapsulated in the individual test methods. This is because
  * the concurrency testing logic may need to invoke the test body multiple times, possibly in
@@ -71,8 +63,8 @@ import org.apache.geode.test.concurrency.jpf.JpfRunner;
  * }
  * </code>
  *
- * ConcurrentTestRunner currently executes tests using Java Pathfinder, which will run the test with
- * all thread interleavings.
+ * ConcurrentTestRunner currently executes tests using the {@link LoopRunner} which will run the
+ * test many times.
  */
 public class ConcurrentTestRunner extends ParentRunner<FrameworkMethod> {
   /**
@@ -84,7 +76,7 @@ public class ConcurrentTestRunner extends ParentRunner<FrameworkMethod> {
     super(testClass);
     ConcurrentTestConfig configuration = getTestClass().getAnnotation(ConcurrentTestConfig.class);
     if (configuration == null) {
-      runner = new JpfRunner();
+      runner = new LoopRunner();
       return;
     }
 

@@ -26,42 +26,46 @@ import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 import org.junit.Before;
 import org.junit.ClassRule;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 
+import org.apache.geode.cache.configuration.CacheConfig;
+import org.apache.geode.cache.configuration.CacheElement;
+import org.apache.geode.cache.configuration.RegionConfig;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.internal.ClusterConfigurationService;
+import org.apache.geode.distributed.internal.InternalConfigurationPersistenceService;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.management.internal.cli.GfshParseResult;
 import org.apache.geode.management.internal.cli.functions.CliFunctionResult;
-import org.apache.geode.management.internal.cli.result.CommandResult;
 import org.apache.geode.management.internal.configuration.domain.XmlEntity;
-import org.apache.geode.test.junit.categories.UnitTest;
 import org.apache.geode.test.junit.rules.GfshParserRule;
 
-@Category(UnitTest.class)
 public class DestroyRegionCommandTest {
 
   @ClassRule
   public static GfshParserRule parser = new GfshParserRule();
 
   private DestroyRegionCommand command;
-  private CommandResult result;
   private CliFunctionResult result1, result2;
-  private ClusterConfigurationService ccService;
+  private InternalConfigurationPersistenceService ccService;
   XmlEntity xmlEntity;
+  private CacheConfig cacheConfig = mock(CacheConfig.class);
+  private RegionConfig regionConfig = mock(RegionConfig.class);
+  private CacheElement cacheElement = mock(CacheElement.class);
+  private List<RegionConfig> regionConfigList = Collections.singletonList(regionConfig);
+  private List<CacheElement> cacheElementList = Collections.singletonList(cacheElement);
 
   @Before
   public void before() throws Exception {
     xmlEntity = mock(XmlEntity.class);
     command = spy(DestroyRegionCommand.class);
-    ccService = mock(ClusterConfigurationService.class);
-    doReturn(ccService).when(command).getSharedConfiguration();
+    ccService = mock(InternalConfigurationPersistenceService.class);
+    doReturn(ccService).when(command).getConfigurationPersistenceService();
     doReturn(mock(InternalCache.class)).when(command).getCache();
 
     List<CliFunctionResult> functionResults = new ArrayList<>();
@@ -76,7 +80,7 @@ public class DestroyRegionCommandTest {
   }
 
   @Test
-  public void invalidRegion() throws Exception {
+  public void invalidRegion() {
     parser.executeAndAssertThat(command, "destroy region").statusIsError()
         .containsOutput("Invalid command");
 
@@ -94,8 +98,8 @@ public class DestroyRegionCommandTest {
   }
 
   @Test
-  public void whenNoRegionIsFoundOnAnyMembers() throws Exception {
-    doReturn(Collections.emptySet()).when(command).findMembersForRegion(any(), any());
+  public void whenNoRegionIsFoundOnAnyMembers() {
+    doReturn(Collections.emptySet()).when(command).findMembersForRegion(any());
     parser.executeAndAssertThat(command, "destroy region --name=test").statusIsError()
         .containsOutput("Could not find a Region with Region path");
 
@@ -104,16 +108,16 @@ public class DestroyRegionCommandTest {
   }
 
   @Test
-  public void multipleResultReturned_oneSucess_oneFailed() throws Exception {
+  public void multipleResultReturned_oneSucess_oneFailed() {
     // mock this to pass the member search call
     doReturn(Collections.singleton(DistributedMember.class)).when(command)
-        .findMembersForRegion(any(), any());
+        .findMembersForRegion(any());
     when(result1.isSuccessful()).thenReturn(true);
-    when(result1.getStatus()).thenReturn("result1 message");
+    when(result1.getStatusMessage()).thenReturn("result1 message");
     when(result1.getXmlEntity()).thenReturn(xmlEntity);
 
     when(result2.isSuccessful()).thenReturn(false);
-    when(result2.getStatus()).thenReturn("result2 message");
+    when(result2.getStatusMessage()).thenReturn("result2 message");
 
     parser.executeAndAssertThat(command, "destroy region --name=test").statusIsSuccess()
         .containsOutput("result1 message").containsOutput("result2 message");
@@ -123,16 +127,16 @@ public class DestroyRegionCommandTest {
   }
 
   @Test
-  public void multipleResultReturned_oneSuccess_oneException() throws Exception {
+  public void multipleResultReturned_oneSuccess_oneException() {
     // mock this to pass the member search call
     doReturn(Collections.singleton(DistributedMember.class)).when(command)
-        .findMembersForRegion(any(), any());
+        .findMembersForRegion(any());
     when(result1.isSuccessful()).thenReturn(true);
-    when(result1.getStatus()).thenReturn("result1 message");
+    when(result1.getStatusMessage()).thenReturn("result1 message");
     when(result1.getXmlEntity()).thenReturn(xmlEntity);
 
     when(result2.isSuccessful()).thenReturn(false);
-    when(result2.getStatus()).thenReturn("something happened");
+    when(result2.getStatusMessage()).thenReturn("something happened");
 
     parser.executeAndAssertThat(command, "destroy region --name=test").statusIsSuccess()
         .containsOutput("result1 message").containsOutput("something happened");
@@ -143,21 +147,87 @@ public class DestroyRegionCommandTest {
   }
 
   @Test
-  public void multipleResultReturned_all_failed() throws Exception {
+  public void multipleResultReturned_all_failed() {
     // mock this to pass the member search call
     doReturn(Collections.singleton(DistributedMember.class)).when(command)
-        .findMembersForRegion(any(), any());
+        .findMembersForRegion(any());
     when(result1.isSuccessful()).thenReturn(false);
-    when(result1.getStatus()).thenReturn("result1 message");
+    when(result1.getStatusMessage()).thenReturn("result1 message");
 
     when(result2.isSuccessful()).thenReturn(false);
-    when(result2.getStatus()).thenReturn("something happened");
+    when(result2.getStatusMessage()).thenReturn("something happened");
 
     parser.executeAndAssertThat(command, "destroy region --name=test").statusIsError()
         .containsOutput("result1 message").containsOutput("something happened");
 
 
-    // verify that xmlEntiry returned by the result1 is saved to Cluster config
-    verify(command, never()).persistClusterConfiguration(any(), any());
+    // verify that xmlEntry returned by the result1 is saved to Cluster config
+    verify(ccService, never()).deleteXmlEntity(any(), any());
+  }
+
+  private void setupJDBCMappingOnRegion(String regionName) {
+    doReturn(cacheConfig).when(ccService).getCacheConfig("cluster");
+    doReturn(regionConfigList).when(cacheConfig).getRegions();
+    doReturn(regionName).when(regionConfig).getName();
+    doReturn(regionName).when(regionConfig).getId();
+    doReturn(cacheElementList).when(regionConfig).getCustomRegionElements();
+    doReturn("jdbc-mapping").when(cacheElement).getId();
+  }
+
+  @Test(expected = IllegalStateException.class)
+  public void checkForJDBCMappingWithRegionPathThrowsIllegalStateException() {
+    setupJDBCMappingOnRegion("regionName");
+
+    command.checkForJDBCMapping("/regionName");
+  }
+
+  @Test(expected = IllegalStateException.class)
+  public void checkForJDBCMappingWithRegionNameThrowsIllegalStateException() {
+    setupJDBCMappingOnRegion("regionName");
+
+    command.checkForJDBCMapping("regionName");
+  }
+
+  @Test(expected = IllegalStateException.class)
+  public void checkForJDBCMappingWithRegionNameThrowsIllegalStateExceptionForGroup() {
+    Set<String> groups = new HashSet<String>();
+    groups.add("Group1");
+    doReturn(groups).when(ccService).getGroups();
+    setupJDBCMappingOnRegion("regionName");
+    doReturn(cacheConfig).when(ccService).getCacheConfig("Group1");
+
+    command.checkForJDBCMapping("regionName");
+  }
+
+  @Test
+  public void checkForJDBCMappingWithNoClusterConfigDoesNotThrowException() {
+    setupJDBCMappingOnRegion("regionName");
+    doReturn(null).when(command).getConfigurationPersistenceService();
+
+    command.checkForJDBCMapping("regionName");
+  }
+
+  @Test
+  public void checkForJDBCMappingWithNoCacheConfigDoesNotThrowException() {
+    setupJDBCMappingOnRegion("regionName");
+    doReturn(null).when(ccService).getCacheConfig("cluster");
+
+    command.checkForJDBCMapping("regionName");
+  }
+
+  @Test
+  public void checkForJDBCMappingWithNoRegionConfigDoesNotThrowException() {
+    setupJDBCMappingOnRegion("regionName");
+    doReturn(Collections.emptyList()).when(cacheConfig).getRegions();
+
+    command.checkForJDBCMapping("regionName");
+  }
+
+  @Test
+  public void checkForJDBCMappingWithNoJDBCMappingDoesNotThrowException() {
+    setupJDBCMappingOnRegion("regionName");
+    doReturn("something").when(cacheElement).getId();
+
+    command.checkForJDBCMapping("regionName");
   }
 }

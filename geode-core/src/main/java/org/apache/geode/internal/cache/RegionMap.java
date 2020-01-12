@@ -19,20 +19,22 @@ import java.util.List;
 import java.util.Set;
 
 import org.apache.geode.cache.CacheCallback;
+import org.apache.geode.cache.CacheEvent;
 import org.apache.geode.cache.CacheWriterException;
 import org.apache.geode.cache.EntryNotFoundException;
 import org.apache.geode.cache.Operation;
 import org.apache.geode.cache.TimeoutException;
 import org.apache.geode.cache.TransactionId;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.cache.AbstractRegionMap.ARMLockTestHook;
 import org.apache.geode.internal.cache.entries.DiskEntry;
+import org.apache.geode.internal.cache.eviction.EvictableEntry;
 import org.apache.geode.internal.cache.eviction.EvictableMap;
 import org.apache.geode.internal.cache.tier.sockets.ClientProxyMembershipID;
 import org.apache.geode.internal.cache.versions.RegionVersionVector;
 import org.apache.geode.internal.cache.versions.VersionHolder;
 import org.apache.geode.internal.cache.versions.VersionSource;
 import org.apache.geode.internal.cache.versions.VersionTag;
+import org.apache.geode.internal.util.concurrent.ConcurrentMapWithReusableEntries;
 
 /**
  * Internal interface used by {@link LocalRegion} to access the map that holds its entries. Note
@@ -41,6 +43,26 @@ import org.apache.geode.internal.cache.versions.VersionTag;
  * @since GemFire 3.5.1
  */
 public interface RegionMap extends EvictableMap {
+
+  interface ARMLockTestHook {
+    void beforeBulkLock(InternalRegion region);
+
+    void afterBulkLock(InternalRegion region);
+
+    void beforeBulkRelease(InternalRegion region);
+
+    void afterBulkRelease(InternalRegion region);
+
+    void beforeLock(InternalRegion region, CacheEvent event);
+
+    void afterLock(InternalRegion region, CacheEvent event);
+
+    void beforeRelease(InternalRegion region, CacheEvent event);
+
+    void afterRelease(InternalRegion region, CacheEvent event);
+
+    void beforeStateFlushWait();
+  }
 
   /**
    * Parameter object used to facilitate construction of an EntriesMap. Modification of fields after
@@ -78,11 +100,6 @@ public interface RegionMap extends EvictableMap {
    * Gets the attributes that this map was created with.
    */
   Attributes getAttributes();
-
-  /**
-   * Tells this map what region owns it.
-   */
-  void setOwner(Object r);
 
   void changeOwner(LocalRegion r);
 
@@ -137,7 +154,7 @@ public interface RegionMap extends EvictableMap {
    * Clear the region and, if the parameter rvv is not null, return a collection of the IDs of
    * version sources that are still in the map when the operation completes.
    */
-  Set<VersionSource> clear(RegionVersionVector rvv);
+  Set<VersionSource> clear(RegionVersionVector rvv, BucketRegion bucketRegion);
 
   /**
    * Used by disk regions when recovering data from backup. Currently this "put" is done at a very
@@ -184,7 +201,6 @@ public interface RegionMap extends EvictableMap {
    * @see LocalRegion
    * @see AbstractRegionMap
    * @see CacheCallback
-   * @see AbstractLRURegionMap
    */
   boolean destroy(EntryEventImpl event, boolean inTokenMode, boolean duringRI, boolean cacheWrite,
       boolean isEviction, Object expectedOldValue, boolean removeRecoveredEntry)
@@ -346,15 +362,33 @@ public interface RegionMap extends EvictableMap {
    */
   void decTxRefCount(RegionEntry e);
 
-  void close();
+  void close(BucketRegion bucketRegion);
 
-  default void lockRegionForAtomicTX(LocalRegion r) {}
+  default void lockRegionForAtomicTX(InternalRegion r) {}
 
-  default void unlockRegionForAtomicTX(LocalRegion r) {}
+  default void unlockRegionForAtomicTX(InternalRegion r) {}
 
   ARMLockTestHook getARMLockTestHook();
 
   long getEvictions();
 
   void incRecentlyUsed();
+
+  /**
+   * Returns the memory overhead of entries in this map
+   */
+  int getEntryOverhead();
+
+  boolean beginChangeValueForm(EvictableEntry le, CachedDeserializable vmCachedDeserializable,
+      Object v);
+
+  void finishChangeValueForm();
+
+  int centralizedLruUpdateCallback();
+
+  void updateEvictionCounter();
+
+  ConcurrentMapWithReusableEntries<Object, Object> getCustomEntryConcurrentHashMap();
+
+  void setEntryMap(ConcurrentMapWithReusableEntries<Object, Object> map);
 }

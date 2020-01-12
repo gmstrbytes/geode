@@ -57,7 +57,7 @@ package org.apache.geode.management.internal.cli.result;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 
 import org.apache.geode.management.internal.cli.GfshParser;
 
@@ -363,7 +363,6 @@ public class TableBuilder {
           }
         }
       } else {
-        // saj hook
         for (int i = 0; i < this.columns.size(); i++) {
           boolean lastColumn = !(i < (this.columns.size() - 1));
           stringBuffer

@@ -16,23 +16,21 @@ package org.apache.geode.internal.cache.eviction;
 
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.logging.log4j.Logger;
 
+import org.apache.geode.annotations.Immutable;
+import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.internal.cache.BucketRegion;
 import org.apache.geode.internal.cache.RegionEntry;
 import org.apache.geode.internal.cache.RegionEntryContext;
 import org.apache.geode.internal.cache.versions.RegionVersionVector;
-import org.apache.geode.internal.i18n.LocalizedStrings;
 import org.apache.geode.internal.lang.SystemPropertyHelper;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.LoggingThreadGroup;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.logging.internal.executors.LoggingExecutors;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * LRUListWithAsyncSorting holds the eviction list, and the behavior for maintaining the list and
@@ -48,18 +46,21 @@ public class LRUListWithAsyncSorting extends AbstractEvictionList {
 
   private static final Logger logger = LogService.getLogger();
 
+  @Immutable
   private static final Optional<Integer> EVICTION_SCAN_MAX_THREADS = SystemPropertyHelper
       .getProductIntegerProperty(SystemPropertyHelper.EVICTION_SCAN_MAX_THREADS);
 
+  @MakeNotStatic
   private static final ExecutorService SINGLETON_EXECUTOR = createExecutor();
 
   private static final int DEFAULT_EVICTION_SCAN_THRESHOLD_PERCENT = 25;
 
-  private static final int MAX_EVICTION_ATTEMPTS = 10;
+  private static final int DEFAULT_MAX_EVICTION_ATTEMPTS = 10;
 
   private final AtomicInteger recentlyUsedCounter = new AtomicInteger();
 
   private final double scanThreshold;
+  private final int maxEvictionAttempts;
 
   private Future<?> currentScan;
 
@@ -70,31 +71,19 @@ public class LRUListWithAsyncSorting extends AbstractEvictionList {
     if (threads < 1) {
       threads = Math.max((Runtime.getRuntime().availableProcessors() / 4), 1);
     }
-    final LoggingThreadGroup group =
-        LoggingThreadGroup.createThreadGroup("LRUListWithAsyncSorting Threads", logger);
-    ThreadFactory threadFactory = new ThreadFactory() {
-      private final AtomicInteger threadId = new AtomicInteger();
-
-      public Thread newThread(final Runnable command) {
-        Thread thread = new Thread(group, command,
-            "LRUListWithAsyncSortingThread" + this.threadId.incrementAndGet());
-        thread.setDaemon(true);
-        return thread;
-      }
-    };
-    return Executors.newFixedThreadPool(threads, threadFactory);
+    return LoggingExecutors.newFixedThreadPool("LRUListWithAsyncSortingThread", true, threads);
   }
 
-  LRUListWithAsyncSorting(InternalEvictionStatistics stats, BucketRegion region) {
-    this(stats, region, SINGLETON_EXECUTOR);
-    logger.info("Using experimental LRUListWithAsyncSorting");
+  LRUListWithAsyncSorting(EvictionController controller) {
+    this(controller, SINGLETON_EXECUTOR, DEFAULT_MAX_EVICTION_ATTEMPTS);
   }
 
-  LRUListWithAsyncSorting(InternalEvictionStatistics stats, BucketRegion region,
-      ExecutorService executor) {
-    super(stats, region);
+  LRUListWithAsyncSorting(EvictionController controller, ExecutorService executor,
+      int maxEvictionAttempts) {
+    super(controller);
     this.scanThreshold = calculateScanThreshold();
     this.executor = executor;
+    this.maxEvictionAttempts = maxEvictionAttempts;
   }
 
   private double calculateScanThreshold() {
@@ -111,8 +100,8 @@ public class LRUListWithAsyncSorting extends AbstractEvictionList {
   }
 
   @Override
-  public void clear(RegionVersionVector regionVersionVector) {
-    super.clear(regionVersionVector);
+  public void clear(RegionVersionVector regionVersionVector, BucketRegion bucketRegion) {
+    super.clear(regionVersionVector, bucketRegion);
     recentlyUsedCounter.set(0);
   }
 
@@ -130,28 +119,27 @@ public class LRUListWithAsyncSorting extends AbstractEvictionList {
         return null;
       }
 
-      if (logger.isTraceEnabled(LogMarker.LRU_CLOCK)) {
-        logger.trace(LogMarker.LRU_CLOCK, "lru considering {}", evictionNode);
+      if (logger.isTraceEnabled(LogMarker.LRU_CLOCK_VERBOSE)) {
+        logger.trace(LogMarker.LRU_CLOCK_VERBOSE, "lru considering {}", evictionNode);
       }
 
       if (!isEvictable(evictionNode)) {
         continue;
       }
 
-      if (evictionNode.isRecentlyUsed() && evictionAttempts < MAX_EVICTION_ATTEMPTS) {
+      if (evictionNode.isRecentlyUsed() && evictionAttempts < maxEvictionAttempts) {
         evictionAttempts++;
         evictionNode.unsetRecentlyUsed();
         appendEntry(evictionNode);
         continue;
       }
 
-      if (logger.isTraceEnabled(LogMarker.LRU_CLOCK)) {
-        logger.trace(LogMarker.LRU_CLOCK, LocalizedMessage
-            .create(LocalizedStrings.NewLRUClockHand_RETURNING_UNUSED_ENTRY, evictionNode));
+      if (logger.isTraceEnabled(LogMarker.LRU_CLOCK_VERBOSE)) {
+        logger.trace(LogMarker.LRU_CLOCK_VERBOSE, "returning unused entry: {}", evictionNode);
       }
       if (evictionNode.isRecentlyUsed()) {
         scanIfNeeded();
-        stats.incGreedyReturns(1);
+        getStatistics().incGreedyReturns(1);
       }
       return (EvictableEntry) evictionNode;
     }
@@ -214,7 +202,8 @@ public class LRUListWithAsyncSorting extends AbstractEvictionList {
   }
 
   private boolean hasThresholdBeenMet(int recentlyUsedCount) {
-    return size() > 0 && (double) recentlyUsedCount / size() >= this.scanThreshold;
+    return size() >= maxEvictionAttempts
+        && (double) recentlyUsedCount / size() >= this.scanThreshold;
   }
 
   private synchronized EvictionNode moveToTailAndGetNext(EvictionNode evictionNode) {

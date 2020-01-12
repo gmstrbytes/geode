@@ -21,13 +21,13 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.Logger;
 import org.apache.shiro.subject.Subject;
 import org.springframework.shell.core.annotation.CliCommand;
 import org.springframework.shell.core.annotation.CliOption;
 
-import org.apache.geode.cache.CacheFactory;
+import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.execute.FunctionService;
 import org.apache.geode.cache.execute.ResultCollector;
 import org.apache.geode.cache.query.QueryInvalidException;
@@ -35,27 +35,26 @@ import org.apache.geode.cache.query.internal.CompiledValue;
 import org.apache.geode.cache.query.internal.QCompiler;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.management.cli.CliMetaData;
 import org.apache.geode.management.cli.ConverterHint;
-import org.apache.geode.management.cli.Result;
+import org.apache.geode.management.cli.GfshCommand;
 import org.apache.geode.management.internal.cli.CliUtil;
 import org.apache.geode.management.internal.cli.domain.DataCommandRequest;
 import org.apache.geode.management.internal.cli.domain.DataCommandResult;
 import org.apache.geode.management.internal.cli.functions.DataCommandFunction;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
 import org.apache.geode.management.internal.cli.remote.CommandExecutionContext;
-import org.apache.geode.management.internal.cli.result.CompositeResultData;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.security.ResourcePermission.Operation;
 import org.apache.geode.security.ResourcePermission.Resource;
 
-public class QueryCommand implements GfshCommand {
+public class QueryCommand extends GfshCommand {
   private static final Logger logger = LogService.getLogger();
 
   @CliCommand(value = "query", help = CliStrings.QUERY__HELP)
   @CliMetaData(interceptor = "org.apache.geode.management.internal.cli.commands.QueryInterceptor")
-  public Result query(
+  public ResultModel query(
       @CliOption(key = CliStrings.QUERY__QUERY, help = CliStrings.QUERY__QUERY__HELP,
           mandatory = true) final String query,
       @CliOption(key = "file", help = "File in which to output the results.",
@@ -63,12 +62,11 @@ public class QueryCommand implements GfshCommand {
       @CliOption(key = CliStrings.QUERY__INTERACTIVE, unspecifiedDefaultValue = "false",
           help = CliStrings.QUERY__INTERACTIVE__HELP) final boolean interactive) {
     DataCommandResult dataResult = select(query);
-    CompositeResultData rd = dataResult.toSelectCommandResult();
-    return ResultBuilder.buildResult(rd);
+    return dataResult.toSelectCommandResult();
   }
 
   private DataCommandResult select(String query) {
-    InternalCache cache = (InternalCache) CacheFactory.getAnyInstance();
+    Cache cache = getCache();
     DataCommandResult dataResult;
 
     if (StringUtils.isEmpty(query)) {
@@ -95,19 +93,19 @@ public class QueryCommand implements GfshCommand {
 
       // authorize data read on these regions
       for (String region : regions) {
-        cache.getSecurityService().authorize(Resource.DATA, Operation.READ, region);
+        authorize(Resource.DATA, Operation.READ, region);
       }
 
       regionsInQuery = Collections.unmodifiableSet(regions);
       if (regionsInQuery.size() > 0) {
         Set<DistributedMember> members =
-            CliUtil.getQueryRegionsAssociatedMembers(regionsInQuery, cache, false);
+            CliUtil.getQueryRegionsAssociatedMembers(regionsInQuery, (InternalCache) cache, false);
         if (members != null && members.size() > 0) {
           DataCommandFunction function = new DataCommandFunction();
           DataCommandRequest request = new DataCommandRequest();
           request.setCommand(CliStrings.QUERY);
           request.setQuery(query);
-          Subject subject = cache.getSecurityService().getSubject();
+          Subject subject = getSubject();
           if (subject != null) {
             request.setPrincipal(subject.getPrincipal());
           }

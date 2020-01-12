@@ -27,10 +27,9 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.DataSerializer;
 import org.apache.geode.cache.Cache;
-import org.apache.geode.cache.CacheFactory;
 import org.apache.geode.cache.wan.GatewayQueueEvent;
 import org.apache.geode.cache.wan.GatewaySender;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.MessageWithReply;
@@ -39,30 +38,32 @@ import org.apache.geode.distributed.internal.ReplyException;
 import org.apache.geode.distributed.internal.ReplyMessage;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.DataSerializableFixedID;
-import org.apache.geode.internal.Version;
 import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.internal.cache.InitialImageOperation;
+import org.apache.geode.internal.cache.InternalCache;
+import org.apache.geode.internal.cache.InternalRegion;
 import org.apache.geode.internal.cache.LocalRegion;
 import org.apache.geode.internal.cache.versions.VersionTag;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
+import org.apache.geode.internal.serialization.DataSerializableFixedID;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 public class GatewaySenderQueueEntrySynchronizationOperation {
 
   private InternalDistributedMember recipient;
 
-  private LocalRegion region;
+  private InternalRegion region;
 
   private List<GatewaySenderQueueEntrySynchronizationEntry> entriesToSynchronize;
 
   private static final Logger logger = LogService.getLogger();
 
   protected GatewaySenderQueueEntrySynchronizationOperation(InternalDistributedMember recipient,
-      LocalRegion region, List<InitialImageOperation.Entry> giiEntriesToSynchronize) {
+      InternalRegion internalRegion, List<InitialImageOperation.Entry> giiEntriesToSynchronize) {
     this.recipient = recipient;
-    this.region = region;
+    this.region = internalRegion;
     initializeEntriesToSynchronize(giiEntriesToSynchronize);
   }
 
@@ -74,7 +75,7 @@ public class GatewaySenderQueueEntrySynchronizationOperation {
           this.entriesToSynchronize);
     }
     // Create and send message
-    DM dm = this.region.getDistributionManager();
+    DistributionManager dm = this.region.getDistributionManager();
     GatewaySenderQueueEntrySynchronizationReplyProcessor processor =
         new GatewaySenderQueueEntrySynchronizationReplyProcessor(dm, this.recipient, this);
     GatewaySenderQueueEntrySynchronizationMessage message =
@@ -86,7 +87,7 @@ public class GatewaySenderQueueEntrySynchronizationOperation {
     try {
       processor.waitForReplies();
     } catch (ReplyException e) {
-      e.handleAsUnexpected();
+      e.handleCause();
     } catch (InterruptedException e) {
       dm.getCancelCriterion().checkCancelInProgress(e);
       Thread.currentThread().interrupt();
@@ -94,7 +95,7 @@ public class GatewaySenderQueueEntrySynchronizationOperation {
   }
 
   protected GemFireCacheImpl getCache() {
-    return (GemFireCacheImpl) CacheFactory.getAnyInstance();
+    return (GemFireCacheImpl) region.getDistributionManager().getCache();
   }
 
   private void initializeEntriesToSynchronize(
@@ -111,7 +112,7 @@ public class GatewaySenderQueueEntrySynchronizationOperation {
 
     private GatewaySenderQueueEntrySynchronizationOperation operation;
 
-    public GatewaySenderQueueEntrySynchronizationReplyProcessor(DM dm,
+    public GatewaySenderQueueEntrySynchronizationReplyProcessor(DistributionManager dm,
         InternalDistributedMember recipient,
         GatewaySenderQueueEntrySynchronizationOperation operation) {
       super(dm, recipient);
@@ -138,10 +139,11 @@ public class GatewaySenderQueueEntrySynchronizationOperation {
               if (events.isEmpty()) {
                 GatewaySenderQueueEntrySynchronizationEntry entry =
                     this.operation.entriesToSynchronize.get(i);
-                logger.info(LocalizedMessage.create(
-                    LocalizedStrings.GatewaySenderQueueEntrySynchronizationReplyProcessor_REPLY_IS_EMPTY,
-                    new Object[] {reply.getSender(), this.operation.region.getFullPath(), entry.key,
-                        entry.entryVersion}));
+                logger.info(
+                    "Synchronization event reply from member={}; regionPath={}; key={}; entryVersion={} is empty",
+                    new Object[] {reply.getSender(), this.operation.region.getFullPath(),
+                        entry.key,
+                        entry.entryVersion});
               } else {
                 putSynchronizationEvents(eventsForOneEntry);
               }
@@ -161,8 +163,8 @@ public class GatewaySenderQueueEntrySynchronizationOperation {
       }
     }
 
-    private Cache getCache() {
-      return CacheFactory.getAnyInstance();
+    Cache getCache() {
+      return dmgr.getCache();
     }
   }
 
@@ -188,7 +190,7 @@ public class GatewaySenderQueueEntrySynchronizationOperation {
     }
 
     @Override
-    protected void process(DistributionManager dm) {
+    protected void process(ClusterDistributionManager dm) {
       Object result = null;
       ReplyException replyException = null;
       try {
@@ -196,7 +198,7 @@ public class GatewaySenderQueueEntrySynchronizationOperation {
           logger.debug("{}: Providing synchronization region={}; entriesToSynchronize={}",
               getClass().getSimpleName(), this.regionPath, this.entriesToSynchronize);
         }
-        result = getSynchronizationEvents();
+        result = getSynchronizationEvents(dm.getCache());
       } catch (Throwable t) {
         replyException = new ReplyException(t);
       } finally {
@@ -216,15 +218,14 @@ public class GatewaySenderQueueEntrySynchronizationOperation {
       }
     }
 
-    private Object getSynchronizationEvents() {
+    private Object getSynchronizationEvents(InternalCache cache) {
       List<Map<String, GatewayQueueEvent>> results = new ArrayList<>();
       // Get the region
-      GemFireCacheImpl gfci = (GemFireCacheImpl) getCache();
-      LocalRegion region = (LocalRegion) gfci.getRegion(this.regionPath);
+      LocalRegion region = (LocalRegion) cache.getRegion(this.regionPath);
 
       // Add the appropriate GatewaySenderEventImpl from each GatewaySender for each entry
       Set<String> allGatewaySenderIds = region.getAllGatewaySenderIds();
-      for (GatewaySender sender : gfci.getAllGatewaySenders()) {
+      for (GatewaySender sender : cache.getAllGatewaySenders()) {
         if (allGatewaySenderIds.contains(sender.getId())) {
           for (GatewaySenderQueueEntrySynchronizationEntry entry : this.entriesToSynchronize) {
             Map<String, GatewayQueueEvent> resultForOneEntry = new HashMap<>();
@@ -241,26 +242,24 @@ public class GatewaySenderQueueEntrySynchronizationOperation {
       return results;
     }
 
-    private Cache getCache() {
-      return CacheFactory.getAnyInstance();
-    }
-
     @Override
     public int getDSFID() {
       return GATEWAY_SENDER_QUEUE_ENTRY_SYNCHRONIZATION_MESSAGE;
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       out.writeInt(this.processorId);
       DataSerializer.writeString(this.regionPath, out);
       DataSerializer.writeArrayList((ArrayList) this.entriesToSynchronize, out);
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.processorId = in.readInt();
       this.regionPath = DataSerializer.readString(in);
       this.entriesToSynchronize = DataSerializer.readArrayList(in);
@@ -293,15 +292,17 @@ public class GatewaySenderQueueEntrySynchronizationOperation {
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      DataSerializer.writeObject(this.key, out);
-      DataSerializer.writeObject(this.entryVersion, out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      context.getSerializer().writeObject(this.key, out);
+      context.getSerializer().writeObject(this.entryVersion, out);
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      this.key = DataSerializer.readObject(in);
-      this.entryVersion = DataSerializer.readObject(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      this.key = context.getDeserializer().readObject(in);
+      this.entryVersion = context.getDeserializer().readObject(in);
     }
 
     @Override

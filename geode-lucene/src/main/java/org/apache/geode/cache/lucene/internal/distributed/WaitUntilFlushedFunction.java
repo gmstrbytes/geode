@@ -17,18 +17,17 @@ package org.apache.geode.cache.lucene.internal.distributed;
 
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.asyncqueue.internal.AsyncEventQueueImpl;
-import org.apache.geode.cache.execute.Function;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.cache.execute.RegionFunctionContext;
 import org.apache.geode.cache.execute.ResultSender;
 import org.apache.geode.cache.lucene.internal.LuceneServiceImpl;
-import org.apache.geode.internal.InternalEntity;
+import org.apache.geode.internal.cache.execute.InternalFunction;
+import org.apache.geode.management.internal.security.ResourcePermissions;
 import org.apache.geode.security.ResourcePermission;
 
 /**
@@ -36,7 +35,7 @@ import org.apache.geode.security.ResourcePermission;
  * in current AEQs are flushed into index. This function enables an accessor and client to call to
  * make sure the current events are processed.
  */
-public class WaitUntilFlushedFunction implements Function<Object>, InternalEntity {
+public class WaitUntilFlushedFunction implements InternalFunction<Object> {
   private static final long serialVersionUID = 1L;
   public static final String ID = WaitUntilFlushedFunction.class.getName();
 
@@ -48,6 +47,9 @@ public class WaitUntilFlushedFunction implements Function<Object>, InternalEntit
     Region region = ctx.getDataSet();
     Cache cache = region.getCache();
     WaitUntilFlushedFunctionContext arg = (WaitUntilFlushedFunctionContext) ctx.getArguments();
+    if (arg == null) {
+      return;
+    }
     String indexName = arg.getIndexName();
     if (indexName == null) {
       throw new IllegalArgumentException("Missing index name");
@@ -83,8 +85,6 @@ public class WaitUntilFlushedFunction implements Function<Object>, InternalEntit
 
   @Override
   public Collection<ResourcePermission> getRequiredPermissions(String regionName) {
-    ResourcePermission read = new ResourcePermission(ResourcePermission.Resource.DATA,
-        ResourcePermission.Operation.READ, regionName);
-    return Collections.singleton(read);
+    return Collections.singletonList(ResourcePermissions.DATA_READ);
   }
 }

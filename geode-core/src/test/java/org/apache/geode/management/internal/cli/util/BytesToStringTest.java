@@ -14,15 +14,12 @@
  */
 package org.apache.geode.management.internal.cli.util;
 
-import static org.assertj.core.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 
-import org.apache.geode.test.junit.categories.UnitTest;
 
-@Category(UnitTest.class)
 public class BytesToStringTest {
   private static long KB = 1024;
   private static long MB = 1024 * KB;

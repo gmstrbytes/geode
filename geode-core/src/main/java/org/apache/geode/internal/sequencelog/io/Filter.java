@@ -18,15 +18,11 @@ import java.util.regex.Pattern;
 
 import org.apache.geode.internal.sequencelog.GraphType;
 
-/**
- *
- */
 public interface Filter {
 
-  public boolean accept(GraphType graphType, String name, String edgeName, String source,
-      String dest);
+  boolean accept(GraphType graphType, String name, String edgeName, String source, String dest);
 
-  public boolean acceptPattern(GraphType graphType, Pattern pattern, String edgeName, String source,
+  boolean acceptPattern(GraphType graphType, Pattern pattern, String edgeName, String source,
       String dest);
 
 }

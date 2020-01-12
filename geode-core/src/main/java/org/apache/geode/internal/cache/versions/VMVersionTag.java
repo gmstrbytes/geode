@@ -18,9 +18,9 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.Version;
+import org.apache.geode.internal.serialization.Version;
 
 /**
  * The version tag class for version tags for non-persistent regions. The VersionSource held in
@@ -41,7 +41,7 @@ public class VMVersionTag extends VersionTag<InternalDistributedMember> {
   }
 
   @Override
-  public void setCanonicalIDs(DM dm) {
+  public void setCanonicalIDs(DistributionManager dm) {
     InternalDistributedMember id = getMemberID();
     if (id != null) {
       setMemberID(dm.getCanonicalId(getMemberID()));

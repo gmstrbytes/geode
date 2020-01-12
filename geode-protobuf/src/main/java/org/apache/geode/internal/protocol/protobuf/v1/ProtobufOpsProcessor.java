@@ -16,20 +16,16 @@ package org.apache.geode.internal.protocol.protobuf.v1;
 
 import org.apache.logging.log4j.Logger;
 
+import org.apache.geode.SystemFailure;
 import org.apache.geode.annotations.Experimental;
 import org.apache.geode.internal.exception.InvalidExecutionContextException;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.protocol.Failure;
-import org.apache.geode.internal.protocol.MessageExecutionContext;
-import org.apache.geode.internal.protocol.OperationContext;
-import org.apache.geode.internal.protocol.ProtocolErrorCode;
-import org.apache.geode.internal.protocol.Result;
 import org.apache.geode.internal.protocol.protobuf.v1.registry.ProtobufOperationContextRegistry;
-import org.apache.geode.internal.protocol.protobuf.v1.utilities.ProtobufResponseUtilities;
-import org.apache.geode.internal.protocol.serialization.SerializationService;
-import org.apache.geode.internal.protocol.state.ConnectionTerminatingStateProcessor;
-import org.apache.geode.internal.protocol.state.exception.ConnectionStateException;
-import org.apache.geode.internal.protocol.state.exception.OperationNotAuthorizedException;
+import org.apache.geode.internal.protocol.protobuf.v1.serialization.exception.DecodingException;
+import org.apache.geode.internal.protocol.protobuf.v1.serialization.exception.EncodingException;
+import org.apache.geode.internal.protocol.protobuf.v1.state.TerminateConnection;
+import org.apache.geode.internal.protocol.protobuf.v1.state.exception.ConnectionStateException;
+import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.security.NotAuthorizedException;
 
 /**
  * This handles protobuf requests by determining the operation type of the request and dispatching
@@ -37,54 +33,61 @@ import org.apache.geode.internal.protocol.state.exception.OperationNotAuthorized
  */
 @Experimental
 public class ProtobufOpsProcessor {
-
   private final ProtobufOperationContextRegistry protobufOperationContextRegistry;
-  private final SerializationService serializationService;
-  private static final Logger logger = LogService.getLogger(ProtobufOpsProcessor.class);
+  private static final Logger logger = LogService.getLogger();
 
-  public ProtobufOpsProcessor(SerializationService serializationService,
-      ProtobufOperationContextRegistry protobufOperationContextRegistry) {
-    this.serializationService = serializationService;
+  public ProtobufOpsProcessor(ProtobufOperationContextRegistry protobufOperationContextRegistry) {
     this.protobufOperationContextRegistry = protobufOperationContextRegistry;
   }
 
-  public ClientProtocol.Response process(ClientProtocol.Request request,
+  public ClientProtocol.Message process(ClientProtocol.Message request,
       MessageExecutionContext messageExecutionContext) {
-    ClientProtocol.Request.RequestAPICase requestType = request.getRequestAPICase();
+    ClientProtocol.Message.MessageTypeCase requestType = request.getMessageTypeCase();
     logger.debug("Processing request of type {}", requestType);
-    OperationContext operationContext =
+    ProtobufOperationContext operationContext =
         protobufOperationContextRegistry.getOperationContext(requestType);
     Result result;
 
     try {
-      messageExecutionContext.getConnectionStateProcessor()
-          .validateOperation(messageExecutionContext, operationContext);
+      messageExecutionContext.getConnectionState().validateOperation(operationContext);
       result = processOperation(request, messageExecutionContext, requestType, operationContext);
-    } catch (OperationNotAuthorizedException e) {
-      // Don't move to a terminating state for authorization state failures
-      logger.warn(e.getMessage());
-      result = Failure.of(ProtobufResponseUtilities.makeErrorResponse(e));
-    } catch (ConnectionStateException e) {
-      logger.warn(e.getMessage());
-      messageExecutionContext
-          .setConnectionStateProcessor(new ConnectionTerminatingStateProcessor());
-      result = Failure.of(ProtobufResponseUtilities.makeErrorResponse(e));
+    } catch (VirtualMachineError error) {
+      SystemFailure.initiateFailure(error);
+      throw error;
+    } catch (Throwable t) {
+      logger.warn("Failure for request " + request, t);
+      SystemFailure.checkFailure();
+      result = Failure.of(t);
+
+      if (t instanceof ConnectionStateException) {
+        messageExecutionContext.setState(new TerminateConnection());
+      }
     }
 
-    return ((ClientProtocol.Response.Builder) result.map(operationContext.getToResponse(),
+    return ((ClientProtocol.Message.Builder) result.map(operationContext.getToResponse(),
         operationContext.getToErrorResponse())).build();
   }
 
-  private Result processOperation(ClientProtocol.Request request, MessageExecutionContext context,
-      ClientProtocol.Request.RequestAPICase requestType, OperationContext operationContext)
-      throws ConnectionStateException {
+  private Result processOperation(ClientProtocol.Message request, MessageExecutionContext context,
+      ClientProtocol.Message.MessageTypeCase requestType, ProtobufOperationContext operationContext)
+      throws ConnectionStateException, EncodingException, DecodingException {
+
+    long startTime = context.getStatistics().startOperation();
     try {
-      return operationContext.getOperationHandler().process(serializationService,
+      return operationContext.getOperationHandler().process(context.getSerializationService(),
           operationContext.getFromRequest().apply(request), context);
     } catch (InvalidExecutionContextException exception) {
-      logger.error("Invalid execution context found for operation {}", requestType);
-      return Failure.of(ProtobufResponseUtilities.makeErrorResponse(
-          ProtocolErrorCode.INVALID_REQUEST, "Invalid execution context found for operation."));
+      logger.error("Invalid execution context found for operation {}", requestType, exception);
+      return Failure.of(BasicTypes.ErrorCode.INVALID_REQUEST,
+          "Invalid execution context found for operation.");
+    } catch (UnsupportedOperationException exception) {
+      logger.error("Unsupported operation exception for request {}", requestType, exception);
+      return Failure.of(BasicTypes.ErrorCode.UNSUPPORTED_OPERATION,
+          "Unsupported operation:" + exception.getMessage());
+    } catch (NotAuthorizedException e) {
+      return Failure.of(BasicTypes.ErrorCode.AUTHORIZATION_FAILED, "Not authorized: " + e);
+    } finally {
+      context.getStatistics().endOperation(startTime);
     }
   }
 }

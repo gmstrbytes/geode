@@ -15,18 +15,13 @@
 package org.apache.geode.internal;
 
 import java.io.BufferedInputStream;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.InputStream;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Modifier;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -43,13 +38,14 @@ import java.util.stream.Stream;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.logging.log4j.Logger;
 
+import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.cache.CacheClosedException;
 import org.apache.geode.cache.CacheFactory;
 import org.apache.geode.cache.Declarable;
 import org.apache.geode.cache.execute.Function;
 import org.apache.geode.cache.execute.FunctionService;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.management.internal.deployment.FunctionScanner;
 import org.apache.geode.pdx.internal.TypeRegistry;
 
@@ -61,8 +57,8 @@ import org.apache.geode.pdx.internal.TypeRegistry;
 public class DeployedJar {
 
   private static final Logger logger = LogService.getLogger();
+  @MakeNotStatic("This object gets updated in the production code")
   private static final MessageDigest messageDigest = getMessageDigest();
-  private static final byte[] ZERO_BYTES = new byte[0];
   private static final Pattern PATTERN_SLASH = Pattern.compile("/");
 
   private final String jarName;
@@ -160,7 +156,6 @@ public class DeployedJar {
     JarInputStream jarInputStream = null;
     try {
       Collection<String> functionClasses = findFunctionsInThisJar();
-
       jarInputStream = new JarInputStream(bufferedInputStream);
       JarEntry jarEntry = jarInputStream.getNextJarEntry();
 
@@ -272,11 +267,14 @@ public class DeployedJar {
 
   private byte[] fileDigest(File file) throws IOException {
     BufferedInputStream fis = new BufferedInputStream(new FileInputStream(file));
-    byte[] data = new byte[8192];
-
-    int read;
-    while ((read = fis.read(data)) > 0) {
-      messageDigest.update(data, 0, read);
+    try {
+      byte[] data = new byte[8192];
+      int read;
+      while ((read = fis.read(data)) > 0) {
+        messageDigest.update(data, 0, read);
+      }
+    } finally {
+      fis.close();
     }
 
     return messageDigest.digest();
@@ -298,8 +296,8 @@ public class DeployedJar {
         boolean registerUninitializedFunction = true;
         if (Declarable.class.isAssignableFrom(clazz)) {
           try {
-            final List<Properties> propertiesList = ((InternalCache) CacheFactory.getAnyInstance())
-                .getDeclarableProperties(clazz.getName());
+            InternalCache cache = (InternalCache) CacheFactory.getAnyInstance();
+            final List<Properties> propertiesList = cache.getDeclarableProperties(clazz.getName());
 
             if (!propertiesList.isEmpty()) {
               registerUninitializedFunction = false;
@@ -310,7 +308,8 @@ public class DeployedJar {
                 @SuppressWarnings("unchecked")
                 Function function = newFunction((Class<Function>) clazz, true);
                 if (function != null) {
-                  ((Declarable) function).init(properties);
+                  ((Declarable) function).initialize(cache, properties);
+                  ((Declarable) function).init(properties); // for backwards compatibility
                   if (function.getId() != null) {
                     registerableFunctions.add(function);
                   }
@@ -435,9 +434,17 @@ public class DeployedJar {
     sb.append('@').append(System.identityHashCode(this)).append('{');
     sb.append("jarName=").append(this.jarName);
     sb.append(",file=").append(this.file.getAbsolutePath());
-    sb.append(",md5hash=").append(Arrays.toString(this.md5hash));
+    sb.append(",md5hash=").append(toHex(this.md5hash));
     sb.append(",version=").append(this.getVersion());
     sb.append('}');
     return sb.toString();
+  }
+
+  private String toHex(byte[] data) {
+    StringBuilder result = new StringBuilder();
+    for (byte b : data) {
+      result.append(String.format("%02x", b));
+    }
+    return result.toString();
   }
 }

@@ -32,6 +32,15 @@ message PutResponse {
     // message presence indicates success.
 }
 
+message PutIfAbsentRequest {
+    string regionName = 1;
+    Entry entry = 2;
+}
+
+message PutIfAbsentResponse {
+    EncodedValue oldValue = 1;
+}
+
 message GetRequest {
     string regionName = 1;
     EncodedValue key = 2;
@@ -77,10 +86,41 @@ message GetRegionNamesResponse {
     repeated string regions = 1;
 }
 
-message GetRegionRequest {
+message GetSizeRequest {
     string regionName = 1;
 }
 
-message GetRegionResponse {
-    Region region = 1;
+message GetSizeResponse {
+    int32 size = 1;
+}
+
+message OQLQueryRequest {
+    string query = 1;
+    repeated EncodedValue bindParameter = 2;
+}
+
+//Response to an OQL query. Depending on the query,
+//it may return a single value, a list of values, or a table
+//of values.
+message OQLQueryResponse {
+    oneof result {
+      EncodedValue singleResult = 1;
+      EncodedValueList listResult = 2;
+      Table tableResult = 3;
+    }
+}
+
+message KeySetRequest {
+    string regionName = 1;
+}
+
+message KeySetResponse {
+    repeated EncodedValue keys = 1;
+}
+
+message ClearRequest {
+    string regionName = 1;
+}
+
+message ClearResponse {
 }

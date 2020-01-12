@@ -24,7 +24,7 @@ import java.util.Set;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.DataSerializer;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
@@ -37,8 +37,10 @@ import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.NanoTimer;
 import org.apache.geode.internal.cache.ForceReattemptException;
 import org.apache.geode.internal.cache.PartitionedRegion;
-import org.apache.geode.internal.logging.LogService;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 public class FetchPartitionDetailsMessage extends PartitionMessage {
 
@@ -67,7 +69,6 @@ public class FetchPartitionDetailsMessage extends PartitionMessage {
    *
    * @param recipients the members to fetch PartitionMemberDetails from
    * @param region the PartitionedRegion to fetch member details for
-   * @param fetchOfflineMembers
    * @return the processor used to fetch the PartitionMemberDetails
    */
   public static FetchPartitionDetailsResponse send(Set<InternalDistributedMember> recipients,
@@ -80,6 +81,7 @@ public class FetchPartitionDetailsMessage extends PartitionMessage {
         new FetchPartitionDetailsResponse(region.getSystem(), recipients, region);
     FetchPartitionDetailsMessage msg = new FetchPartitionDetailsMessage(recipients,
         region.getPRId(), response, internal, fetchOfflineMembers, probe);
+    msg.setTransactionDistributed(region.getCache().getTxManager().isDistributed());
 
     /* Set<InternalDistributedMember> failures = */
     region.getDistributionManager().putOutgoing(msg);
@@ -89,7 +91,7 @@ public class FetchPartitionDetailsMessage extends PartitionMessage {
   }
 
   public FetchPartitionDetailsMessage(DataInput in) throws IOException, ClassNotFoundException {
-    fromData(in);
+    fromData(in, InternalDataSerializer.createDeserializationContext(in));
   }
 
   @Override
@@ -99,8 +101,8 @@ public class FetchPartitionDetailsMessage extends PartitionMessage {
   }
 
   @Override
-  protected boolean operateOnPartitionedRegion(DistributionManager dm, PartitionedRegion region,
-      long startTime) throws ForceReattemptException {
+  protected boolean operateOnPartitionedRegion(ClusterDistributionManager dm,
+      PartitionedRegion region, long startTime) throws ForceReattemptException {
 
     PartitionMemberInfoImpl details = (PartitionMemberInfoImpl) region.getRedundancyProvider()
         .buildPartitionMemberDetails(this.internal, this.loadProbe);
@@ -125,21 +127,24 @@ public class FetchPartitionDetailsMessage extends PartitionMessage {
     buff.append("; internal=").append(this.internal);
   }
 
+  @Override
   public int getDSFID() {
     return PR_FETCH_PARTITION_DETAILS_MESSAGE;
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     this.internal = in.readBoolean();
     this.fetchOfflineMembers = in.readBoolean();
     this.loadProbe = (LoadProbe) DataSerializer.readObject(in);
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     out.writeBoolean(this.internal);
     out.writeBoolean(this.fetchOfflineMembers);
     DataSerializer.writeObject(loadProbe, out);
@@ -166,7 +171,7 @@ public class FetchPartitionDetailsMessage extends PartitionMessage {
 
     public FetchPartitionDetailsReplyMessage(DataInput in)
         throws IOException, ClassNotFoundException {
-      fromData(in);
+      fromData(in, InternalDataSerializer.createDeserializationContext(in));
     }
 
     private FetchPartitionDetailsReplyMessage(int processorId, PartitionMemberInfoImpl details,
@@ -187,11 +192,10 @@ public class FetchPartitionDetailsMessage extends PartitionMessage {
     /**
      * Send an ack
      *
-     * @param offlineDetails
      */
     public static void send(InternalDistributedMember recipient, int processorId,
-        PartitionMemberInfoImpl details, DM dm, OfflineMemberDetails offlineDetails,
-        ReplyException re) {
+        PartitionMemberInfoImpl details, DistributionManager dm,
+        OfflineMemberDetails offlineDetails, ReplyException re) {
       Assert.assertTrue(recipient != null, "FetchPartitionDetailsReplyMessage NULL recipient");
       FetchPartitionDetailsReplyMessage m =
           new FetchPartitionDetailsReplyMessage(processorId, details, offlineDetails, re);
@@ -200,24 +204,25 @@ public class FetchPartitionDetailsMessage extends PartitionMessage {
     }
 
     @Override
-    public void process(final DM dm, final ReplyProcessor21 processor) {
+    public void process(final DistributionManager dm, final ReplyProcessor21 processor) {
       final long startTime = getTimestamp();
-      if (logger.isTraceEnabled(LogMarker.DM)) {
-        logger.trace(LogMarker.DM,
+      if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+        logger.trace(LogMarker.DM_VERBOSE,
             "FetchPartitionDetailsReplyMessage process invoking reply processor with processorId: {}",
             this.processorId);
       }
 
       if (processor == null) {
-        if (logger.isTraceEnabled(LogMarker.DM)) {
-          logger.trace(LogMarker.DM, "FetchPartitionDetailsReplyMessage processor not found");
+        if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+          logger.trace(LogMarker.DM_VERBOSE,
+              "FetchPartitionDetailsReplyMessage processor not found");
         }
         return;
       }
       processor.process(this);
 
-      if (logger.isTraceEnabled(LogMarker.DM)) {
-        logger.trace(LogMarker.DM, "{} processed {}", processor, this);
+      if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+        logger.trace(LogMarker.DM_VERBOSE, "{} processed {}", processor, this);
       }
       dm.getStats().incReplyMessageTime(NanoTimer.getTime() - startTime);
     }
@@ -237,8 +242,9 @@ public class FetchPartitionDetailsMessage extends PartitionMessage {
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       if (this.configuredMaxMemory == 0) {
         out.writeByte(NO_PARTITION);
       } else {
@@ -266,8 +272,9 @@ public class FetchPartitionDetailsMessage extends PartitionMessage {
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       byte flag = in.readByte();
       if (flag != NO_PARTITION) {
         this.configuredMaxMemory = in.readLong();
@@ -327,11 +334,13 @@ public class FetchPartitionDetailsMessage extends PartitionMessage {
               // This just picks the offline details from the last member to return
               this.offlineDetails = reply.offlineDetails;
             }
-            if (logger.isTraceEnabled(LogMarker.DM)) {
-              logger.debug("FetchPartitionDetailsResponse return details is {}", details);
+            if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+              logger.trace(LogMarker.DM_VERBOSE,
+                  "FetchPartitionDetailsResponse return details is {}", details);
             }
-          } else if (logger.isTraceEnabled(LogMarker.DM)) {
-            logger.debug("FetchPartitionDetailsResponse ignoring null details");
+          } else if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+            logger.trace(LogMarker.DM_VERBOSE,
+                "FetchPartitionDetailsResponse ignoring null details");
           }
         }
       } finally {

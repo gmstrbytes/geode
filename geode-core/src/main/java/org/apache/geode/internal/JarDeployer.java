@@ -43,13 +43,15 @@ import java.util.stream.Stream;
 import org.apache.commons.io.FileUtils;
 import org.apache.logging.log4j.Logger;
 
-import org.apache.geode.annotations.TestingOnly;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.annotations.VisibleForTesting;
+import org.apache.geode.annotations.internal.MakeNotStatic;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 public class JarDeployer implements Serializable {
   private static final long serialVersionUID = 1L;
   private static final Logger logger = LogService.getLogger();
   public static final String JAR_PREFIX_FOR_REGEX = "";
+  @MakeNotStatic
   private static final Lock lock = new ReentrantLock();
 
   private final Map<String, DeployedJar> deployedJars = new ConcurrentHashMap<>();
@@ -62,7 +64,7 @@ public class JarDeployer implements Serializable {
   private final File deployDirectory;
 
   public JarDeployer() {
-    this.deployDirectory = new File(System.getProperty("user.dir"));
+    this(new File(System.getProperty("user.dir")));
   }
 
   public JarDeployer(final File deployDirectory) {
@@ -359,11 +361,10 @@ public class JarDeployer implements Serializable {
         if (deployedJar != null) {
           logger.info("Registering new version of jar: {}", deployedJar);
           DeployedJar oldJar = this.deployedJars.put(deployedJar.getJarName(), deployedJar);
+          ClassPathLoader.getLatest().chainClassloader(deployedJar);
           newVersionToOldVersion.put(deployedJar, oldJar);
         }
       }
-
-      ClassPathLoader.getLatest().rebuildClassLoaderForDeployedJars();
 
       // Finally, unregister functions that were removed
       for (Map.Entry<DeployedJar, DeployedJar> entry : newVersionToOldVersion.entrySet()) {
@@ -442,7 +443,7 @@ public class JarDeployer implements Serializable {
     return this.deployedJars.get(jarName);
   }
 
-  @TestingOnly
+  @VisibleForTesting
   public DeployedJar deploy(final String jarName, final File stagedJarFile)
       throws IOException, ClassNotFoundException {
     lock.lock();
@@ -483,7 +484,7 @@ public class JarDeployer implements Serializable {
         throw new IllegalArgumentException("JAR not deployed");
       }
 
-      ClassPathLoader.getLatest().rebuildClassLoaderForDeployedJars();
+      ClassPathLoader.getLatest().unloadClassloaderForJar(jarName);
 
       deployedJar.cleanUp(null);
 

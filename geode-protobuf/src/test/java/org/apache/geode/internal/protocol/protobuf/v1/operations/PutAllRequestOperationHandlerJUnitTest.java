@@ -27,21 +27,25 @@ import java.util.HashSet;
 import java.util.Set;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
+import org.junit.rules.ExpectedException;
 
 import org.apache.geode.cache.Region;
-import org.apache.geode.internal.protocol.Result;
-import org.apache.geode.internal.protocol.Success;
+import org.apache.geode.internal.protocol.TestExecutionContext;
 import org.apache.geode.internal.protocol.protobuf.v1.BasicTypes;
+import org.apache.geode.internal.protocol.protobuf.v1.ProtobufRequestUtilities;
+import org.apache.geode.internal.protocol.protobuf.v1.ProtobufSerializationService;
 import org.apache.geode.internal.protocol.protobuf.v1.RegionAPI;
-import org.apache.geode.internal.protocol.protobuf.v1.utilities.ProtobufRequestUtilities;
+import org.apache.geode.internal.protocol.protobuf.v1.Result;
+import org.apache.geode.internal.protocol.protobuf.v1.Success;
+import org.apache.geode.internal.protocol.protobuf.v1.serialization.exception.DecodingException;
+import org.apache.geode.internal.protocol.protobuf.v1.serialization.exception.EncodingException;
 import org.apache.geode.internal.protocol.protobuf.v1.utilities.ProtobufUtilities;
-import org.apache.geode.internal.protocol.serialization.exception.EncodingException;
-import org.apache.geode.test.dunit.Assert;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.test.junit.categories.ClientServerTest;
 
-@Category(UnitTest.class)
+@Category({ClientServerTest.class})
 public class PutAllRequestOperationHandlerJUnitTest extends OperationHandlerJUnitTest {
   private final String TEST_KEY1 = "my key1";
   private final String TEST_KEY2 = "my key2";
@@ -55,24 +59,53 @@ public class PutAllRequestOperationHandlerJUnitTest extends OperationHandlerJUni
   private final String EXCEPTION_TEXT = "Simulating put failure";
   private Region regionMock;
 
+  @Rule
+  public ExpectedException expectedException = ExpectedException.none();
+
   @Before
   public void setUp() throws Exception {
-    super.setUp();
     regionMock = mock(Region.class);
     when(regionMock.put(TEST_INVALID_KEY, TEST_INVALID_VALUE))
         .thenThrow(new ClassCastException(EXCEPTION_TEXT));
 
     when(cacheStub.getRegion(TEST_REGION)).thenReturn(regionMock);
+
+    operationHandler = new PutAllRequestOperationHandler();
+  }
+
+  @Test
+  public void processReturnsErrorUnableToDecodeRequest() throws Exception {
+    Exception exception = new DecodingException("error finding codec for type");
+    ProtobufSerializationService serializationServiceStub =
+        mock(ProtobufSerializationService.class);
+    when(serializationServiceStub.decode(any())).thenReturn(TEST_KEY1, TEST_VALUE1)
+        .thenThrow(exception);
+    when(serializationServiceStub.encode(any()))
+        .thenReturn(BasicTypes.EncodedValue.newBuilder().setStringResult("some string").build());
+
+    BasicTypes.EncodedValue encodedObject1 =
+        BasicTypes.EncodedValue.newBuilder().setStringResult(TEST_KEY1).build();
+    BasicTypes.EncodedValue encodedObject2 =
+        BasicTypes.EncodedValue.newBuilder().setStringResult(TEST_KEY2).build();
+
+    Set<BasicTypes.Entry> entries = new HashSet<>();
+    entries.add(ProtobufUtilities.createEntry(encodedObject1, encodedObject1));
+    entries.add(ProtobufUtilities.createEntry(encodedObject2, encodedObject2));
+
+    RegionAPI.PutAllRequest putAllRequest =
+        ProtobufRequestUtilities.createPutAllRequest(TEST_REGION, entries).getPutAllRequest();
+
+    expectedException.expect(DecodingException.class);
+    Result response = operationHandler.process(serializationServiceStub, putAllRequest,
+        TestExecutionContext.getNoAuthCacheExecutionContext(cacheStub));
   }
 
   @Test
   public void processInsertsMultipleValidEntriesInCache() throws Exception {
-    PutAllRequestOperationHandler operationHandler = new PutAllRequestOperationHandler();
-
     Result result = operationHandler.process(serializationService, generateTestRequest(false, true),
         getNoAuthCacheExecutionContext(cacheStub));
 
-    Assert.assertTrue(result instanceof Success);
+    assertTrue(result instanceof Success);
 
     verify(regionMock).put(TEST_KEY1, TEST_VALUE1);
     verify(regionMock).put(TEST_KEY2, TEST_VALUE2);
@@ -81,8 +114,6 @@ public class PutAllRequestOperationHandlerJUnitTest extends OperationHandlerJUni
 
   @Test
   public void processWithInvalidEntrySucceedsAndReturnsFailedKey() throws Exception {
-    PutAllRequestOperationHandler operationHandler = new PutAllRequestOperationHandler();
-
     Result result = operationHandler.process(serializationService, generateTestRequest(true, true),
         getNoAuthCacheExecutionContext(cacheStub));
 
@@ -99,8 +130,6 @@ public class PutAllRequestOperationHandlerJUnitTest extends OperationHandlerJUni
 
   @Test
   public void processWithNoEntriesPasses() throws Exception {
-    PutAllRequestOperationHandler operationHandler = new PutAllRequestOperationHandler();
-
     Result result = operationHandler.process(serializationService,
         generateTestRequest(false, false), getNoAuthCacheExecutionContext(cacheStub));
 

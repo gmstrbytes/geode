@@ -15,65 +15,61 @@
 package org.apache.geode.management.internal.cli.functions;
 
 import org.apache.geode.cache.Cache;
-import org.apache.geode.cache.execute.FunctionAdapter;
 import org.apache.geode.cache.execute.FunctionContext;
-import org.apache.geode.internal.InternalEntity;
+import org.apache.geode.internal.cache.execute.InternalFunction;
 import org.apache.geode.internal.cache.tier.sockets.CacheClientNotifier;
 import org.apache.geode.internal.cache.tier.sockets.CacheClientProxy;
-import org.apache.geode.internal.cache.tier.sockets.ClientProxyMembershipID;
 import org.apache.geode.management.internal.cli.CliUtil;
-import org.apache.geode.management.internal.cli.domain.MemberResult;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
 
 /***
  * Function to close a durable cq
  *
  */
-public class CloseDurableCqFunction extends FunctionAdapter implements InternalEntity {
+public class CloseDurableCqFunction implements InternalFunction {
 
   private static final long serialVersionUID = 1L;
 
   @Override
   public void execute(FunctionContext context) {
 
-    final Cache cache = CliUtil.getCacheIfExists();
+    final Cache cache = context.getCache();
     final String memberNameOrId =
         CliUtil.getMemberNameOrId(cache.getDistributedSystem().getDistributedMember());
-    CacheClientNotifier cacheClientNotifier = CacheClientNotifier.getInstance();
     String[] args = (String[]) context.getArguments();
     String durableClientId = args[0];
     String cqName = args[1];
 
-    MemberResult memberResult = new MemberResult(memberNameOrId);
-    try {
-      if (cacheClientNotifier != null) {
-        CacheClientProxy cacheClientProxy = cacheClientNotifier.getClientProxy(durableClientId);
-        if (cacheClientProxy != null) {
-          if (cacheClientNotifier.closeClientCq(durableClientId, cqName)) {
-            memberResult.setSuccessMessage(
-                CliStrings.format(CliStrings.CLOSE_DURABLE_CQS__SUCCESS, cqName, durableClientId));
-          } else {
-            memberResult.setErrorMessage(CliStrings.format(
-                CliStrings.CLOSE_DURABLE_CQS__UNABLE__TO__CLOSE__CQ, cqName, durableClientId));
-          }
-
-        } else {
-          memberResult.setErrorMessage(
-              CliStrings.format(CliStrings.NO_CLIENT_FOUND_WITH_CLIENT_ID, durableClientId));
-        }
-      } else {
-        memberResult.setErrorMessage(CliStrings.NO_CLIENT_FOUND);
-      }
-    } catch (Exception e) {
-      memberResult.setExceptionMessage(e.getMessage());
-    } finally {
-      context.getResultSender().lastResult(memberResult);
-    }
+    context.getResultSender()
+        .lastResult(createFunctionResult(memberNameOrId, durableClientId, cqName));
   }
 
-  @Override
-  public String getId() {
-    return CloseDurableCqFunction.class.getName();
+  private CliFunctionResult createFunctionResult(String memberNameOrId, String durableClientId,
+      String cqName) {
+    CacheClientNotifier cacheClientNotifier = CacheClientNotifier.getInstance();
+    try {
+      if (cacheClientNotifier == null) {
+        return new CliFunctionResult(memberNameOrId, CliFunctionResult.StatusState.ERROR,
+            CliStrings.NO_CLIENT_FOUND);
+      }
+
+      CacheClientProxy cacheClientProxy = cacheClientNotifier.getClientProxy(durableClientId);
+      if (cacheClientProxy == null) {
+        return new CliFunctionResult(memberNameOrId, CliFunctionResult.StatusState.ERROR,
+            CliStrings.format(CliStrings.NO_CLIENT_FOUND_WITH_CLIENT_ID, durableClientId));
+      }
+
+      if (cacheClientNotifier.closeClientCq(durableClientId, cqName)) {
+        return new CliFunctionResult(memberNameOrId, CliFunctionResult.StatusState.OK,
+            CliStrings.format(CliStrings.CLOSE_DURABLE_CQS__SUCCESS, cqName, durableClientId));
+      } else {
+        return new CliFunctionResult(memberNameOrId, CliFunctionResult.StatusState.ERROR,
+            CliStrings.format(CliStrings.CLOSE_DURABLE_CQS__UNABLE__TO__CLOSE__CQ, cqName,
+                durableClientId));
+      }
+    } catch (Exception e) {
+      return new CliFunctionResult(memberNameOrId, e);
+    }
   }
 
 }

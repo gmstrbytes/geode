@@ -15,8 +15,6 @@
 package org.apache.geode.cache;
 
 import org.apache.geode.CancelException;
-import org.apache.geode.internal.cache.GemFireCacheImpl;
-import org.apache.geode.internal.cache.InternalCache;
 
 /**
  * Indicates that the caching system has been closed. Can be thrown from almost any method related
@@ -42,11 +40,6 @@ public class CacheClosedException extends CancelException {
    */
   public CacheClosedException(String msg) {
     super(msg);
-    // bug #43108 - CacheClosedException should include cause of closure TODO: but not this way!
-    InternalCache cache = GemFireCacheImpl.getInstance();
-    if (cache != null) {
-      initCause(cache.getDisconnectCause());
-    }
   }
 
   /**

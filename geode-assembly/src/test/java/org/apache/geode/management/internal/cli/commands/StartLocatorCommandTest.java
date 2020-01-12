@@ -12,44 +12,44 @@
  * or implied. See the License for the specific language governing permissions and limitations under
  * the License.
  */
-
 package org.apache.geode.management.internal.cli.commands;
 
 import static org.apache.geode.distributed.ConfigurationProperties.HTTP_SERVICE_BIND_ADDRESS;
 import static org.apache.geode.distributed.ConfigurationProperties.HTTP_SERVICE_PORT;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.when;
 
 import java.io.File;
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Properties;
 import java.util.Set;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 
+import org.apache.geode.distributed.ConfigurationProperties;
 import org.apache.geode.distributed.LocatorLauncher;
 import org.apache.geode.distributed.internal.DistributionConfig;
-import org.apache.geode.internal.lang.SystemUtils;
-import org.apache.geode.test.junit.categories.UnitTest;
 
-@Category(UnitTest.class)
 public class StartLocatorCommandTest {
-  private StartLocatorCommand locatorCommands;
+
+  private StartLocatorCommand startLocatorCommand;
 
   @Before
-  public void setup() {
-    locatorCommands = new StartLocatorCommand();
+  public void setUp() {
+    startLocatorCommand = new StartLocatorCommand();
   }
 
   @After
   public void tearDown() {
-    locatorCommands = null;
+    startLocatorCommand = null;
   }
 
   @Test
@@ -59,7 +59,7 @@ public class StartLocatorCommandTest {
         StartMemberUtils.getGemFireJarPath().concat(File.pathSeparator).concat(userClasspath)
             .concat(File.pathSeparator).concat(System.getProperty("java.class.path"))
             .concat(File.pathSeparator).concat(StartMemberUtils.CORE_DEPENDENCIES_JAR_PATHNAME);
-    String actualClasspath = locatorCommands.getLocatorClasspath(true, userClasspath);
+    String actualClasspath = startLocatorCommand.getLocatorClasspath(true, userClasspath);
     assertEquals(expectedClasspath, actualClasspath);
   }
 
@@ -74,8 +74,9 @@ public class StartLocatorCommandTest {
     gemfireProperties.setProperty(HTTP_SERVICE_PORT, "8089");
     gemfireProperties.setProperty(HTTP_SERVICE_BIND_ADDRESS, "localhost");
 
-    String[] commandLineElements = locatorCommands.createStartLocatorCommandLine(locatorLauncher,
-        null, null, gemfireProperties, null, false, new String[0], null, null);
+    String[] commandLineElements =
+        startLocatorCommand.createStartLocatorCommandLine(locatorLauncher,
+            null, null, gemfireProperties, null, false, new String[0], null, null);
 
     assertNotNull(commandLineElements);
     assertTrue(commandLineElements.length > 0);
@@ -99,49 +100,96 @@ public class StartLocatorCommandTest {
   }
 
   @Test
-  public void testAddJvmOptionsForOutOfMemoryErrors() {
-    final List<String> jvmOptions = new ArrayList<>(1);
+  public void testCreateStartLocatorCommandLine() throws Exception {
+    LocatorLauncher locatorLauncher = new LocatorLauncher.Builder().setMemberName("defaultLocator")
+        .setCommand(LocatorLauncher.Command.START).build();
 
-    addJvmOptionsForOutOfMemoryErrors(jvmOptions);
+    String[] commandLineElements =
+        startLocatorCommand.createStartLocatorCommandLine(locatorLauncher,
+            null, null, new Properties(), null, false, null, null, null);
 
-    if (SystemUtils.isHotSpotVM()) {
-      if (SystemUtils.isWindows()) {
-        assertTrue(jvmOptions.contains("-XX:OnOutOfMemoryError=taskkill /F /PID %p"));
-      } else {
-        assertTrue(jvmOptions.contains("-XX:OnOutOfMemoryError=kill -KILL %p"));
-      }
-    } else if (SystemUtils.isJ9VM()) {
-      assertEquals(1, jvmOptions.size());
-      assertTrue(jvmOptions.contains("-Xcheck:memory"));
-    } else if (SystemUtils.isJRockitVM()) {
-      assertEquals(1, jvmOptions.size());
-      assertTrue(jvmOptions.contains("-XXexitOnOutOfMemory"));
-    } else {
-      assertTrue(jvmOptions.isEmpty());
+    Set<String> expectedCommandLineElements = new HashSet<>();
+    expectedCommandLineElements.add(StartMemberUtils.getJavaPath());
+    expectedCommandLineElements.add("-server");
+    expectedCommandLineElements.add("-classpath");
+    expectedCommandLineElements.add(StartMemberUtils.getGemFireJarPath().concat(File.pathSeparator)
+        .concat(StartMemberUtils.CORE_DEPENDENCIES_JAR_PATHNAME));
+    expectedCommandLineElements.add("-Dgemfire.launcher.registerSignalHandlers=true");
+    expectedCommandLineElements.add("-Djava.awt.headless=true");
+    expectedCommandLineElements.add("-Dsun.rmi.dgc.server.gcInterval=9223372036854775806");
+    expectedCommandLineElements.add("org.apache.geode.distributed.LocatorLauncher");
+    expectedCommandLineElements.add("start");
+    expectedCommandLineElements.add("defaultLocator");
+    expectedCommandLineElements.add("--port=10334");
+
+    assertNotNull(commandLineElements);
+    assertTrue(commandLineElements.length > 0);
+    assertEquals(commandLineElements.length, expectedCommandLineElements.size());
+
+    for (String commandLineElement : commandLineElements) {
+      expectedCommandLineElements.remove(commandLineElement);
     }
+
+    assertTrue(String.format("Expected ([]); but was (%1$s)", expectedCommandLineElements),
+        expectedCommandLineElements.isEmpty());
   }
 
-  private void addJvmOptionsForOutOfMemoryErrors(final List<String> commandLine) {
-    if (SystemUtils.isHotSpotVM()) {
-      if (SystemUtils.isWindows()) {
-        // ProcessBuilder "on Windows" needs every word (space separated) to be
-        // a different element in the array/list. See #47312. Need to study why!
-        commandLine.add("-XX:OnOutOfMemoryError=taskkill /F /PID %p");
-      } else { // All other platforms (Linux, Mac OS X, UNIX, etc)
-        commandLine.add("-XX:OnOutOfMemoryError=kill -KILL %p");
-      }
-    } else if (SystemUtils.isJ9VM()) {
-      // NOTE IBM states the following IBM J9 JVM command-line option/switch has side-effects on
-      // "performance",
-      // as noted in the reference documentation...
-      // http://publib.boulder.ibm.com/infocenter/javasdk/v6r0/index.jsp?topic=/com.ibm.java.doc.diagnostics.60/diag/appendixes/cmdline/commands_jvm.html
-      commandLine.add("-Xcheck:memory");
-    } else if (SystemUtils.isJRockitVM()) {
-      // NOTE the following Oracle JRockit JVM documentation was referenced to identify the
-      // appropriate JVM option to
-      // set when handling OutOfMemoryErrors.
-      // http://docs.oracle.com/cd/E13150_01/jrockit_jvm/jrockit/jrdocs/refman/optionXX.html
-      commandLine.add("-XXexitOnOutOfMemory");
-    }
+  @Test
+  public void testCreateStartLocatorCommandLineWithAllOptions() throws Exception {
+    LocatorLauncher locatorLauncher =
+        new LocatorLauncher.Builder().setCommand(LocatorLauncher.Command.START)
+            .setDebug(Boolean.TRUE).setDeletePidFileOnStop(Boolean.TRUE).setForce(Boolean.TRUE)
+            .setHostnameForClients("localhost").setMemberName("customLocator").setPort(10101)
+            .setRedirectOutput(Boolean.TRUE).build();
+
+    File gemfirePropertiesFile = spy(mock(File.class));
+    when(gemfirePropertiesFile.getAbsolutePath()).thenReturn("/config/customGemfire.properties");
+
+    File gemfireSecurityPropertiesFile = spy(mock(File.class));
+    when(gemfireSecurityPropertiesFile.getAbsolutePath())
+        .thenReturn("/config/customGemfireSecurity.properties");
+
+    Properties gemfireProperties = new Properties();
+    gemfireProperties.setProperty(ConfigurationProperties.STATISTIC_SAMPLE_RATE, "1500");
+    gemfireProperties.setProperty(ConfigurationProperties.DISABLE_AUTO_RECONNECT, "true");
+
+    String heapSize = "1024m";
+    String customClasspath = "/temp/domain-1.0.0.jar";
+    String[] jvmArguments = new String[] {"-verbose:gc", "-Xloggc:member-gc.log",
+        "-XX:+PrintGCDateStamps", "-XX:+PrintGCDetails"};
+
+    String[] commandLineElements =
+        startLocatorCommand.createStartLocatorCommandLine(locatorLauncher,
+            gemfirePropertiesFile, gemfireSecurityPropertiesFile, gemfireProperties,
+            customClasspath,
+            Boolean.FALSE, jvmArguments, heapSize, heapSize);
+
+    Set<String> expectedCommandLineElements = new HashSet<>();
+    expectedCommandLineElements.add(StartMemberUtils.getJavaPath());
+    expectedCommandLineElements.add("-server");
+    expectedCommandLineElements.add("-classpath");
+    expectedCommandLineElements
+        .add(StartMemberUtils.getGemFireJarPath().concat(File.pathSeparator).concat(customClasspath)
+            .concat(File.pathSeparator).concat(StartMemberUtils.CORE_DEPENDENCIES_JAR_PATHNAME));
+    expectedCommandLineElements
+        .add("-DgemfirePropertyFile=".concat(gemfirePropertiesFile.getAbsolutePath()));
+    expectedCommandLineElements.add(
+        "-DgemfireSecurityPropertyFile=".concat(gemfireSecurityPropertiesFile.getAbsolutePath()));
+    expectedCommandLineElements.add("-Dgemfire.statistic-sample-rate=1500");
+    expectedCommandLineElements.add("-Dgemfire.disable-auto-reconnect=true");
+    expectedCommandLineElements.addAll(Arrays.asList(jvmArguments));
+    expectedCommandLineElements.add("org.apache.geode.distributed.LocatorLauncher");
+    expectedCommandLineElements.add("start");
+    expectedCommandLineElements.add("customLocator");
+    expectedCommandLineElements.add("--debug");
+    expectedCommandLineElements.add("--force");
+    expectedCommandLineElements.add("--hostname-for-clients=localhost");
+    expectedCommandLineElements.add("--port=10101");
+    expectedCommandLineElements.add("--redirect-output");
+
+    assertNotNull(commandLineElements);
+    assertTrue(commandLineElements.length > 0);
+
+    assertThat(commandLineElements).containsAll(expectedCommandLineElements);
   }
 }

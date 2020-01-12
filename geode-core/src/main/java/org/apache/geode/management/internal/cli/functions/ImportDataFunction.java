@@ -18,12 +18,12 @@ import java.io.File;
 
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.Region;
-import org.apache.geode.cache.execute.FunctionAdapter;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.cache.snapshot.RegionSnapshotService;
 import org.apache.geode.cache.snapshot.SnapshotOptions;
 import org.apache.geode.cache.snapshot.SnapshotOptions.SnapshotFormat;
-import org.apache.geode.internal.InternalEntity;
+import org.apache.geode.internal.cache.InternalCache;
+import org.apache.geode.internal.cache.execute.InternalFunction;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
 
 /****
@@ -31,10 +31,11 @@ import org.apache.geode.management.internal.cli.i18n.CliStrings;
  * RegionSnapshotService to import the data
  *
  */
-public class ImportDataFunction extends FunctionAdapter implements InternalEntity {
+public class ImportDataFunction implements InternalFunction {
 
   private static final long serialVersionUID = 1L;
 
+  @Override
   public void execute(FunctionContext context) {
     final Object[] args = (Object[]) context.getArguments();
     if (args.length < 4) {
@@ -46,8 +47,10 @@ public class ImportDataFunction extends FunctionAdapter implements InternalEntit
     final boolean invokeCallbacks = (boolean) args[2];
     final boolean parallel = (boolean) args[3];
 
+    CliFunctionResult result;
     try {
-      final Cache cache = context.getCache();
+      final Cache cache =
+          ((InternalCache) context.getCache()).getCacheForProcessingClientRequests();
       final Region<?, ?> region = cache.getRegion(regionName);
       final String hostName = cache.getDistributedSystem().getDistributedMember().getHost();
       if (region != null) {
@@ -59,17 +62,22 @@ public class ImportDataFunction extends FunctionAdapter implements InternalEntit
         snapshotService.load(new File(importFileName), SnapshotFormat.GEMFIRE, options);
         String successMessage = CliStrings.format(CliStrings.IMPORT_DATA__SUCCESS__MESSAGE,
             importFile.getCanonicalPath(), hostName, regionName);
-        context.getResultSender().lastResult(successMessage);
+        result = new CliFunctionResult(context.getMemberName(), CliFunctionResult.StatusState.OK,
+            successMessage);
       } else {
-        throw new IllegalArgumentException(
+        result = new CliFunctionResult(context.getMemberName(), CliFunctionResult.StatusState.ERROR,
             CliStrings.format(CliStrings.REGION_NOT_FOUND, regionName));
       }
 
     } catch (Exception e) {
-      context.getResultSender().sendException(e);
+      result = new CliFunctionResult(context.getMemberName(), CliFunctionResult.StatusState.ERROR,
+          e.getMessage());
     }
+
+    context.getResultSender().lastResult(result);
   }
 
+  @Override
   public String getId() {
     return ImportDataFunction.class.getName();
   }

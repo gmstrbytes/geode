@@ -16,7 +16,7 @@ package org.apache.geode.internal.cache.backup;
 
 import java.util.Set;
 
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.admin.remote.AdminResponse;
 import org.apache.geode.internal.admin.remote.CliLegacyMessage;
@@ -32,14 +32,14 @@ public class FlushToDiskRequest extends CliLegacyMessage {
 
   public FlushToDiskRequest() {
     super();
-    this.flushToDiskFactory = new FlushToDiskFactory();
+    flushToDiskFactory = new FlushToDiskFactory();
   }
 
   FlushToDiskRequest(InternalDistributedMember sender, Set<InternalDistributedMember> recipients,
       int processorId, FlushToDiskFactory flushToDiskFactory) {
-    this.setSender(sender);
+    setSender(sender);
     setRecipients(recipients);
-    this.msgId = processorId;
+    msgId = processorId;
     this.flushToDiskFactory = flushToDiskFactory;
   }
 
@@ -49,9 +49,8 @@ public class FlushToDiskRequest extends CliLegacyMessage {
   }
 
   @Override
-  protected AdminResponse createResponse(DM dm) {
+  protected AdminResponse createResponse(DistributionManager dm) {
     flushToDiskFactory.createFlushToDisk(dm.getCache()).run();
     return flushToDiskFactory.createResponse(getSender());
   }
-
 }

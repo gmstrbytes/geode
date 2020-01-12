@@ -15,50 +15,62 @@
 package org.apache.geode.internal.statistics;
 
 import java.io.File;
+import java.util.Optional;
+
+import org.apache.geode.logging.internal.spi.LogFile;
 
 /**
  * Defines the contract enabling the {@link StatArchiveHandler} to retrieve configuration details
  * (some of which may change at runtime).
- * <p/>
+ *
+ * <p>
  * Implemented by {@link HostStatSampler}.
  *
+ * <p>
+ * Note: This interface changes the return types of file limit properties from int to long so that
+ * the Stat Sampler tests can change the units from MB to KB.
+ *
  * @since GemFire 7.0
- * @see org.apache.geode.distributed.internal.RuntimeDistributionConfigImpl
  */
 public interface StatArchiveHandlerConfig {
 
   /**
    * Gets the name of the archive file.
    */
-  public File getArchiveFileName();
+  File getArchiveFileName();
 
   /**
    * Gets the archive size limit in bytes.
    */
-  public long getArchiveFileSizeLimit();
+  long getArchiveFileSizeLimit();
 
   /**
    * Gets the archive disk space limit in bytes.
    */
-  public long getArchiveDiskSpaceLimit();
+  long getArchiveDiskSpaceLimit();
 
   /**
    * Returns a unique id for the sampler's system.
    */
-  public long getSystemId();
+  long getSystemId();
 
   /**
    * Returns the time this sampler's system was started.
    */
-  public long getSystemStartTime();
+  long getSystemStartTime();
 
   /**
    * Returns the path to this sampler's system directory; if it has one.
    */
-  public String getSystemDirectoryPath();
+  String getSystemDirectoryPath();
 
   /**
    * Returns a description of the product that the stats are on
    */
-  public String getProductDescription();
+  String getProductDescription();
+
+  /**
+   * Returns the log file to provide info about main id and child id.
+   */
+  Optional<LogFile> getLogFile();
 }

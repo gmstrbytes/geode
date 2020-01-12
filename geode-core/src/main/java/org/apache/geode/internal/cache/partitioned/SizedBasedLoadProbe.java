@@ -19,11 +19,13 @@ import java.io.DataOutput;
 import java.io.IOException;
 
 import org.apache.geode.distributed.internal.DistributionConfig;
-import org.apache.geode.internal.DataSerializableFixedID;
-import org.apache.geode.internal.Version;
 import org.apache.geode.internal.cache.BucketAdvisor;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.PartitionedRegionDataStore;
+import org.apache.geode.internal.serialization.DataSerializableFixedID;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.internal.serialization.Version;
 
 /**
  * A load probe which calculates the load of a pr using the size of the buckets in bytes.
@@ -36,6 +38,7 @@ public class SizedBasedLoadProbe implements LoadProbe, DataSerializableFixedID {
   public static final int MIN_BUCKET_SIZE =
       Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "MIN_BUCKET_SIZE", 1).intValue();
 
+  @Override
   public PRLoad getLoad(PartitionedRegion pr) {
     PartitionedRegionDataStore ds = pr.getDataStore();
     int configuredBucketCount = pr.getTotalNumberOfBuckets();
@@ -60,10 +63,15 @@ public class SizedBasedLoadProbe implements LoadProbe, DataSerializableFixedID {
     return prLoad;
   }
 
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {}
+  @Override
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {}
 
-  public void toData(DataOutput out) throws IOException {}
+  @Override
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {}
 
+  @Override
   public int getDSFID() {
     return SIZED_BASED_LOAD_PROBE;
   }

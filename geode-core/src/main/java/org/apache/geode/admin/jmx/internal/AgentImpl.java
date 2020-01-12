@@ -20,8 +20,10 @@ import java.rmi.server.RMIClientSocketFactory;
 import java.rmi.server.RMIServerSocketFactory;
 import java.text.MessageFormat;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 import javax.management.InstanceNotFoundException;
 import javax.management.MBeanException;
@@ -54,23 +56,20 @@ import org.apache.geode.admin.AdminException;
 import org.apache.geode.admin.jmx.Agent;
 import org.apache.geode.admin.jmx.AgentConfig;
 import org.apache.geode.admin.jmx.AgentFactory;
-import org.apache.geode.distributed.internal.DistributionManager;
-import org.apache.geode.i18n.StringId;
-import org.apache.geode.internal.Banner;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.internal.ExitCode;
 import org.apache.geode.internal.GemFireVersion;
 import org.apache.geode.internal.admin.remote.TailLogResponse;
-import org.apache.geode.internal.i18n.LocalizedStrings;
 import org.apache.geode.internal.logging.InternalLogWriter;
-import org.apache.geode.internal.logging.LogConfig;
-import org.apache.geode.internal.logging.LogService;
 import org.apache.geode.internal.logging.LogWriterFactory;
-import org.apache.geode.internal.logging.LoggingThreadGroup;
-import org.apache.geode.internal.logging.log4j.AlertAppender;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
 import org.apache.geode.internal.logging.log4j.LogMarker;
-import org.apache.geode.internal.logging.log4j.LogWriterAppender;
-import org.apache.geode.internal.logging.log4j.LogWriterAppenders;
+import org.apache.geode.internal.statistics.StatisticsConfig;
+import org.apache.geode.logging.internal.LoggingSession;
+import org.apache.geode.logging.internal.executors.LoggingThread;
+import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.logging.internal.spi.LogConfig;
+import org.apache.geode.logging.internal.spi.LogConfigListener;
+import org.apache.geode.logging.internal.spi.LogConfigSupplier;
 
 /**
  * The GemFire JMX Agent provides the ability to administrate one GemFire distributed system via
@@ -79,7 +78,7 @@ import org.apache.geode.internal.logging.log4j.LogWriterAppenders;
  * @since GemFire 3.5
  */
 public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
-    org.apache.geode.admin.jmx.internal.ManagedResource {
+    org.apache.geode.admin.jmx.internal.ManagedResource, LogConfigSupplier {
 
   private static final Logger logger = LogService.getLogger();
 
@@ -133,7 +132,6 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
   // -------------------------------------------------------------------------
 
   /** This Agent's log writer */
-  private LogWriterAppender logWriterAppender;
   private InternalLogWriter logWriter;
 
   /** This Agent's JMX http adaptor from MX4J */
@@ -173,6 +171,9 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
 
   private MBeanServer mBeanServer;
 
+  private final LoggingSession loggingSession;
+  private final Set<LogConfigListener> logConfigListeners = new HashSet<>();
+
   // -------------------------------------------------------------------------
   // Constructor(s)
   // -------------------------------------------------------------------------
@@ -185,10 +186,13 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
    * @throws IllegalArgumentException if agentConfig is null
    */
   public AgentImpl(AgentConfigImpl agentConfig) throws AdminException, IllegalArgumentException {
+    loggingSession = LoggingSession.create();
+
+    shutdownHook = new LoggingThread("Shutdown", false, () -> disconnectFromSystem());
     addShutdownHook();
     if (agentConfig == null) {
       throw new IllegalArgumentException(
-          LocalizedStrings.AgentImpl_AGENTCONFIG_MUST_NOT_BE_NULL.toLocalizedString());
+          "AgentConfig must not be null");
     }
     this.agentConfig = (AgentConfigImpl) agentConfig;
     this.mbeanName = MBEAN_NAME_PREFIX + MBeanUtil.makeCompliantMBeanNameProperty("Agent");
@@ -196,8 +200,8 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
     try {
       this.objectName = new ObjectName(this.mbeanName);
     } catch (MalformedObjectNameException ex) {
-      String s = LocalizedStrings.AgentImpl_WHILE_CREATING_OBJECTNAME_0
-          .toLocalizedString(new Object[] {this.mbeanName});
+      String s = String.format("While creating ObjectName: %s",
+          new Object[] {this.mbeanName});
       throw new AdminException(s, ex);
     }
 
@@ -229,14 +233,11 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
        * some problem. Also not creating Localized String for the exception.
        */
     } catch (OperationsException e) {
-      logger.info(LocalizedMessage
-          .create(LocalizedStrings.AgentImpl_FAILED_TO_INITIALIZE_MEMBERINFOWITHSTATSMBEAN), e);
+      logger.info("Failed to initialize MemberInfoWithStatsMBean.", e);
     } catch (MBeanRegistrationException e) {
-      logger.info(LocalizedMessage
-          .create(LocalizedStrings.AgentImpl_FAILED_TO_INITIALIZE_MEMBERINFOWITHSTATSMBEAN), e);
+      logger.info("Failed to initialize MemberInfoWithStatsMBean.", e);
     } catch (AdminException e) {
-      logger.info(LocalizedMessage
-          .create(LocalizedStrings.AgentImpl_FAILED_TO_INITIALIZE_MEMBERINFOWITHSTATSMBEAN), e);
+      logger.info("Failed to initialize MemberInfoWithStatsMBean.", e);
     }
   }
 
@@ -244,10 +245,12 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
   // Public operations
   // -------------------------------------------------------------------------
 
+  @Override
   public AgentConfig getConfig() {
     return this.agentConfig;
   }
 
+  @Override
   public AdminDistributedSystem getDistributedSystem() {
     return this.system;
   }
@@ -258,6 +261,7 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
    * @throws GemFireIOException if unable to persist the configuration to props
    * @see #getPropertyFile
    */
+  @Override
   public void saveProperties() {
     throw new GemFireIOException("saveProperties is no longer supported for security reasons");
   }
@@ -265,6 +269,7 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
   /**
    * Starts the jmx agent
    */
+  @Override
   public void start() {
     checkDebug();
 
@@ -277,9 +282,8 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
     try {
       startHttpAdaptor();
     } catch (StartupException e) {
-      AlertAppender.getInstance().shuttingDown();
-      LogWriterAppenders.stop(LogWriterAppenders.Identifier.MAIN);
-      LogWriterAppenders.destroy(LogWriterAppenders.Identifier.MAIN);
+      loggingSession.stopSession();
+      loggingSession.shutdown();
       throw e;
     }
 
@@ -287,9 +291,8 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
       startRMIConnectorServer();
     } catch (StartupException e) {
       stopHttpAdaptor();
-      AlertAppender.getInstance().shuttingDown();
-      LogWriterAppenders.stop(LogWriterAppenders.Identifier.MAIN);
-      LogWriterAppenders.destroy(LogWriterAppenders.Identifier.MAIN);
+      loggingSession.stopSession();
+      loggingSession.shutdown();
       throw e;
     }
 
@@ -298,9 +301,8 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
     } catch (StartupException e) {
       stopRMIConnectorServer();
       stopHttpAdaptor();
-      AlertAppender.getInstance().shuttingDown();
-      LogWriterAppenders.stop(LogWriterAppenders.Identifier.MAIN);
-      LogWriterAppenders.destroy(LogWriterAppenders.Identifier.MAIN);
+      loggingSession.stopSession();
+      loggingSession.shutdown();
       throw e;
     }
 
@@ -312,21 +314,20 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
          * stop all the HTTP/RMI/SNMP adapters started earlier.
          */
       } catch (AdminException ex) {
-        logger.error(LocalizedMessage.create(LocalizedStrings.AgentImpl_AUTO_CONNECT_FAILED__0,
-            ex.getMessage()));
+        logger.error("auto connect failed:  {}",
+            ex.getMessage());
         this.stop();
         throw new StartupException(ex);
       } catch (MalformedObjectNameException ex) {
-        StringId autoConnectFailed = LocalizedStrings.AgentImpl_AUTO_CONNECT_FAILED__0;
-        logger.error(LocalizedMessage.create(autoConnectFailed, ex.getMessage()));
+        String autoConnectFailed = "auto connect failed:  {}";
+        logger.error(autoConnectFailed, ex.getMessage());
         this.stop();
         throw new StartupException(new AdminException(
-            autoConnectFailed.toLocalizedString(new Object[] {ex.getMessage()}), ex));
+            String.format("auto connect failed: %s", ex.getMessage()), ex));
       }
     } // getAutoConnect
 
-    logger.info(LocalizedMessage.create(LocalizedStrings.AgentImpl_GEMFIRE_JMX_AGENT_IS_RUNNING));
-    LogWriterAppenders.startupComplete(LogWriterAppenders.Identifier.MAIN);
+    logger.info("GemFire JMX Agent is running...");
 
     if (memberInfoWithStatsMBean == null) {
       initializeHelperMbean();
@@ -336,11 +337,12 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
   /**
    * Deregisters everything this Agent registered and releases the MBeanServer.
    */
+  @Override
   public void stop() {
     try {
-      logger.info(LocalizedMessage.create(LocalizedStrings.AgentImpl_STOPPING_JMX_AGENT));
-      AlertAppender.getInstance().shuttingDown();
-      LogWriterAppenders.stop(LogWriterAppenders.Identifier.MAIN);
+      logger.info("Stopping JMX agent");
+
+      loggingSession.stopSession();
 
       // stop the GemFire Distributed System
       stopDistributedSystem();
@@ -359,11 +361,9 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
       // upon JVM shutdown
       removeShutdownHook();
 
-      logger.info(LocalizedMessage.create(LocalizedStrings.AgentImpl_AGENT_HAS_STOPPED));
+      logger.info("Agent has stopped");
     } finally {
-      LogWriterAppenders.destroy(LogWriterAppenders.Identifier.MAIN);
-      LoggingThreadGroup.cleanUpThreadGroups(); // bug35388 - logwriters accumulate, causing mem
-                                                // leak
+      loggingSession.shutdown();
     }
 
   }
@@ -386,6 +386,7 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
     }
   }
 
+  @Override
   public ObjectName manageDistributedSystem() throws MalformedObjectNameException {
     synchronized (CONN_SYNC) {
       if (isConnected()) {
@@ -401,6 +402,7 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
    *
    * @return the object name of the system that the Agent is now connected to
    */
+  @Override
   @edu.umd.cs.findbugs.annotations.SuppressWarnings(
       value = "ST_WRITE_TO_STATIC_FROM_INSTANCE_METHOD",
       justification = "This is only a style warning.")
@@ -411,7 +413,7 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
           return ((AdminDistributedSystemJmxImpl) this.system).getObjectName();
         }
 
-        DistributionManager.setIsDedicatedAdminVM(true);
+        ClusterDistributionManager.setIsDedicatedAdminVM(true);
 
         AdminDistributedSystemJmxImpl systemJmx = (AdminDistributedSystemJmxImpl) this.system;
         if (systemJmx == null) {
@@ -448,6 +450,7 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
   /**
    * Disconnects from the current DistributedSystem (if connected to one).
    */
+  @Override
   @edu.umd.cs.findbugs.annotations.SuppressWarnings(
       value = "ST_WRITE_TO_STATIC_FROM_INSTANCE_METHOD",
       justification = "This is only a style warning.")
@@ -458,7 +461,6 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
           return;
         }
         ((AdminDistributedSystemJmxImpl) this.system).disconnect();
-        // this.system = null;
       } catch (RuntimeException e) {
         logger.warn(e.getMessage(), e);
         throw e;
@@ -477,7 +479,7 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
         logger.warn(e.getMessage(), e);
         throw e;
       } finally {
-        DistributionManager.setIsDedicatedAdminVM(false);
+        ClusterDistributionManager.setIsDedicatedAdminVM(false);
       }
     }
   }
@@ -488,11 +490,12 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
    * @return snapshot of the current log
    */
   public String getLog() {
-    String childTail = tailFile(this.logWriterAppender.getChildLogFile());
+    File childLogFile = loggingSession.getLogFile().isPresent()
+        ? loggingSession.getLogFile().get().getChildLogFile() : null;
+    String childTail = tailFile(childLogFile);
     String mainTail = tailFile(new File(this.agentConfig.getLogFile()));
     if (childTail == null && mainTail == null) {
-      return LocalizedStrings.AgentImpl_NO_LOG_FILE_CONFIGURED_LOG_MESSAGES_WILL_BE_DIRECTED_TO_STDOUT
-          .toLocalizedString();
+      return "No log file configured, log messages will be directed to stdout.";
     } else {
       StringBuffer result = new StringBuffer();
       if (mainTail != null) {
@@ -500,7 +503,7 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
       }
       if (childTail != null) {
         result
-            .append("\n" + LocalizedStrings.AgentImpl_TAIL_OF_CHILD_LOG.toLocalizedString() + "\n");
+            .append("\n" + "-------------------- tail of child log --------------------" + "\n");
         result.append(childTail);
       }
       return result.toString();
@@ -519,6 +522,7 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
   // -------------------------------------------------------------------------
 
   /** Returns true if this Agent is currently connected to a system. */
+  @Override
   public boolean isConnected() {
     boolean result = false;
     synchronized (CONN_SYNC) {
@@ -548,13 +552,13 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
     File f = (new File(value)).getAbsoluteFile();
     if (f.isDirectory()) {
       throw new IllegalArgumentException(
-          LocalizedStrings.AgentImpl_THE_FILE_0_IS_A_DIRECTORY.toLocalizedString(f));
+          String.format("The file %s is a directory.", f));
     }
     File parent = f.getParentFile();
     if (parent != null) {
       if (!parent.isDirectory()) {
         throw new IllegalArgumentException(
-            LocalizedStrings.AgentImpl_THE_DIRECTORY_0_DOES_NOT_EXIST.toLocalizedString(parent));
+            String.format("The directory %s does not exist.", parent));
       }
     }
     this.propertyFile = f.getPath();
@@ -704,7 +708,7 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
    */
   public void setLogFileSizeLimit(int logFileSizeLimit) {
     this.agentConfig.setLogFileSizeLimit(logFileSizeLimit);
-    LogWriterAppenders.configChanged(LogWriterAppenders.Identifier.MAIN);
+    logConfigChanged();
   }
 
   /**
@@ -723,7 +727,7 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
    */
   public void setLogDiskSpaceLimit(int logDiskSpaceLimit) {
     this.agentConfig.setLogDiskSpaceLimit(logDiskSpaceLimit);
-    LogWriterAppenders.configChanged(LogWriterAppenders.Identifier.MAIN);
+    logConfigChanged();
   }
 
   /**
@@ -742,7 +746,7 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
    */
   public void setLogFile(String logFile) {
     this.agentConfig.setLogFile(logFile);
-    LogWriterAppenders.configChanged(LogWriterAppenders.Identifier.MAIN);
+    logConfigChanged();
   }
 
   /**
@@ -761,7 +765,7 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
    */
   public void setLogLevel(String logLevel) {
     this.agentConfig.setLogLevel(logLevel);
-    LogWriterAppenders.configChanged(LogWriterAppenders.Identifier.MAIN);
+    logConfigChanged();
   }
 
   /** Returns true if the Agent is set to auto connect to a system. */
@@ -812,8 +816,8 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
     try {
       return TailLogResponse.tailSystemLog(f);
     } catch (IOException ex) {
-      return LocalizedStrings.AgentImpl_COULD_NOT_TAIL_0_BECAUSE_1
-          .toLocalizedString(new Object[] {f, ex});
+      return String.format("Could not tail %s because: %s",
+          new Object[] {f, ex});
     }
   }
 
@@ -822,36 +826,22 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
    *
    * @return the GemFire mbeanServer
    */
+  @Override
   public MBeanServer getMBeanServer() {
     return mBeanServer;
   }
-
-  // /**
-  // * Returns the active modeler Registry which has been initialized with all
-  // * the ModelMBean descriptors needed for GemFire MBeans.
-  // *
-  // * @return the modeler registry
-  // */
-  // private Registry getRegistry() {
-  // return MBeanUtil.getRegistry();
-  // }
 
   /**
    * Gets the current instance of LogWriter for logging
    *
    * @return the logWriter
    */
+  @Override
   public LogWriter getLogWriter() {
     return this.logWriter;
   }
 
-  private final Thread shutdownHook =
-      new Thread(LoggingThreadGroup.createThreadGroup("Shutdown"), "Shutdown") {
-        @Override
-        public void run() {
-          disconnectFromSystem();
-        }
-      };
+  private final Thread shutdownHook;
 
   /**
    * Adds a ShutdownHook to the Agent for cleaning up any resources
@@ -876,11 +866,12 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
   @edu.umd.cs.findbugs.annotations.SuppressWarnings(value = "RV_RETURN_VALUE_IGNORED_BAD_PRACTICE",
       justification = "Return value for file delete is not important here.")
   private void initLogWriter() throws org.apache.geode.admin.AdminException {
+    loggingSession.createSession(this);
+
     final LogConfig logConfig = this.agentConfig.createLogConfig();
 
     // LOG: create logWriterAppender here
-    this.logWriterAppender = LogWriterAppenders
-        .getOrCreateAppender(LogWriterAppenders.Identifier.MAIN, false, logConfig, false);
+    loggingSession.startSession();
 
     // LOG: look in AgentConfigImpl for existing LogWriter to use
     InternalLogWriter existingLogWriter = this.agentConfig.getInternalLogWriter();
@@ -888,27 +879,23 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
       this.logWriter = existingLogWriter;
     } else {
       // LOG: create LogWriterLogger
-      this.logWriter = LogWriterFactory.createLogWriterLogger(false, false, logConfig, false);
-      // LOG: changed statement from config to info
-      this.logWriter.info(Banner.getString(null));
+      this.logWriter = LogWriterFactory.createLogWriterLogger(logConfig, false);
       // Set this log writer in AgentConfigImpl
       this.agentConfig.setInternalLogWriter(this.logWriter);
     }
 
     // LOG: create logWriter here
-    this.logWriter = LogWriterFactory.createLogWriterLogger(false, false, logConfig, false);
+    this.logWriter = LogWriterFactory.createLogWriterLogger(logConfig, false);
 
     // Set this log writer in AgentConfig
     this.agentConfig.setInternalLogWriter(this.logWriter);
 
-    // Print Banner information
-    logger.info(Banner.getString(this.agentConfig.getOriginalArgs()));
-
     // LOG:CONFIG: changed next three statements from config to info
-    logger.info(LogMarker.CONFIG, LocalizedStrings.AgentImpl_AGENT_CONFIG_PROPERTY_FILE_NAME_0
-        .toLocalizedString(AgentConfigImpl.retrievePropertyFile()));
-    logger.info(LogMarker.CONFIG, this.agentConfig.getPropertyFileDescription());
-    logger.info(LogMarker.CONFIG, this.agentConfig.toPropertiesAsString());
+    logger.info(LogMarker.CONFIG_MARKER,
+        String.format("Agent config property file name: %s",
+            AgentConfigImpl.retrievePropertyFile()));
+    logger.info(LogMarker.CONFIG_MARKER, this.agentConfig.getPropertyFileDescription());
+    logger.info(LogMarker.CONFIG_MARKER, this.agentConfig.toPropertiesAsString());
   }
 
   /**
@@ -1026,7 +1013,6 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
   /**
    * Creates and connects to a <code>DistributedSystem</code>.
    *
-   * @param config
    */
   private AdminDistributedSystem createDistributedSystem(AgentConfigImpl config)
       throws org.apache.geode.admin.AdminException {
@@ -1053,7 +1039,7 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
       ac = new AgentConfigImpl(args);
     } catch (RuntimeException ex) {
       System.err
-          .println(LocalizedStrings.AgentImpl_FAILED_READING_CONFIGURATION_0.toLocalizedString(ex));
+          .println(String.format("Failed reading configuration: %s", ex));
       ExitCode.FATAL.doSystemExit();
       return;
     }
@@ -1105,8 +1091,8 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
       }
       mbs.registerMBean(registryNamingService, registryName);
     } catch (javax.management.InstanceAlreadyExistsException e) {
-      logger.info(LocalizedMessage.create(LocalizedStrings.AgentImpl_0__IS_ALREADY_REGISTERED,
-          registryName));
+      logger.info("{}  is already registered.",
+          registryName);
     }
     mbs.invoke(registryName, "start", null, null);
   }
@@ -1131,8 +1117,8 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
     if ((overrideHostName == null || overrideHostName.trim().length() == 0)
         && (rmiBindAddress != null && rmiBindAddress.trim().length() != 0)) {
       System.setProperty(rmiStubServerNameKey, rmiBindAddress);
-      logger.info(LocalizedMessage.create(LocalizedStrings.AgentImpl_SETTING_0,
-          new StringBuilder(rmiStubServerNameKey).append(" = ").append(rmiBindAddress)));
+      logger.info((new StringBuilder("Setting ").append(rmiStubServerNameKey).append(" = ")
+          .append(rmiBindAddress).toString()));
     }
 
     try {
@@ -1142,8 +1128,7 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
       // make sure this adaptor is not already registered...
       if (getMBeanServer().isRegistered(objName)) {
         // dunno how we got here...
-        logger.info(LocalizedMessage.create(
-            LocalizedStrings.AgentImpl_RMICONNECTORSERVER_ALREADY_REGISTERED_AS__0, objName));
+        logger.info("RMIConnectorServer already registered as {}", objName);
         return;
       }
 
@@ -1178,9 +1163,6 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
       JMXServiceURL url = new JMXServiceURL(urlString);
 
       Map<String, Object> env = new HashMap<String, Object>();
-      // env.put(Context.INITIAL_CONTEXT_FACTORY,
-      // "com.sun.jndi.rmi.registry.RegistryContextFactory");
-      // env.put(Context.PROVIDER_URL, "rmi://localhost:1099");
 
       RMIServerSocketFactory ssf = new MX4JServerSocketFactory(this.agentConfig.isAgentSSLEnabled(), // true,
           this.agentConfig.isAgentSSLRequireAuth(), // true,
@@ -1219,9 +1201,9 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
       // error condition, so you also need to check to see if the JVM
       // is still usable:
       SystemFailure.checkFailure();
-      logger.error(LocalizedStrings.AgentImpl_FAILED_TO_START_RMICONNECTORSERVER, t);
+      logger.error("Failed to start RMIConnectorServer:", t);
       throw new StartupException(
-          LocalizedStrings.AgentImpl_FAILED_TO_START_RMI_SERVICE.toLocalizedString(), t);
+          "Failed to start RMI service, verify RMI configuration properties", t);
     }
   }
 
@@ -1239,8 +1221,7 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
       // make sure this adaptor is not already registered...
       if (getMBeanServer().isRegistered(objName)) {
         // dunno how we got here...
-        logger.info(LocalizedMessage
-            .create(LocalizedStrings.AgentImpl_SNMPADAPTOR_ALREADY_REGISTERED_AS__0, objName));
+        logger.info("SnmpAdaptor already registered as  {}", objName);
         return;
       }
 
@@ -1251,13 +1232,12 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
       // validate the directory...
       if (snmpDir == null || snmpDir.length() == 0) {
         throw new IllegalArgumentException(
-            LocalizedStrings.AgentImpl_SNMPDIRECTORY_MUST_BE_SPECIFIED_BECAUSE_SNMP_IS_ENABLED
-                .toLocalizedString());
+            "snmp-directory must be specified because SNMP is enabled");
       }
       File root = new File(snmpDir);
       if (!root.exists()) {
         throw new IllegalArgumentException(
-            LocalizedStrings.AgentImpl_SNMPDIRECTORY_DOES_NOT_EXIST.toLocalizedString());
+            "snmp-directory does not exist");
       }
 
       // create the adaptor...
@@ -1284,10 +1264,9 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
       // error condition, so you also need to check to see if the JVM
       // is still usable:
       SystemFailure.checkFailure();
-      logger.error(LocalizedMessage
-          .create(LocalizedStrings.AgentImpl_FAILED_TO_START_SNMPADAPTOR__0, t.getMessage()));
-      throw new StartupException(LocalizedStrings.AgentImpl_FAILED_TO_START_SNMPADAPTOR__0
-          .toLocalizedString(t.getMessage()), t);
+      logger.error("Failed to start SnmpAdaptor:  {}", t.getMessage());
+      throw new StartupException(String.format("Failed to start SnmpAdaptor: %s",
+          t.getMessage()), t);
     }
   }
 
@@ -1305,8 +1284,7 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
       // make sure this adaptor is not already registered...
       if (getMBeanServer().isRegistered(objName)) {
         // dunno how we got here...
-        logger.info(LocalizedMessage
-            .create(LocalizedStrings.AgentImpl_HTTPADAPTOR_ALREADY_REGISTERED_AS__0, objName));
+        logger.info("HttpAdaptor already registered as  {}", objName);
         return;
       }
 
@@ -1315,21 +1293,20 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
       // validate and set host and port values...
       if (this.agentConfig.getHttpPort() > 0) {
         this.httpAdaptor.setPort(this.agentConfig.getHttpPort());
-        logger.info(LogMarker.CONFIG,
-            LocalizedMessage.create(LocalizedStrings.AgentImpl_HTTP_ADAPTOR_LISTENING_ON_PORT__0,
-                this.agentConfig.getHttpPort()));
+        logger.info(LogMarker.CONFIG_MARKER,
+            "HTTP adaptor listening on port: {}",
+            this.agentConfig.getHttpPort());
       } else {
-        logger.error(LocalizedMessage.create(LocalizedStrings.AgentImpl_INCORRECT_PORT_VALUE__0,
-            this.agentConfig.getHttpPort()));
+        logger.error("Incorrect port value  {}",
+            this.agentConfig.getHttpPort());
       }
 
       if (this.agentConfig.getHttpBindAddress() != null) {
         String host = this.agentConfig.getHttpBindAddress();
-        logger.info(LogMarker.CONFIG, LocalizedMessage
-            .create(LocalizedStrings.AgentImpl_HTTP_ADAPTOR_LISTENING_ON_ADDRESS__0, host));
+        logger.info(LogMarker.CONFIG_MARKER, "HTTP adaptor listening on address:  {}", host);
         this.httpAdaptor.setHost(host);
       } else {
-        logger.error(LocalizedMessage.create(LocalizedStrings.AgentImpl_INCORRECT_NULL_HOSTNAME));
+        logger.error("Incorrect null hostname");
       }
 
       // SSL support...
@@ -1368,10 +1345,9 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
       // error condition, so you also need to check to see if the JVM
       // is still usable:
       SystemFailure.checkFailure();
-      logger.error(LocalizedMessage
-          .create(LocalizedStrings.AgentImpl_FAILED_TO_START_HTTPADAPTOR__0, t.getMessage()));
-      throw new StartupException(LocalizedStrings.AgentImpl_FAILED_TO_START_HTTPADAPTOR__0
-          .toLocalizedString(t.getMessage()), t);
+      logger.error("Failed to start HttpAdaptor:  {}", t.getMessage());
+      throw new StartupException(String.format("Failed to start HttpAdaptor: %s",
+          t.getMessage()), t);
     }
   }
 
@@ -1384,28 +1360,13 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
     // make sure this mbean is not already registered...
     if (getMBeanServer().isRegistered(objName)) {
       // dunno how we got here...
-      logger.info(LocalizedMessage
-          .create(LocalizedStrings.AgentImpl_XSLTPROCESSOR_ALREADY_REGISTERED_AS__0, objName));
+      logger.info("XsltProcessor already registered as  {}", objName);
       return objName;
     }
 
     getMBeanServer().registerMBean(new mx4j.tools.adaptor.http.XSLTProcessor(), objName);
     return objName;
   }
-
-  // -------------------------------------------------------------------------
-  // Private support methods...
-  // -------------------------------------------------------------------------
-
-  // /** Not used anymore but seems moderately useful... */
-  // private String[] parseSSLCiphers(String ciphers) {
-  // List list = new ArrayList();
-  // StringTokenizer st = new StringTokenizer(ciphers);
-  // while (st.hasMoreTokens()) {
-  // list.add(st.nextToken());
-  // }
-  // return (String[]) list.toArray(new String[list.size()]);
-  // }
 
   // -------------------------------------------------------------------------
   // SSL configuration for GemFire
@@ -1462,27 +1423,59 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
   // ManagedResource implementation
   // -------------------------------------------------------------------------
 
+  @Override
   public String getMBeanName() {
     return this.mbeanName;
   }
 
+  @Override
   public ModelMBean getModelMBean() {
     return this.modelMBean;
   }
 
+  @Override
   public void setModelMBean(ModelMBean modelMBean) {
     this.modelMBean = modelMBean;
   }
 
+  @Override
   public ObjectName getObjectName() {
     return this.objectName;
   }
 
+  @Override
   public ManagedResourceType getManagedResourceType() {
     return ManagedResourceType.AGENT;
   }
 
+  @Override
   public void cleanupResource() {}
+
+  @Override
+  public LogConfig getLogConfig() {
+    return agentConfig.createLogConfig();
+  }
+
+  @Override
+  public StatisticsConfig getStatisticsConfig() {
+    return agentConfig.createStatisticsConfig();
+  }
+
+  @Override
+  public void addLogConfigListener(LogConfigListener logConfigListener) {
+    logConfigListeners.add(logConfigListener);
+  }
+
+  @Override
+  public void removeLogConfigListener(LogConfigListener logConfigListener) {
+    logConfigListeners.remove(logConfigListener);
+  }
+
+  void logConfigChanged() {
+    for (LogConfigListener listener : logConfigListeners) {
+      listener.configChanged();
+    }
+  }
 
   static class StartupException extends GemFireException {
     private static final long serialVersionUID = 6614145962199330348L;
@@ -1526,13 +1519,11 @@ public class AgentImpl implements org.apache.geode.admin.jmx.Agent,
     StringBuffer sb = new StringBuffer();
     sb.append("AgentImpl[");
     sb.append("config=" + agentConfig.toProperties().toString());
-    // sb.append("; adaptor=" + httpAdaptor.toString());
     sb.append("; mbeanName=" + mbeanName);
     sb.append("; modelMBean=" + modelMBean);
     sb.append("; objectName=" + objectName);
     sb.append("; propertyFile=" + propertyFile);
     sb.append(": rmiConnector=" + rmiConnector);
-    // sb.append("; system=" + system);)
     sb.append("]");
     return sb.toString();
   }
@@ -1572,6 +1563,7 @@ class ConnectionNotificationAdapter implements NotificationListener {
    *        resent, without modification, to the listener. The MBean object should not use or modify
    *        the object. (NOTE: copied from javax.management.NotificationListener)
    */
+  @Override
   @edu.umd.cs.findbugs.annotations.SuppressWarnings(value = "BC_UNCONFIRMED_CAST",
       justification = "Only JMXConnectionNotification instances are used.")
   public void handleNotification(Notification notification, Object handback) {
@@ -1611,6 +1603,7 @@ class ConnectionNotificationFilterImpl implements NotificationFilter {
    * @param notification The notification to be sent.
    * @return true if the notification has to be sent to the listener, false otherwise.
    */
+  @Override
   public boolean isNotificationEnabled(Notification notification) {
     boolean isThisNotificationEnabled = false;
     if (notification.getType().equals(JMXConnectionNotification.OPENED)

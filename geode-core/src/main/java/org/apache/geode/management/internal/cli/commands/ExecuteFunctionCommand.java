@@ -26,26 +26,23 @@ import org.apache.shiro.subject.Subject;
 import org.springframework.shell.core.annotation.CliCommand;
 import org.springframework.shell.core.annotation.CliOption;
 
-import org.apache.geode.cache.execute.Execution;
-import org.apache.geode.cache.execute.Function;
-import org.apache.geode.cache.execute.FunctionService;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.management.cli.CliMetaData;
 import org.apache.geode.management.cli.ConverterHint;
-import org.apache.geode.management.cli.Result;
+import org.apache.geode.management.cli.GfshCommand;
 import org.apache.geode.management.internal.cli.CliAroundInterceptor;
 import org.apache.geode.management.internal.cli.GfshParseResult;
+import org.apache.geode.management.internal.cli.functions.CliFunctionResult;
 import org.apache.geode.management.internal.cli.functions.UserFunctionExecution;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.cli.result.CompositeResultData;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
-import org.apache.geode.management.internal.cli.result.TabularResultData;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
+import org.apache.geode.management.internal.cli.result.model.TabularResultModel;
 
-public class ExecuteFunctionCommand implements GfshCommand {
+public class ExecuteFunctionCommand extends GfshCommand {
   @CliCommand(value = CliStrings.EXECUTE_FUNCTION, help = CliStrings.EXECUTE_FUNCTION__HELP)
   @CliMetaData(relatedTopic = {CliStrings.TOPIC_GEODE_FUNCTION},
       interceptor = "org.apache.geode.management.internal.cli.commands.ExecuteFunctionCommand$ExecuteFunctionCommandInterceptor")
-  public Result executeFunction(
+  public ResultModel executeFunction(
       @CliOption(key = CliStrings.EXECUTE_FUNCTION__ID, mandatory = true,
           help = CliStrings.EXECUTE_FUNCTION__ID__HELP) String functionId,
       @CliOption(key = {CliStrings.GROUP, CliStrings.GROUPS},
@@ -64,8 +61,8 @@ public class ExecuteFunctionCommand implements GfshCommand {
       @CliOption(key = CliStrings.EXECUTE_FUNCTION__FILTER,
           help = CliStrings.EXECUTE_FUNCTION__FILTER__HELP) String filterString) {
 
-    CompositeResultData executeFunctionResultTable = ResultBuilder.createCompositeResultData();
-    TabularResultData resultTable = executeFunctionResultTable.addSection().addTable("Table1");
+    ResultModel resultModel = new ResultModel();
+    TabularResultModel resultTable = resultModel.addTable("Table1");
     String headerText = "Execution summary";
     resultTable.setHeader(headerText);
 
@@ -76,50 +73,14 @@ public class ExecuteFunctionCommand implements GfshCommand {
       // find the members based on the groups or members
       dsMembers = findMembers(onGroups, onMembers);
     } else {
-      dsMembers = findMembersForRegion(getCache(), onRegion);
+      dsMembers = findAnyMembersForRegion(onRegion);
     }
 
     if (dsMembers.size() == 0) {
-      return ResultBuilder.createUserErrorResult("No members found.");
+      return ResultModel.createError("No members found.");
     }
 
-    for (DistributedMember member : dsMembers) {
-      executeAndGetResults(functionId, filterString, resultCollector, arguments, member,
-          resultTable, onRegion);
-    }
-    return ResultBuilder.buildResult(resultTable);
-  }
-
-  public static class ExecuteFunctionCommandInterceptor implements CliAroundInterceptor {
-    @Override
-    public Result preExecution(GfshParseResult parseResult) {
-      String onRegion = parseResult.getParamValueAsString(CliStrings.EXECUTE_FUNCTION__ONREGION);
-      String onMember = parseResult.getParamValueAsString(CliStrings.MEMBER);
-      String onGroup = parseResult.getParamValueAsString(CliStrings.GROUP);
-      String filter = parseResult.getParamValueAsString(CliStrings.EXECUTE_FUNCTION__FILTER);
-
-      boolean moreThanOne =
-          Stream.of(onRegion, onMember, onGroup).filter(Objects::nonNull).count() > 1;
-
-      if (moreThanOne) {
-        return ResultBuilder.createUserErrorResult(CliStrings.EXECUTE_FUNCTION__MSG__OPTIONS);
-      }
-
-      if (onRegion == null && filter != null) {
-        return ResultBuilder.createUserErrorResult(
-            CliStrings.EXECUTE_FUNCTION__MSG__MEMBER_SHOULD_NOT_HAVE_FILTER_FOR_EXECUTION);
-      }
-
-      return ResultBuilder.createInfoResult("");
-    }
-  }
-
-  void executeAndGetResults(String functionId, String filterString, String resultCollector,
-      String[] arguments, DistributedMember member, TabularResultData resultTable,
-      String onRegion) {
-    StringBuilder resultMessage = new StringBuilder();
-
-    Function function = new UserFunctionExecution();
+    // Build up our argument list
     Object[] args = new Object[6];
     args[0] = functionId;
     if (filterString != null) {
@@ -139,38 +100,43 @@ public class ExecuteFunctionCommand implements GfshCommand {
     }
     args[4] = onRegion;
 
-    Subject currentUser = getSecurityService().getSubject();
+    Subject currentUser = getSubject();
     if (currentUser != null) {
       args[5] = currentUser.getSession().getAttribute(CREDENTIALS_SESSION_ATTRIBUTE);
     } else {
       args[5] = null;
     }
 
-    Execution execution = FunctionService.onMember(member).setArguments(args);
-    if (execution != null) {
-      List<Object> results = (List<Object>) execution.execute(function).getResult();
-      if (results != null) {
-        for (Object resultObj : results) {
-          if (resultObj != null) {
-            if (resultObj instanceof String) {
-              resultMessage.append(((String) resultObj));
-            } else if (resultObj instanceof Exception) {
-              resultMessage.append(((Exception) resultObj).getMessage());
-            } else {
-              resultMessage.append(resultObj);
-            }
-          }
-        }
-      }
-      toTabularResultData(resultTable, member.getId(), resultMessage.toString());
-    } else {
-      toTabularResultData(resultTable, member.getId(),
-          CliStrings.EXECUTE_FUNCTION__MSG__ERROR_IN_RETRIEVING_EXECUTOR);
-    }
+    // Execute function and aggregate results
+    List<CliFunctionResult> results =
+        executeAndGetFunctionResult(new UserFunctionExecution(), args, dsMembers);
+
+    return ResultModel.createMemberStatusResult(results, false, false);
   }
 
-  private void toTabularResultData(TabularResultData table, String memberId, String memberResult) {
-    table.accumulate("Member ID/Name", memberId);
-    table.accumulate("Function Execution Result", memberResult);
+  @SuppressWarnings("unused")
+  public static class ExecuteFunctionCommandInterceptor implements CliAroundInterceptor {
+    @Override
+    public ResultModel preExecution(GfshParseResult parseResult) {
+      String onRegion = parseResult.getParamValueAsString(CliStrings.EXECUTE_FUNCTION__ONREGION);
+      String onMember = parseResult.getParamValueAsString(CliStrings.MEMBER);
+      String onGroup = parseResult.getParamValueAsString(CliStrings.GROUP);
+      String filter = parseResult.getParamValueAsString(CliStrings.EXECUTE_FUNCTION__FILTER);
+
+      boolean moreThanOne =
+          Stream.of(onRegion, onMember, onGroup).filter(Objects::nonNull).count() > 1;
+
+      ResultModel result = new ResultModel();
+      if (moreThanOne) {
+        return ResultModel.createError(CliStrings.EXECUTE_FUNCTION__MSG__OPTIONS);
+      }
+
+      if (onRegion == null && filter != null) {
+        return ResultModel.createError(
+            CliStrings.EXECUTE_FUNCTION__MSG__MEMBER_SHOULD_NOT_HAVE_FILTER_FOR_EXECUTION);
+      }
+
+      return result;
+    }
   }
 }

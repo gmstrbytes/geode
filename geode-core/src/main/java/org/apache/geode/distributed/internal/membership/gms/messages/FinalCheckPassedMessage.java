@@ -18,20 +18,19 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 
-import org.apache.geode.DataSerializer;
-import org.apache.geode.distributed.internal.DistributionManager;
-import org.apache.geode.distributed.internal.HighPriorityDistributionMessage;
-import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.Version;
+import org.apache.geode.distributed.internal.membership.gms.api.MemberIdentifier;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.internal.serialization.Version;
 
-public class FinalCheckPassedMessage extends HighPriorityDistributionMessage {
+public class FinalCheckPassedMessage extends AbstractGMSMessage {
 
-  private InternalDistributedMember suspect;
+  private MemberIdentifier suspect;
 
   public FinalCheckPassedMessage() {}
 
-  public FinalCheckPassedMessage(InternalDistributedMember recipient,
-      InternalDistributedMember suspect) {
+  public FinalCheckPassedMessage(MemberIdentifier recipient,
+      MemberIdentifier suspect) {
     super();
     setRecipient(recipient);
     this.suspect = suspect;
@@ -40,11 +39,6 @@ public class FinalCheckPassedMessage extends HighPriorityDistributionMessage {
   @Override
   public int getDSFID() {
     return FINAL_CHECK_PASSED_MESSAGE;
-  }
-
-  @Override
-  public void process(DistributionManager dm) {
-    throw new IllegalStateException("this message is not intended to execute in a thread pool");
   }
 
   @Override
@@ -58,16 +52,18 @@ public class FinalCheckPassedMessage extends HighPriorityDistributionMessage {
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    DataSerializer.writeObject(suspect, out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    context.getSerializer().writeObject(suspect, out);
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    suspect = (InternalDistributedMember) DataSerializer.readObject(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    suspect = context.getDeserializer().readObject(in);
   }
 
-  public InternalDistributedMember getSuspect() {
+  public MemberIdentifier getSuspect() {
     return suspect;
   }
 }

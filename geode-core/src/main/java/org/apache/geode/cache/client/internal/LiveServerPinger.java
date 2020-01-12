@@ -26,7 +26,7 @@ import org.apache.geode.cache.client.internal.EndpointManager.EndpointListenerAd
 import org.apache.geode.cache.client.internal.PoolImpl.PoolTask;
 import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * Responsible for pinging live servers to make sure they are still alive.
@@ -37,7 +37,7 @@ public class LiveServerPinger extends EndpointListenerAdapter {
 
   private static final long NANOS_PER_MS = 1000000L;
 
-  private final ConcurrentMap/* <Endpoint,Future> */ taskFutures = new ConcurrentHashMap();
+  private final ConcurrentMap<Endpoint, Future> taskFutures = new ConcurrentHashMap<>();
   protected final InternalPool pool;
   protected final long pingIntervalNanos;
 
@@ -70,7 +70,7 @@ public class LiveServerPinger extends EndpointListenerAdapter {
   }
 
   private void cancelFuture(Endpoint endpoint) {
-    Future future = (Future) taskFutures.remove(endpoint);
+    Future future = taskFutures.remove(endpoint);
     if (future != null) {
       future.cancel(false);
     }
@@ -79,14 +79,13 @@ public class LiveServerPinger extends EndpointListenerAdapter {
   private class PingTask extends PoolTask {
     private final Endpoint endpoint;
 
-    public PingTask(Endpoint endpoint) {
+    PingTask(Endpoint endpoint) {
       this.endpoint = endpoint;
     }
 
     @Override
     public void run2() {
       if (endpoint.timeToPing(pingIntervalNanos)) {
-        // logger.fine("DEBUG pinging " + server);
         try {
           PingOp.execute(pool, endpoint.getLocation());
         } catch (Exception e) {
@@ -103,9 +102,6 @@ public class LiveServerPinger extends EndpointListenerAdapter {
           // socket timeout exception, security exception, failure to connect).
           pool.getEndpointManager().serverCrashed(endpoint);
         }
-      } else {
-        // logger.fine("DEBUG skipping ping of " + server
-        // + " because lastAccessed=" + endpoint.getLastAccessed());
       }
     }
   }

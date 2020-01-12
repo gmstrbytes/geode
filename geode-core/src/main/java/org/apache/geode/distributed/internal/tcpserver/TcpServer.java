@@ -17,24 +17,22 @@ package org.apache.geode.distributed.internal.tcpserver;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.EOFException;
-import java.io.File;
 import java.io.IOException;
 import java.io.StreamCorruptedException;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketAddress;
-import java.net.URL;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.util.Date;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Properties;
-import java.util.concurrent.SynchronousQueue;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 
 import javax.net.ssl.SSLException;
 
@@ -42,34 +40,18 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.CancelException;
 import org.apache.geode.DataSerializer;
-import org.apache.geode.SystemFailure;
-import org.apache.geode.cache.IncompatibleVersionException;
-import org.apache.geode.cache.UnsupportedVersionException;
-import org.apache.geode.distributed.internal.ClusterConfigurationService;
+import org.apache.geode.annotations.internal.MutableForTesting;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionConfigImpl;
-import org.apache.geode.distributed.internal.DistributionStats;
-import org.apache.geode.distributed.internal.InternalDistributedSystem;
-import org.apache.geode.distributed.internal.InternalLocator;
-import org.apache.geode.distributed.internal.PoolStatHelper;
-import org.apache.geode.distributed.internal.PooledExecutorWithDMStats;
-import org.apache.geode.internal.DSFIDFactory;
-import org.apache.geode.internal.GemFireVersion;
-import org.apache.geode.internal.Version;
-import org.apache.geode.internal.VersionedDataInputStream;
-import org.apache.geode.internal.VersionedDataOutputStream;
-import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.cache.client.protocol.ClientProtocolProcessor;
-import org.apache.geode.internal.cache.client.protocol.ClientProtocolService;
-import org.apache.geode.internal.cache.client.protocol.ClientProtocolServiceLoader;
-import org.apache.geode.internal.cache.client.protocol.exception.ServiceLoadingFailureException;
-import org.apache.geode.internal.cache.client.protocol.exception.ServiceVersionNotFoundException;
-import org.apache.geode.internal.cache.tier.CommunicationMode;
-import org.apache.geode.internal.cache.tier.sockets.HandShake;
-import org.apache.geode.internal.logging.LogService;
 import org.apache.geode.internal.net.SocketCreator;
 import org.apache.geode.internal.net.SocketCreatorFactory;
 import org.apache.geode.internal.security.SecurableCommunicationChannel;
+import org.apache.geode.internal.serialization.UnsupportedSerializationVersionException;
+import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.VersionedDataInputStream;
+import org.apache.geode.internal.serialization.VersionedDataOutputStream;
+import org.apache.geode.logging.internal.executors.LoggingThread;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * TCP server which listens on a port and delegates requests to a request handler. The server uses
@@ -102,74 +84,74 @@ public class TcpServer {
   // GossipServer.
   public static final int OLDGOSSIPVERSION = 1001;
 
-  private static final Map GOSSIP_TO_GEMFIRE_VERSION_MAP = new HashMap();
+  @MutableForTesting("The map used here is mutable, because some tests modify it")
+  private static final Map<Integer, Short> GOSSIP_TO_GEMFIRE_VERSION_MAP =
+      createGossipToVersionMap();
+  public static final int GOSSIP_BYTE = 0;
 
   // For test purpose only
+  @MutableForTesting
   public static boolean isTesting = false;
   // Non-final field for testing to avoid any security holes in system.
+  @MutableForTesting
   public static int TESTVERSION = GOSSIPVERSION;
+  @MutableForTesting
   public static int OLDTESTVERSION = OLDGOSSIPVERSION;
 
   public static final long SHUTDOWN_WAIT_TIME = 60 * 1000;
-  private static int MAX_POOL_SIZE =
-      Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "TcpServer.MAX_POOL_SIZE", 100);
-  private static int POOL_IDLE_TIMEOUT = 60 * 1000;
 
-  private static final Logger log = LogService.getLogger();
+  private static final Logger logger = LogService.getLogger();
 
-  protected static final int READ_TIMEOUT =
+  // no longer static so that tests can test this system property
+  private final int READ_TIMEOUT =
       Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "TcpServer.READ_TIMEOUT", 60 * 1000);
-  // This is for backwards compatibility. The p2p.backlog flag used to be the only way to configure
-  // the locator backlog.
   private static final int P2P_BACKLOG = Integer.getInteger("p2p.backlog", 1000);
   private static final int BACKLOG =
       Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "TcpServer.BACKLOG", P2P_BACKLOG);
+  private final ProtocolChecker protocolChecker;
 
   private int port;
   private ServerSocket srv_sock = null;
   private InetAddress bind_address;
   private volatile boolean shuttingDown = false;
-  private final PoolStatHelper poolHelper;
-  private final InternalLocator internalLocator;
   private final TcpHandler handler;
-  private final ClientProtocolServiceLoader clientProtocolServiceLoader;
 
+  private ExecutorService executor;
+  private final Supplier<ExecutorService> executorServiceSupplier;
 
-  private PooledExecutorWithDMStats executor;
-  private final ThreadGroup threadGroup;
   private final String threadName;
   private volatile Thread serverThread;
 
   protected SocketCreator socketCreator;
+
+  private final LongSupplier nanoTimeSupplier;
+
 
   /*
    * Initialize versions map. Warning: This map must be compatible with all GemFire versions being
    * handled by this member "With different GOSSIPVERION". If GOSSIPVERIONS are same for then
    * current GOSSIPVERSION should be used.
    */
-  static {
-    GOSSIP_TO_GEMFIRE_VERSION_MAP.put(GOSSIPVERSION, Version.GFE_71.ordinal());
-    GOSSIP_TO_GEMFIRE_VERSION_MAP.put(OLDGOSSIPVERSION, Version.GFE_57.ordinal());
+  private static Map<Integer, Short> createGossipToVersionMap() {
+    HashMap<Integer, Short> map = new HashMap<>();
+    map.put(GOSSIPVERSION, Version.GFE_71.ordinal());
+    map.put(OLDGOSSIPVERSION, Version.GFE_57.ordinal());
+    return map;
   }
 
   public TcpServer(int port, InetAddress bind_address, Properties sslConfig,
-      DistributionConfigImpl cfg, TcpHandler handler, PoolStatHelper poolHelper,
-      ThreadGroup threadGroup, String threadName, InternalLocator internalLocator,
-      ClientProtocolServiceLoader clientProtocolServiceLoader) {
+      DistributionConfigImpl cfg, TcpHandler handler,
+      String threadName, ProtocolChecker protocolChecker,
+      final LongSupplier nanoTimeSupplier,
+      final Supplier<ExecutorService> executorServiceSupplier) {
     this.port = port;
     this.bind_address = bind_address;
     this.handler = handler;
-    this.poolHelper = poolHelper;
-    this.internalLocator = internalLocator;
-    this.clientProtocolServiceLoader = clientProtocolServiceLoader;
-    // register DSFID types first; invoked explicitly so that all message type
-    // initializations do not happen in first deserialization on a possibly
-    // "precious" thread
-    DSFIDFactory.registerTypes();
-
-    this.executor = createExecutor(poolHelper, threadGroup);
-    this.threadGroup = threadGroup;
+    this.protocolChecker = protocolChecker;
+    this.executorServiceSupplier = executorServiceSupplier;
+    this.executor = executorServiceSupplier.get();
     this.threadName = threadName;
+    this.nanoTimeSupplier = nanoTimeSupplier;
 
     if (cfg == null) {
       if (sslConfig == null) {
@@ -187,30 +169,11 @@ public class TcpServer {
     return socketCreator;
   }
 
-  private static PooledExecutorWithDMStats createExecutor(PoolStatHelper poolHelper,
-      final ThreadGroup threadGroup) {
-    ThreadFactory factory = new ThreadFactory() {
-      private final AtomicInteger threadNum = new AtomicInteger();
-
-      public Thread newThread(Runnable r) {
-        Thread thread = new Thread(threadGroup, r,
-            "locator request thread[" + threadNum.incrementAndGet() + "]");
-        thread.setDaemon(true);
-        return thread;
-      }
-    };
-
-    return new PooledExecutorWithDMStats(new SynchronousQueue(), MAX_POOL_SIZE, poolHelper, factory,
-        POOL_IDLE_TIMEOUT, new ThreadPoolExecutor.CallerRunsPolicy());
-  }
-
-  public void restarting(InternalDistributedSystem ds, InternalCache cache,
-      ClusterConfigurationService sharedConfig) throws IOException {
+  public void restarting() throws IOException {
     this.shuttingDown = false;
-    this.handler.restarting(ds, cache, sharedConfig);
     startServerThread();
-    this.executor = createExecutor(this.poolHelper, this.threadGroup);
-    log.info("TcpServer@" + System.identityHashCode(this)
+    this.executor = executorServiceSupplier.get();
+    logger.info("TcpServer@" + System.identityHashCode(this)
         + " restarting: completed.  Server thread=" + this.serverThread + '@'
         + System.identityHashCode(this.serverThread) + ";alive=" + this.serverThread.isAlive());
   }
@@ -224,13 +187,7 @@ public class TcpServer {
   private void startServerThread() throws IOException {
     initializeServerSocket();
     if (serverThread == null || !serverThread.isAlive()) {
-      serverThread = new Thread(threadGroup, threadName) {
-        @Override
-        public void run() {
-          TcpServer.this.run();
-        }
-      };
-      serverThread.setDaemon(true);
+      serverThread = new LoggingThread(threadName, this::run);
       serverThread.start();
     }
   }
@@ -244,13 +201,13 @@ public class TcpServer {
         srv_sock = getSocketCreator().createServerSocket(port, BACKLOG, bind_address);
       }
       // GEODE-4176 - set the port from a wild-card bind so that handlers know the correct value
+
       if (this.port <= 0) {
         this.port = srv_sock.getLocalPort();
       }
-
-      if (log.isInfoEnabled()) {
-        log.info("Locator was created at " + new Date());
-        log.info("Listening on port " + getPort() + " bound on address " + bind_address);
+      if (logger.isInfoEnabled()) {
+        logger.info("Locator was created at " + new Date());
+        logger.info("Listening on port " + getPort() + " bound on address " + bind_address);
       }
       srv_sock.setReuseAddress(true);
     }
@@ -294,16 +251,6 @@ public class TcpServer {
     Socket sock = null;
 
     while (!shuttingDown) {
-      if (SystemFailure.getFailure() != null) {
-        // Allocate no objects here!
-        try {
-          srv_sock.close();
-          return;
-        } catch (IOException ignore) {
-          // ignore
-        }
-        SystemFailure.checkFailure(); // throws
-      }
       if (srv_sock.isClosed()) {
         shuttingDown = true;
         break;
@@ -315,14 +262,15 @@ public class TcpServer {
           // SW: This is the case when there is a problem in locator
           // SSL configuration, so need to exit otherwise goes into an
           // infinite loop just filling the logs
-          log.error("Locator stopping due to SSL configuration problem.", ex);
+          logger.error("Locator stopping due to SSL configuration problem.", ex);
           shuttingDown = true;
           continue;
         }
+
         processRequest(sock);
       } catch (Exception ex) {
         if (!shuttingDown) {
-          log.error("exception=", ex);
+          logger.error("exception=", ex);
         }
         continue;
       }
@@ -332,12 +280,12 @@ public class TcpServer {
       try {
         srv_sock.close();
       } catch (java.io.IOException ex) {
-        log.warn("exception closing server socket during shutdown", ex);
+        logger.warn("exception closing server socket during shutdown", ex);
       }
     }
 
     if (shuttingDown) {
-      log.info("locator shutting down");
+      logger.info("locator shutting down");
       executor.shutdown();
       try {
         executor.awaitTermination(SHUTDOWN_WAIT_TIME, TimeUnit.MILLISECONDS);
@@ -346,7 +294,6 @@ public class TcpServer {
       }
       handler.shutDown();
       synchronized (this) {
-        // this.shutDown = true;
         this.notifyAll();
       }
     }
@@ -358,47 +305,52 @@ public class TcpServer {
    */
   private void processRequest(final Socket socket) {
     executor.execute(() -> {
-      long startTime = DistributionStats.getStatTime();
+
+      final long startTime = nanoTimeSupplier.getAsLong();
       DataInputStream input = null;
       try {
-
         socket.setSoTimeout(READ_TIMEOUT);
-        getSocketCreator().configureServerSSLSocket(socket);
+        getSocketCreator().handshakeIfSocketIsSSL(socket, READ_TIMEOUT);
 
         try {
           input = new DataInputStream(socket.getInputStream());
         } catch (StreamCorruptedException e) {
           // Some garbage can be left on the socket stream
           // if a peer disappears at exactly the wrong moment.
-          log.debug("Discarding illegal request from "
+          logger.debug("Discarding illegal request from "
               + (socket.getInetAddress().getHostAddress() + ":" + socket.getPort()), e);
           return;
         }
         // read the first byte & check for an improperly configured client pool trying
         // to contact a cache server
         int firstByte = input.readUnsignedByte();
-        if (firstByte == CommunicationMode.ReservedForGossip.getModeNumber()) {
-          processOneConnection(socket, startTime, input);
-        } else if (firstByte == CommunicationMode.ProtobufClientServerProtocol.getModeNumber()) {
-          handleProtobufConnection(socket, input);
-        } else if (CommunicationMode.isValidMode(firstByte)) {
-          socket.getOutputStream().write(HandShake.REPLY_SERVER_IS_LOCATOR);
-          throw new Exception("Improperly configured client detected - use addPoolLocator to "
-              + "configure its locators instead of addPoolServer.");
 
-        } else {
-          rejectUnknownProtocolConnection(socket, firstByte);
+        boolean handled = protocolChecker.checkProtocol(socket, input, firstByte);
+
+        if (!handled) {
+          if (firstByte == GOSSIP_BYTE) {
+            processOneConnection(socket, startTime, input);
+          } else {
+            rejectUnknownProtocolConnection(socket, firstByte);
+          }
         }
-      } catch (EOFException ignore) {
+      } catch (EOFException | SocketException ignore) {
         // client went away - ignore
       } catch (CancelException ignore) {
         // ignore
+      } catch (SocketTimeoutException ex) {
+        String sender = null;
+        if (socket != null) {
+          sender = socket.getInetAddress().getHostAddress();
+        }
+        // Do not want the full stack trace to fill up the logs
+        logger.info("Exception in processing request from " + sender + ": " + ex.getMessage());
       } catch (ClassNotFoundException ex) {
         String sender = null;
         if (socket != null) {
           sender = socket.getInetAddress().getHostAddress();
         }
-        log.info("Unable to process request from " + sender + " exception=" + ex.getMessage());
+        logger.info("Unable to process request from " + sender + " exception=" + ex.getMessage());
       } catch (Exception ex) {
         String sender = null;
         if (socket != null) {
@@ -408,28 +360,20 @@ public class TcpServer {
           // IOException could be caused by a client failure. Don't
           // log with severe.
           if (!socket.isClosed()) {
-            log.info("Exception in processing request from " + sender, ex);
+            logger.info("Exception in processing request from " + sender, ex);
           }
         } else {
-          log.fatal("Exception in processing request from " + sender, ex);
+          logger.fatal("Exception in processing request from " + sender, ex);
         }
 
-      } catch (VirtualMachineError err) {
-        SystemFailure.initiateFailure(err);
-        throw err;
       } catch (Throwable ex) {
-        SystemFailure.checkFailure();
         String sender = null;
         if (socket != null) {
           sender = socket.getInetAddress().getHostAddress();
         }
         try {
-          log.fatal("Exception in processing request from " + sender, ex);
-        } catch (VirtualMachineError err) {
-          SystemFailure.initiateFailure(err);
-          throw err;
+          logger.fatal("Exception in processing request from " + sender, ex);
         } catch (Throwable t) {
-          SystemFailure.checkFailure();
           t.printStackTrace();
         }
       } finally {
@@ -442,8 +386,8 @@ public class TcpServer {
     });
   }
 
-  private void processOneConnection(Socket socket, long startTime, DataInputStream input)
-      throws IOException, UnsupportedVersionException, ClassNotFoundException {
+  private void processOneConnection(Socket socket, final long startTime, DataInputStream input)
+      throws IOException, UnsupportedSerializationVersionException, ClassNotFoundException {
     // At this point we've read the leading byte of the gossip version and found it to be 0,
     // continue reading the next three bytes
     int gossipVersion = 0;
@@ -464,14 +408,14 @@ public class TcpServer {
         versionOrdinal = input.readShort();
       }
 
-      if (log.isDebugEnabled() && versionOrdinal != Version.CURRENT_ORDINAL) {
-        log.debug("Locator reading request from " + socket.getInetAddress() + " with version "
-            + Version.fromOrdinal(versionOrdinal, false));
+      if (logger.isDebugEnabled() && versionOrdinal != Version.CURRENT_ORDINAL) {
+        logger.debug("Locator reading request from " + socket.getInetAddress() + " with version "
+            + Version.fromOrdinal(versionOrdinal));
       }
-      input = new VersionedDataInputStream(input, Version.fromOrdinal(versionOrdinal, false));
+      input = new VersionedDataInputStream(input, Version.fromOrdinal(versionOrdinal));
       request = DataSerializer.readObject(input);
-      if (log.isDebugEnabled()) {
-        log.debug("Locator received request " + request + " from " + socket.getInetAddress());
+      if (logger.isDebugEnabled()) {
+        logger.debug("Locator received request " + request + " from " + socket.getInetAddress());
       }
       if (request instanceof ShutdownRequest) {
         shuttingDown = true;
@@ -479,8 +423,6 @@ public class TcpServer {
         // Closing the socket will cause our acceptor thread to shutdown the executor
         srv_sock.close();
         response = new ShutdownResponse();
-      } else if (request instanceof InfoRequest) {
-        response = handleInfoRequest(request);
       } else if (request instanceof VersionRequest) {
         response = handleVersionRequest(request);
       } else {
@@ -489,18 +431,18 @@ public class TcpServer {
 
       handler.endRequest(request, startTime);
 
-      startTime = DistributionStats.getStatTime();
+      final long startTime2 = nanoTimeSupplier.getAsLong();
       if (response != null) {
         DataOutputStream output = new DataOutputStream(socket.getOutputStream());
         if (versionOrdinal != Version.CURRENT_ORDINAL) {
           output =
-              new VersionedDataOutputStream(output, Version.fromOrdinal(versionOrdinal, false));
+              new VersionedDataOutputStream(output, Version.fromOrdinal(versionOrdinal));
         }
         DataSerializer.writeObject(response, output);
         output.flush();
       }
 
-      handler.endResponse(request, startTime);
+      handler.endResponse(request, startTime2);
     } else {
       // Close the socket. We can not accept requests from a newer version
       rejectUnknownProtocolConnection(socket, gossipVersion);
@@ -513,58 +455,13 @@ public class TcpServer {
       socket.getOutputStream().flush();
       socket.close();
     } catch (IOException e) {
-      log.debug("exception in sending reply to process using unknown protocol " + gossipVersion, e);
+      logger
+          .debug("exception in sending reply to process using unknown protocol " + gossipVersion,
+              e);
     }
   }
 
-  private void handleProtobufConnection(Socket socket, DataInputStream input) throws Exception {
-    if (!Boolean.getBoolean("geode.feature-protobuf-protocol")) {
-      log.warn("Incoming protobuf connection, but protobuf not enabled on this locator.");
-      socket.close();
-      return;
-    }
 
-    try {
-      ClientProtocolService clientProtocolService = clientProtocolServiceLoader.lookupService();
-      clientProtocolService.initializeStatistics("LocatorStats",
-          internalLocator.getDistributedSystem());
-      try (ClientProtocolProcessor pipeline = clientProtocolService.createProcessorForLocator(
-          internalLocator, internalLocator.getCache().getSecurityService())) {
-        while (!pipeline.socketProcessingIsFinished()) {
-          pipeline.processMessage(input, socket.getOutputStream());
-        }
-      } catch (IncompatibleVersionException e) {
-        // should not happen on the locator as there is no handshake.
-        log.error("Unexpected exception in client message processing", e);
-      }
-    } catch (ServiceLoadingFailureException e) {
-      log.error("There was an error looking up the client protocol service", e);
-      socket.close();
-      throw new IOException("There was an error looking up the client protocol service", e);
-    } catch (ServiceVersionNotFoundException e) {
-      log.error("Unable to find service matching the client protocol version byte", e);
-      socket.close();
-      throw new IOException("Unable to find service matching the client protocol version byte", e);
-    }
-  }
-
-  protected Object handleInfoRequest(Object request) {
-    String[] info = new String[2];
-    info[0] = System.getProperty("user.dir");
-
-    URL url = GemFireVersion.getJarURL();
-    if (url == null) {
-      String s = "Could not find gemfire jar";
-      throw new IllegalStateException(s);
-    }
-
-    File gemfireJar = new File(url.getPath());
-    File lib = gemfireJar.getParentFile();
-    File product = lib.getParentFile();
-    info[1] = product.getAbsolutePath();
-
-    return new InfoResponse(info);
-  }
 
   protected Object handleVersionRequest(Object request) {
     VersionResponse response = new VersionResponse();
@@ -580,7 +477,7 @@ public class TcpServer {
     return TcpServer.isTesting ? TcpServer.OLDTESTVERSION : TcpServer.OLDGOSSIPVERSION;
   }
 
-  public static Map getGossipVersionMapForTestOnly() {
+  public static Map<Integer, Short> getGossipVersionMapForTestOnly() {
     return GOSSIP_TO_GEMFIRE_VERSION_MAP;
   }
 

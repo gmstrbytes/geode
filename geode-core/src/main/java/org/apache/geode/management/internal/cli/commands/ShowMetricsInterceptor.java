@@ -14,29 +14,27 @@
  */
 package org.apache.geode.management.internal.cli.commands;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import org.apache.commons.lang.StringUtils;
-
-import org.apache.geode.management.cli.Result;
 import org.apache.geode.management.internal.cli.AbstractCliAroundInterceptor;
 import org.apache.geode.management.internal.cli.GfshParseResult;
 import org.apache.geode.management.internal.cli.commands.ShowMetricsCommand.Category;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.cli.result.CommandResult;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 
 public class ShowMetricsInterceptor extends AbstractCliAroundInterceptor {
   @Override
-  public Result preExecution(GfshParseResult parseResult) {
+  public ResultModel preExecution(GfshParseResult parseResult) {
     String export_to_report_to = parseResult.getParamValueAsString(CliStrings.SHOW_METRICS__FILE);
     if (export_to_report_to != null && !export_to_report_to.endsWith(".csv")) {
-      return ResultBuilder
-          .createUserErrorResult(CliStrings.format(CliStrings.INVALID_FILE_EXTENSION, ".csv"));
+      return ResultModel.createError(CliStrings.format(CliStrings.INVALID_FILE_EXTENSION, ".csv"));
     }
 
     String regionName = parseResult.getParamValueAsString(CliStrings.SHOW_METRICS__REGION);
@@ -45,13 +43,12 @@ public class ShowMetricsInterceptor extends AbstractCliAroundInterceptor {
     String[] categoryArgs = (String[]) parseResult.getParamValue(CliStrings.SHOW_METRICS__CATEGORY);
 
     if (regionName != null && port != null) {
-      return ResultBuilder.createUserErrorResult(
+      return ResultModel.createError(
           CliStrings.SHOW_METRICS__CANNOT__USE__REGION__WITH__CACHESERVERPORT);
     }
 
     if (port != null && member == null) {
-      return ResultBuilder
-          .createUserErrorResult(CliStrings.SHOW_METRICS__CANNOT__USE__CACHESERVERPORT);
+      return ResultModel.createError(CliStrings.SHOW_METRICS__CANNOT__USE__CACHESERVERPORT);
     }
 
     if (categoryArgs != null) {
@@ -67,7 +64,7 @@ public class ShowMetricsInterceptor extends AbstractCliAroundInterceptor {
       }
     }
 
-    return ResultBuilder.createInfoResult("OK");
+    return ResultModel.createInfo("OK");
   }
 
   static List<Category> getValidCategories(boolean regionProvided, boolean memberProvided,
@@ -95,13 +92,27 @@ public class ShowMetricsInterceptor extends AbstractCliAroundInterceptor {
   }
 
 
-  private CommandResult getInvalidCategoryResult(Set<String> invalidCategories) {
+  private ResultModel getInvalidCategoryResult(Set<String> invalidCategories) {
     StringBuilder sb = new StringBuilder();
     sb.append("Invalid Categories\n");
     for (String category : invalidCategories) {
       sb.append(category);
       sb.append('\n');
     }
-    return ResultBuilder.createUserErrorResult(sb.toString());
+    return ResultModel.createError(sb.toString());
+  }
+
+  @Override
+  public ResultModel postExecution(GfshParseResult parseResult, ResultModel resultModel,
+      Path tempFile) throws IOException {
+    String saveAs = parseResult.getParamValueAsString(CliStrings.SHOW_METRICS__FILE);
+
+    if (saveAs == null) {
+      return resultModel;
+    }
+
+    File file = new File(saveAs).getAbsoluteFile();
+    resultModel.saveFileTo(file.getParentFile());
+    return resultModel;
   }
 }

@@ -20,6 +20,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.geode.annotations.Immutable;
 import org.apache.geode.internal.cache.persistence.PersistentMemberID;
 
 /**
@@ -30,6 +31,7 @@ public class TransformUtils {
   /**
    * Transforms PersistentMemberIDs to a user friendly log entry.
    */
+  @Immutable
   public static final Transformer<Map.Entry<PersistentMemberID, Set<Integer>>, String> persistentMemberEntryToLogEntryTransformer =
       new Transformer<Map.Entry<PersistentMemberID, Set<Integer>>, String>() {
         @Override
@@ -53,6 +55,7 @@ public class TransformUtils {
   /**
    * Transforms PersistentMemberIDs to a user friendly log entry.
    */
+  @Immutable
   public static final Transformer<PersistentMemberID, String> persistentMemberIdToLogEntryTransformer =
       new Transformer<PersistentMemberID, String>() {
         @Override
@@ -60,28 +63,28 @@ public class TransformUtils {
           StringBuilder builder = new StringBuilder();
 
           if (null != memberId) {
-            if (null != memberId.diskStoreId) {
+            if (null != memberId.getDiskStoreId()) {
               builder.append("\n  DiskStore ID: ");
-              builder.append(memberId.diskStoreId.toUUID().toString());
+              builder.append(memberId.getDiskStoreId().toUUID().toString());
             }
 
-            if (null != memberId.name) {
+            if (null != memberId.getName()) {
               builder.append("\n  Name: ");
-              builder.append(memberId.name);
+              builder.append(memberId.getName());
             }
 
-            if ((null != memberId.host) && (null != memberId.directory)) {
+            if ((null != memberId.getHost()) && (null != memberId.getDirectory())) {
               builder.append("\n  Location: ");
             }
 
-            if (null != memberId.host) {
+            if (null != memberId.getHost()) {
               builder.append("/");
-              builder.append(memberId.host.getHostAddress());
+              builder.append(memberId.getHost().getHostAddress());
               builder.append(":");
             }
 
-            if (null != memberId.directory) {
-              builder.append(memberId.directory);
+            if (null != memberId.getDirectory()) {
+              builder.append(memberId.getDirectory());
             }
 
             builder.append("\n");
@@ -94,8 +97,10 @@ public class TransformUtils {
   /**
    * This is a simple file to file name transformer.
    */
+  @Immutable
   public static final Transformer<File, String> fileNameTransformer =
       new Transformer<File, String>() {
+        @Override
         public String transform(File file) {
           return file.getName();
         }

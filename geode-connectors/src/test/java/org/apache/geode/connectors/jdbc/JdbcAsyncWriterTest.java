@@ -15,7 +15,7 @@
 package org.apache.geode.connectors.jdbc;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -29,27 +29,31 @@ import java.util.List;
 
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 
+import org.apache.geode.cache.Operation;
 import org.apache.geode.cache.asyncqueue.AsyncEvent;
 import org.apache.geode.connectors.jdbc.internal.SqlHandler;
+import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.InternalRegion;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.test.fake.Fakes;
 
-@Category(UnitTest.class)
 public class JdbcAsyncWriterTest {
 
   private SqlHandler sqlHandler;
-  private InternalRegion<Object, Object> region;
+  private InternalRegion region;
 
   private JdbcAsyncWriter writer;
+  private InternalCache cache;
 
   @Before
-  public void setup() {
+  public void setUp() {
     sqlHandler = mock(SqlHandler.class);
     region = mock(InternalRegion.class);
+    cache = Fakes.cache();
 
-    writer = new JdbcAsyncWriter(sqlHandler);
+    writer = new JdbcAsyncWriter(sqlHandler, cache);
+
+    when(region.getRegionService()).thenReturn(cache);
   }
 
   @Test
@@ -67,7 +71,7 @@ public class JdbcAsyncWriterTest {
   }
 
   @Test
-  public void writesAProvidedEvent() {
+  public void writesAProvidedEvent() throws Exception {
     writer.processEvents(Collections.singletonList(createMockEvent()));
 
     verify(sqlHandler, times(1)).write(any(), any(), any(), any());
@@ -76,7 +80,17 @@ public class JdbcAsyncWriterTest {
   }
 
   @Test
-  public void writesMultipleProvidedEvents() {
+  public void ignoresLoadEvent() throws Exception {
+    writer.processEvents(Collections.singletonList(createMockEvent(Operation.LOCAL_LOAD_CREATE)));
+
+    verify(sqlHandler, times(0)).write(any(), any(), any(), any());
+    assertThat(writer.getIgnoredEvents()).isEqualTo(1);
+    assertThat(writer.getTotalEvents()).isEqualTo(1);
+    assertThat(writer.getFailedEvents()).isEqualTo(0);
+  }
+
+  @Test
+  public void writesMultipleProvidedEvents() throws Exception {
     List<AsyncEvent> events = new ArrayList<>();
     events.add(createMockEvent());
     events.add(createMockEvent());
@@ -89,9 +103,14 @@ public class JdbcAsyncWriterTest {
     assertThat(writer.getTotalEvents()).isEqualTo(3);
   }
 
-  private AsyncEvent createMockEvent() {
+  private AsyncEvent createMockEvent(Operation op) {
     AsyncEvent event = mock(AsyncEvent.class);
+    when(event.getOperation()).thenReturn(op);
     when(event.getRegion()).thenReturn(region);
     return event;
+  }
+
+  private AsyncEvent createMockEvent() {
+    return createMockEvent(Operation.CREATE);
   }
 }

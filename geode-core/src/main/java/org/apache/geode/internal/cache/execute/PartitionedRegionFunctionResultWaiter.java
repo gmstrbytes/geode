@@ -27,10 +27,11 @@ import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.partitioned.PRFunctionStreamingResultCollector;
+import org.apache.geode.internal.cache.partitioned.PartitionMessage;
 import org.apache.geode.internal.cache.partitioned.PartitionedRegionFunctionStreamingMessage;
 
 /**
- * ResultReciever (which could be resultCollector?)will be instantiated and will be used to send
+ * ResultReceiver (which could be resultCollector?)will be instantiated and will be used to send
  * messages and receive results from other nodes. It takes a set of nodes to which functionExecution
  * message has to be sent. Creates one message for each and sends it to each of them. Then it gets
  * result in processData where it adds them to the resultCollector.
@@ -83,13 +84,14 @@ public class PartitionedRegionFunctionResultWaiter extends StreamingFunctionOper
 
     for (Map.Entry<InternalDistributedMember, FunctionRemoteContext> entry : recipMap.entrySet()) {
       FunctionRemoteContext context = entry.getValue();
-      DistributionMessage m = createRequestMessage(entry.getKey(), processor, context);
+      PartitionMessage m = createRequestMessage(entry.getKey(), processor, context);
+      m.setTransactionDistributed(pr.getCache().getTxManager().isDistributed());
       this.sys.getDistributionManager().putOutgoing(m);
     }
     return processor;
   }
 
-  protected DistributionMessage createRequestMessage(InternalDistributedMember recipient,
+  protected PartitionMessage createRequestMessage(InternalDistributedMember recipient,
       ReplyProcessor21 processor, FunctionRemoteContext context) {
     PartitionedRegionFunctionStreamingMessage msg =
         new PartitionedRegionFunctionStreamingMessage(recipient, this.regionId, processor, context);
@@ -103,12 +105,13 @@ public class PartitionedRegionFunctionResultWaiter extends StreamingFunctionOper
    * ResultSender.
    */
 
+  @Override
   public void processData(Object result, boolean lastMsg, DistributedMember memberID) {
     boolean completelyDone = false;
     if (lastMsg) {
-      this.totalLastMsgRecieved++;
+      this.totalLastMsgReceived++;
     }
-    if (this.totalLastMsgRecieved == this.recipients.size()) {
+    if (this.totalLastMsgReceived == this.recipients.size()) {
       completelyDone = true;
     }
     ((PartitionedRegionFunctionResultSender) resultSender).lastResult(result, completelyDone,

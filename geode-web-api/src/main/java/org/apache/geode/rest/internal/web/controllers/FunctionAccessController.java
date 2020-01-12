@@ -15,6 +15,7 @@
 package org.apache.geode.rest.internal.web.controllers;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -24,7 +25,6 @@ import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.ApiResponse;
 import io.swagger.annotations.ApiResponses;
 import org.apache.logging.log4j.Logger;
-import org.json.JSONException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -47,10 +47,12 @@ import org.apache.geode.cache.execute.FunctionException;
 import org.apache.geode.cache.execute.FunctionService;
 import org.apache.geode.cache.execute.ResultCollector;
 import org.apache.geode.internal.cache.execute.NoResult;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.management.internal.exceptions.EntityNotFoundException;
 import org.apache.geode.rest.internal.web.exception.GemfireRestException;
 import org.apache.geode.rest.internal.web.util.ArrayUtils;
 import org.apache.geode.rest.internal.web.util.JSONUtils;
+import org.apache.geode.security.ResourcePermission;
 
 /**
  * The FunctionsController class serving REST Requests related to the function execution
@@ -115,7 +117,6 @@ public class FunctionAccessController extends AbstractBaseController {
    * @param filter list of keys which the function will use to determine on which node to execute
    *        the function.
    * @param argsInBody function argument as a JSON document
-   *
    * @return result as a JSON document
    */
   @RequestMapping(method = RequestMethod.POST, value = "/{functionId:.+}",
@@ -130,14 +131,34 @@ public class FunctionAccessController extends AbstractBaseController {
           message = "if Function arguments specified as JSON document in the request body is invalid")})
   @ResponseBody
   @ResponseStatus(HttpStatus.OK)
-  @PreAuthorize("@securityService.authorize('DATA', 'WRITE')")
   public ResponseEntity<String> execute(@PathVariable("functionId") String functionId,
       @RequestParam(value = "onRegion", required = false) String region,
       @RequestParam(value = "onMembers", required = false) final String[] members,
       @RequestParam(value = "onGroups", required = false) final String[] groups,
       @RequestParam(value = "filter", required = false) final String[] filter,
       @RequestBody(required = false) final String argsInBody) {
-    Execution function = null;
+
+    Function function = FunctionService.getFunction(functionId);
+
+    // this exception will be handled by BaseControllerAdvice to eventually return a 404
+    if (function == null) {
+      throw new EntityNotFoundException(
+          String.format("The function %s is not registered.", functionId));
+    }
+
+    Object[] args = null;
+    if (argsInBody != null) {
+      args = jsonToObjectArray(argsInBody);
+    }
+
+    // check for required permissions of the function
+    Collection<ResourcePermission> requiredPermissions =
+        function.getRequiredPermissions(region, args);
+    for (ResourcePermission requiredPermission : requiredPermissions) {
+      securityService.authorize(requiredPermission);
+    }
+
+    Execution execution = null;
     functionId = decode(functionId);
 
     if (StringUtils.hasText(region)) {
@@ -146,7 +167,7 @@ public class FunctionAccessController extends AbstractBaseController {
 
       region = decode(region);
       try {
-        function = FunctionService.onRegion(getRegion(region));
+        execution = FunctionService.onRegion(getRegion(region));
       } catch (FunctionException fe) {
         throw new GemfireRestException(
             String.format("The Region identified by name (%1$s) could not found!", region), fe);
@@ -156,7 +177,7 @@ public class FunctionAccessController extends AbstractBaseController {
           ArrayUtils.toString(argsInBody), ArrayUtils.toString(members));
 
       try {
-        function = FunctionService.onMembers(getMembers(members));
+        execution = FunctionService.onMembers(getMembers(members));
       } catch (FunctionException fe) {
         throw new GemfireRestException(
             "Could not found the specified members in distributed system!", fe);
@@ -166,7 +187,7 @@ public class FunctionAccessController extends AbstractBaseController {
           ArrayUtils.toString(argsInBody), ArrayUtils.toString(groups));
 
       try {
-        function = FunctionService.onMembers(groups);
+        execution = FunctionService.onMembers(groups);
       } catch (FunctionException fe) {
         throw new GemfireRestException("no member(s) are found belonging to the provided group(s)!",
             fe);
@@ -177,7 +198,7 @@ public class FunctionAccessController extends AbstractBaseController {
           ArrayUtils.toString(argsInBody));
 
       try {
-        function = FunctionService.onMembers(getAllMembersInDS());
+        execution = FunctionService.onMembers(getAllMembersInDS());
       } catch (FunctionException fe) {
         throw new GemfireRestException(
             "Distributed system does not contain any valid data node to run the specified  function!",
@@ -190,24 +211,22 @@ public class FunctionAccessController extends AbstractBaseController {
           ArrayUtils.toString(filter));
 
       Set filter1 = ArrayUtils.asSet(filter);
-      function = function.withFilter(filter1);
+      execution = execution.withFilter(filter1);
     }
 
     final ResultCollector<?, ?> results;
 
     try {
-      if (argsInBody != null) {
-        Object[] args = jsonToObjectArray(argsInBody);
-
+      if (args != null) {
         // execute function with specified arguments
         if (args.length == 1) {
-          results = function.setArguments(args[0]).execute(functionId);
+          results = execution.setArguments(args[0]).execute(functionId);
         } else {
-          results = function.setArguments(args).execute(functionId);
+          results = execution.setArguments(args).execute(functionId);
         }
       } else {
         // execute function with no args
-        results = function.execute(functionId);
+        results = execution.execute(functionId);
       }
     } catch (ClassCastException cce) {
       throw new GemfireRestException("Key is of an inappropriate type for this region!", cce);
@@ -228,21 +247,16 @@ public class FunctionAccessController extends AbstractBaseController {
       headers.setLocation(toUri("functions", functionId));
 
       Object functionResult = null;
-      if (results instanceof NoResult)
+      if (results instanceof NoResult) {
         return new ResponseEntity<>("", headers, HttpStatus.OK);
-
+      }
       functionResult = results.getResult();
 
       if (functionResult instanceof List<?>) {
-        try {
-          @SuppressWarnings("unchecked")
-          String functionResultAsJson =
-              JSONUtils.convertCollectionToJson((ArrayList<Object>) functionResult);
-          return new ResponseEntity<>(functionResultAsJson, headers, HttpStatus.OK);
-        } catch (JSONException e) {
-          throw new GemfireRestException(
-              "Could not convert function results into Restful (JSON) format!", e);
-        }
+        @SuppressWarnings("unchecked")
+        String functionResultAsJson =
+            JSONUtils.convertCollectionToJson((ArrayList<Object>) functionResult);
+        return new ResponseEntity<>(functionResultAsJson, headers, HttpStatus.OK);
       } else {
         throw new GemfireRestException(
             "Function has returned results that could not be converted into Restful (JSON) format!");

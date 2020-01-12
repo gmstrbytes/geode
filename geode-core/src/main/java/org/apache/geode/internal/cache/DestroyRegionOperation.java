@@ -15,6 +15,8 @@
 
 package org.apache.geode.internal.cache;
 
+import static org.apache.geode.internal.cache.LocalRegion.InitializationLevel.BEFORE_INITIAL_IMAGE;
+
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
@@ -30,27 +32,23 @@ import org.apache.geode.DataSerializer;
 import org.apache.geode.InternalGemFireError;
 import org.apache.geode.SystemFailure;
 import org.apache.geode.cache.CacheEvent;
-import org.apache.geode.cache.CacheFactory;
 import org.apache.geode.cache.CacheWriterException;
 import org.apache.geode.cache.EntryNotFoundException;
 import org.apache.geode.cache.Operation;
 import org.apache.geode.cache.RegionDestroyedException;
 import org.apache.geode.cache.TimeoutException;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionAdvisor;
-import org.apache.geode.distributed.internal.DistributionManager;
-import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.ReplyException;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.Assert;
+import org.apache.geode.internal.cache.LocalRegion.InitializationLevel;
 import org.apache.geode.internal.cache.partitioned.PRLocallyDestroyedException;
 import org.apache.geode.internal.cache.tier.sockets.ClientProxyMembershipID;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
-/**
- *
- */
 public class DestroyRegionOperation extends DistributedCacheOperation {
 
   private static final Logger logger = LogService.getLogger();
@@ -160,12 +158,13 @@ public class DestroyRegionOperation extends DistributedCacheOperation {
           getSender());
     }
 
-    private Runnable destroyOp(final DistributionManager dm, final LocalRegion lclRgn,
+    private Runnable destroyOp(final ClusterDistributionManager dm, final LocalRegion lclRgn,
         final boolean sendReply) {
       return new Runnable() {
+        @Override
         public void run() {
-          final int oldLevel =
-              LocalRegion.setThreadInitLevelRequirement(LocalRegion.BEFORE_INITIAL_IMAGE);
+          final InitializationLevel oldLevel =
+              LocalRegion.setThreadInitLevelRequirement(BEFORE_INITIAL_IMAGE);
 
           Throwable thr = null;
           try {
@@ -259,9 +258,7 @@ public class DestroyRegionOperation extends DistributedCacheOperation {
                     getReplySender(dm));
               }
             } else if (thr != null) {
-              logger.error(
-                  LocalizedMessage.create(
-                      LocalizedStrings.DestroyRegionOperation_EXCEPTION_WHILE_PROCESSING__0_, this),
+              logger.error(String.format("Exception while processing [ %s ]", this),
                   thr);
             }
           }
@@ -271,7 +268,7 @@ public class DestroyRegionOperation extends DistributedCacheOperation {
 
     /** Return true if a reply should be sent */
     @Override
-    protected void basicProcess(final DistributionManager dm, final LocalRegion lclRgn) {
+    protected void basicProcess(final ClusterDistributionManager dm, final LocalRegion lclRgn) {
       Assert.assertTrue(this.serialNum != DistributionAdvisor.ILLEGAL_SERIAL);
       try {
         this.lockRoot = null;
@@ -286,14 +283,14 @@ public class DestroyRegionOperation extends DistributedCacheOperation {
         // DLock needed by the PR destroy.. by moving the destroy to the waiting
         // pool, the entry
         // update is allowed to complete.
-        dm.getWaitingThreadPool().execute(destroyOp(dm, lclRgn, sendReply));
+        dm.getExecutors().getWaitingThreadPool().execute(destroyOp(dm, lclRgn, sendReply));
       } catch (RejectedExecutionException ignore) {
         // rejected while trying to execute destroy thread
         // must be shutting down, just quit
       }
     }
 
-    protected LocalRegion getRegionFromPath(DistributionManager dm, String path) {
+    protected LocalRegion getRegionFromPath(ClusterDistributionManager dm, String path) {
       // allow a destroyed region to be returned if we're dealing with a
       // shared region, since another cache may
       // have already destroyed it in shared memory, in which our listeners
@@ -371,33 +368,36 @@ public class DestroyRegionOperation extends DistributedCacheOperation {
           this.lockRoot = null; // spawned thread will release lock, not
                                 // basicProcess
 
-          rgn.getDistributionManager().getWaitingThreadPool().execute(new Runnable() {
-            public void run() {
-              try {
-                rgn.reinitializeFromImageTarget(getSender());
-              } catch (TimeoutException e) {
-                // dlock timed out, log message
-                logger.warn(LocalizedMessage.create(
-                    LocalizedStrings.DestroyRegionOperation_GOT_TIMEOUT_WHEN_TRYING_TO_RECREATE_REGION_DURING_REINITIALIZATION_1,
-                    rgn.getFullPath()), e);
-              } catch (IOException e) {
-                // only if loading snapshot, not here
-                InternalGemFireError assErr = new InternalGemFireError(
-                    LocalizedStrings.UNEXPECTED_EXCEPTION.toLocalizedString());
-                assErr.initCause(e);
-                throw assErr;
-              } catch (ClassNotFoundException e) {
-                // only if loading snapshot, not here
-                InternalGemFireError assErr = new InternalGemFireError(
-                    LocalizedStrings.UNEXPECTED_EXCEPTION.toLocalizedString());
-                assErr.initCause(e);
-                throw assErr;
-              } finally {
-                if (loc_lockRoot != null)
-                  loc_lockRoot.releaseDestroyLock();
-              }
-            }
-          });
+          rgn.getDistributionManager().getExecutors().getWaitingThreadPool()
+              .execute(new Runnable() {
+                @Override
+                public void run() {
+                  try {
+                    rgn.reinitializeFromImageTarget(getSender());
+                  } catch (TimeoutException e) {
+                    // dlock timed out, log message
+                    logger.warn(String.format(
+                        "Got timeout when trying to recreate region during re-initialization: %s",
+                        rgn.getFullPath()),
+                        e);
+                  } catch (IOException e) {
+                    // only if loading snapshot, not here
+                    InternalGemFireError assErr = new InternalGemFireError(
+                        "unexpected exception");
+                    assErr.initCause(e);
+                    throw assErr;
+                  } catch (ClassNotFoundException e) {
+                    // only if loading snapshot, not here
+                    InternalGemFireError assErr = new InternalGemFireError(
+                        "unexpected exception");
+                    assErr.initCause(e);
+                    throw assErr;
+                  } finally {
+                    if (loc_lockRoot != null)
+                      loc_lockRoot.releaseDestroyLock();
+                  }
+                }
+              });
         } else {
           if (logger.isDebugEnabled()) {
             logger.debug("Processing DestroyRegionOperation, calling basicDestroyRegion: {}",
@@ -408,12 +408,10 @@ public class DestroyRegionOperation extends DistributedCacheOperation {
         }
       } catch (CacheWriterException ignore) {
         throw new Error(
-            LocalizedStrings.DestroyRegionOperation_CACHEWRITER_SHOULD_NOT_HAVE_BEEN_CALLED
-                .toLocalizedString());
+            "CacheWriter should not have been called");
       } catch (TimeoutException ignore) {
         throw new Error(
-            LocalizedStrings.DestroyRegionOperation_DISTRIBUTEDLOCK_SHOULD_NOT_HAVE_BEEN_ACQUIRED
-                .toLocalizedString());
+            "DistributedLock should not have been acquired");
       } catch (RejectedExecutionException ignore) {
         // rejected while trying to execute recreate thread
         // must be shutting down, so what we were trying to do must not be
@@ -423,11 +421,10 @@ public class DestroyRegionOperation extends DistributedCacheOperation {
     }
 
     @Override
-    protected boolean operateOnRegion(CacheEvent event, DistributionManager dm)
+    protected boolean operateOnRegion(CacheEvent event, ClusterDistributionManager dm)
         throws EntryNotFoundException {
       Assert.assertTrue(false,
-          LocalizedStrings.DestroyRegionOperation_REGION_DESTRUCTION_MESSAGE_IMPLEMENTATION_IS_IN_BASICPROCESS__NOT_THIS_METHOD
-              .toLocalizedString());
+          "Region Destruction message implementation is in basicProcess, not this method");
       return false;
     }
 
@@ -439,13 +436,15 @@ public class DestroyRegionOperation extends DistributedCacheOperation {
           .append("; notifyOfRegionDeparture=").append(this.notifyOfRegionDeparture);
     }
 
+    @Override
     public int getDSFID() {
       return DESTROY_REGION_MESSAGE;
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.eventID = (EventID) DataSerializer.readObject(in);
       this.serialNum = DataSerializer.readPrimitiveInt(in);
       this.notifyOfRegionDeparture = DataSerializer.readPrimitiveBoolean(in);
@@ -453,8 +452,9 @@ public class DestroyRegionOperation extends DistributedCacheOperation {
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       DataSerializer.writeObject(this.eventID, out);
       DataSerializer.writePrimitiveInt(this.serialNum, out);
       DataSerializer.writePrimitiveBoolean(this.notifyOfRegionDeparture, out);
@@ -484,14 +484,16 @@ public class DestroyRegionOperation extends DistributedCacheOperation {
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.context = DataSerializer.readObject(in);
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       DataSerializer.writeObject(this.context, out);
     }
   }

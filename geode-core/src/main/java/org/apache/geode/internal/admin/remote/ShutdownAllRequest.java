@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -28,7 +29,8 @@ import org.apache.logging.log4j.Logger;
 import org.apache.geode.CancelException;
 import org.apache.geode.InternalGemFireError;
 import org.apache.geode.SystemFailure;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.DistributedMember;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
@@ -37,10 +39,12 @@ import org.apache.geode.distributed.internal.InternalLocator;
 import org.apache.geode.distributed.internal.ReplyException;
 import org.apache.geode.distributed.internal.ReplyMessage;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
 import org.apache.geode.internal.tcp.ConnectionTable;
+import org.apache.geode.logging.internal.executors.LoggingThread;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * An instruction to all members with cache that their PR should gracefully close and disconnect DS
@@ -60,9 +64,10 @@ public class ShutdownAllRequest extends AdminRequest {
    * Sends a shutdownAll request to all other members and performs local shutdownAll processing in
    * the waitingThreadPool.
    */
-  public static Set send(final DM dm, long timeout) {
-    boolean hadCache = hasCache();
-    DistributionManager dism = dm instanceof DistributionManager ? (DistributionManager) dm : null;
+  public static Set send(final DistributionManager dm, long timeout) {
+    boolean hadCache = hasCache(dm);
+    ClusterDistributionManager dism =
+        dm instanceof ClusterDistributionManager ? (ClusterDistributionManager) dm : null;
     InternalDistributedMember myId = dm.getDistributionManagerId();
 
     Set recipients = dm.getOtherNormalDistributionManagerIds();
@@ -101,7 +106,7 @@ public class ShutdownAllRequest extends AdminRequest {
       }
     } catch (ReplyException e) {
       if (!(e.getCause() instanceof CancelException)) {
-        e.handleAsUnexpected();
+        e.handleCause();
       }
     } catch (CancelException ignore) {
       // expected
@@ -138,8 +143,8 @@ public class ShutdownAllRequest extends AdminRequest {
   }
 
   @Override
-  protected void process(DistributionManager dm) {
-    boolean isToShutdown = hasCache();
+  protected void process(ClusterDistributionManager dm) {
+    boolean isToShutdown = hasCache(dm);
     super.process(dm);
 
     if (isToShutdown) {
@@ -149,17 +154,14 @@ public class ShutdownAllRequest extends AdminRequest {
       // and causes a 20 second delay.
       final InternalDistributedSystem ids = dm.getSystem();
       if (ids.isConnected()) {
-        Thread t = new Thread(new Runnable() {
-          @Override
-          public void run() {
-            try {
-              Thread.sleep(SLEEP_TIME_BEFORE_DISCONNECT_DS);
-            } catch (InterruptedException ignore) {
-            }
-            ConnectionTable.threadWantsSharedResources();
-            if (ids.isConnected()) {
-              ids.disconnect();
-            }
+        Thread t = new LoggingThread("ShutdownAllRequestDisconnectThread", false, () -> {
+          try {
+            Thread.sleep(SLEEP_TIME_BEFORE_DISCONNECT_DS);
+          } catch (InterruptedException ignore) {
+          }
+          ConnectionTable.threadWantsSharedResources();
+          if (ids.isConnected()) {
+            ids.disconnect();
           }
         });
         t.start();
@@ -167,14 +169,14 @@ public class ShutdownAllRequest extends AdminRequest {
     }
   }
 
-  private static boolean hasCache() {
-    InternalCache cache = GemFireCacheImpl.getInstance();
+  private static boolean hasCache(DistributionManager manager) {
+    InternalCache cache = manager.getCache();
     return cache != null && !cache.isClosed();
   }
 
   @Override
-  protected AdminResponse createResponse(DM dm) {
-    boolean isToShutdown = hasCache();
+  protected AdminResponse createResponse(DistributionManager dm) {
+    boolean isToShutdown = hasCache(dm);
     if (isToShutdown) {
       boolean isSuccess = false;
       try {
@@ -221,13 +223,15 @@ public class ShutdownAllRequest extends AdminRequest {
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
   }
 
   @Override
@@ -237,9 +241,9 @@ public class ShutdownAllRequest extends AdminRequest {
   }
 
   private static class ShutDownAllReplyProcessor extends AdminMultipleReplyProcessor {
-    Set results = Collections.synchronizedSet(new TreeSet());
+    Set<DistributedMember> results = Collections.synchronizedSet(new TreeSet<>());
 
-    ShutDownAllReplyProcessor(DM dm, Collection initMembers) {
+    ShutDownAllReplyProcessor(DistributionManager dm, Collection initMembers) {
       super(dm, initMembers);
     }
 
@@ -259,8 +263,11 @@ public class ShutdownAllRequest extends AdminRequest {
       }
       if (msg instanceof ShutdownAllResponse) {
         if (((ShutdownAllResponse) msg).isToShutDown()) {
-          logger.debug("{} adding {} to result set {}", this, msg.getSender(), this.results);
-          this.results.add(msg.getSender());
+          synchronized (results) {
+            logger.debug("{} adding {} to result set {}", this, msg.getSender(),
+                results);
+            this.results.add(msg.getSender());
+          }
         } else {
           // for member without cache, we will not wait for its result
           // so no need to wait its DS to close either
@@ -285,9 +292,11 @@ public class ShutdownAllRequest extends AdminRequest {
     }
 
     public Set getResults() {
-      logger.debug("{} shutdownAll returning {}", this,
-          results/* , new Exception("stack trace") */);
-      return results;
+      synchronized (results) {
+        logger.debug("{} shutdownAll returning {}", this,
+            results);
+        return new HashSet(results);
+      }
     }
   }
 }

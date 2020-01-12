@@ -19,10 +19,12 @@ import java.io.DataOutput;
 import java.io.IOException;
 
 import org.apache.geode.DataSerializer;
-import org.apache.geode.distributed.internal.DistributionManager;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.PooledDistributionMessage;
 import org.apache.geode.internal.admin.StatAlertDefinition;
 import org.apache.geode.internal.admin.StatAlertsManager;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
 
 /**
  * This class represents a request object to set an alert manager for the newly joined member.
@@ -76,7 +78,7 @@ public class StatAlertsManagerAssignMessage extends PooledDistributionMessage {
    * @param dm DistributionManager instance
    */
   @Override
-  protected void process(DistributionManager dm) {
+  protected void process(ClusterDistributionManager dm) {
     setManager(dm);
   }
 
@@ -86,7 +88,7 @@ public class StatAlertsManagerAssignMessage extends PooledDistributionMessage {
    *
    * @param dm DistributionManager instance
    */
-  private void setManager(DistributionManager dm) {
+  private void setManager(ClusterDistributionManager dm) {
     StatAlertsManager manager = StatAlertsManager.getInstance(dm);
     manager.updateAlertDefinition(alertDefs, UpdateAlertDefinitionMessage.ADD_ALERT_DEFINITION);
     manager.setRefreshTimeInterval(refreshInterval);
@@ -98,8 +100,9 @@ public class StatAlertsManagerAssignMessage extends PooledDistributionMessage {
    * @param out DataOutput stream to write to
    */
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     out.writeLong(refreshInterval);
     DataSerializer.writeObjectArray(alertDefs, out);
   }
@@ -110,8 +113,9 @@ public class StatAlertsManagerAssignMessage extends PooledDistributionMessage {
    * @param in DataInput stream to read from
    */
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     refreshInterval = in.readLong();
     alertDefs = (StatAlertDefinition[]) DataSerializer.readObjectArray(in);
   }
@@ -119,6 +123,7 @@ public class StatAlertsManagerAssignMessage extends PooledDistributionMessage {
   /**
    * Returns the DataSerializer fixed id for the class that implements this method.
    */
+  @Override
   public int getDSFID() {
     return STAT_ALERTS_MGR_ASSIGN_MESSAGE;
   }

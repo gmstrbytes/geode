@@ -12,17 +12,20 @@
  * or implied. See the License for the specific language governing permissions and limitations under
  * the License.
  */
-
 package org.apache.geode.management.internal.cli.commands;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 
 import javax.management.MalformedObjectNameException;
 
+import org.apache.commons.lang3.ArrayUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.shell.core.annotation.CliCommand;
 import org.springframework.shell.core.annotation.CliOption;
 
@@ -31,28 +34,25 @@ import org.apache.geode.distributed.AbstractLauncher;
 import org.apache.geode.distributed.ConfigurationProperties;
 import org.apache.geode.distributed.ServerLauncher;
 import org.apache.geode.internal.OSProcess;
-import org.apache.geode.internal.lang.StringUtils;
 import org.apache.geode.internal.lang.SystemUtils;
 import org.apache.geode.internal.process.ProcessStreamReader;
-import org.apache.geode.internal.process.ProcessType;
 import org.apache.geode.internal.util.IOUtils;
 import org.apache.geode.management.cli.CliMetaData;
 import org.apache.geode.management.cli.ConverterHint;
-import org.apache.geode.management.cli.Result;
 import org.apache.geode.management.internal.cli.CliUtil;
 import org.apache.geode.management.internal.cli.GfshParser;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.management.internal.cli.shell.Gfsh;
 import org.apache.geode.management.internal.security.ResourceConstants;
 
-public class StartServerCommand implements GfshCommand {
+public class StartServerCommand extends OfflineGfshCommand {
   private static final String SERVER_TERM_NAME = "Server";
 
   @CliCommand(value = CliStrings.START_SERVER, help = CliStrings.START_SERVER__HELP)
   @CliMetaData(shellOnly = true,
       relatedTopic = {CliStrings.TOPIC_GEODE_SERVER, CliStrings.TOPIC_GEODE_LIFECYCLE})
-  public Result startServer(
+  public ResultModel startServer(
       @CliOption(key = CliStrings.START_SERVER__NAME,
           help = CliStrings.START_SERVER__NAME__HELP) String memberName,
       @CliOption(key = CliStrings.START_SERVER__ASSIGN_BUCKETS, unspecifiedDefaultValue = "false",
@@ -173,11 +173,13 @@ public class StartServerCommand implements GfshCommand {
       @CliOption(key = CliStrings.START_SERVER__USERNAME, unspecifiedDefaultValue = "",
           help = CliStrings.START_SERVER__USERNAME__HELP) final String userName,
       @CliOption(key = CliStrings.START_SERVER__PASSWORD, unspecifiedDefaultValue = "",
-          help = CliStrings.START_SERVER__PASSWORD__HELP) String passwordToUse)
-      throws Exception
-  // NOTICE: keep the parameters in alphabetical order based on their CliStrings.START_SERVER_* text
-  {
-
+          help = CliStrings.START_SERVER__PASSWORD__HELP) String passwordToUse,
+      @CliOption(key = CliStrings.START_SERVER__REDIRECT_OUTPUT, unspecifiedDefaultValue = "false",
+          specifiedDefaultValue = "true",
+          help = CliStrings.START_SERVER__REDIRECT_OUTPUT__HELP) final Boolean redirectOutput)
+      throws Exception {
+    // NOTICE: keep the parameters in alphabetical order based on their CliStrings.START_SERVER_*
+    // text
     if (StringUtils.isBlank(memberName)) {
       // when the user doesn't give us a name, we make one up!
       memberName = StartMemberUtils.getNameGenerator().generate('-');
@@ -189,35 +191,68 @@ public class StartServerCommand implements GfshCommand {
         passwordToUse = getGfsh().readPassword(CliStrings.START_SERVER__PASSWORD + ": ");
       }
       if (StringUtils.isBlank(passwordToUse)) {
-        return ResultBuilder
-            .createConnectionErrorResult(CliStrings.START_SERVER__MSG__PASSWORD_MUST_BE_SPECIFIED);
+        return ResultModel
+            .createError(CliStrings.START_SERVER__MSG__PASSWORD_MUST_BE_SPECIFIED);
       }
     }
 
-    workingDirectory = StartMemberUtils.resolveWorkingDir(workingDirectory, memberName);
+    workingDirectory = StartMemberUtils.resolveWorkingDir(
+        workingDirectory == null ? null : new File(workingDirectory), new File(memberName));
 
+    return doStartServer(memberName, assignBuckets, bindAddress, cacheXmlPathname, classpath,
+        criticalHeapPercentage, criticalOffHeapPercentage, workingDirectory, disableDefaultServer,
+        disableExitWhenOutOfMemory, enableTimeStatistics, evictionHeapPercentage,
+        evictionOffHeapPercentage, force, group, hostNameForClients, jmxManagerHostnameForClients,
+        includeSystemClasspath, initialHeap, jvmArgsOpts, locators, locatorWaitTime, lockMemory,
+        logLevel, maxConnections, maxHeap, maxMessageCount, maxThreads, mcastBindAddress, mcastPort,
+        memcachedPort, memcachedProtocol, memcachedBindAddress, redisPort, redisBindAddress,
+        redisPassword, messageTimeToLive, offHeapMemorySize, gemfirePropertiesFile, rebalance,
+        gemfireSecurityPropertiesFile, serverBindAddress, serverPort, socketBufferSize,
+        springXmlLocation, statisticsArchivePathname, requestSharedConfiguration, startRestApi,
+        httpServicePort, httpServiceBindAddress, userName, passwordToUse, redirectOutput);
+  }
+
+  ResultModel doStartServer(String memberName, Boolean assignBuckets, String bindAddress,
+      String cacheXmlPathname, String classpath, Float criticalHeapPercentage,
+      Float criticalOffHeapPercentage, String workingDirectory, Boolean disableDefaultServer,
+      Boolean disableExitWhenOutOfMemory, Boolean enableTimeStatistics,
+      Float evictionHeapPercentage, Float evictionOffHeapPercentage, Boolean force, String group,
+      String hostNameForClients, String jmxManagerHostnameForClients,
+      Boolean includeSystemClasspath, String initialHeap, String[] jvmArgsOpts, String locators,
+      Integer locatorWaitTime, Boolean lockMemory, String logLevel, Integer maxConnections,
+      String maxHeap, Integer maxMessageCount, Integer maxThreads, String mcastBindAddress,
+      Integer mcastPort, Integer memcachedPort, String memcachedProtocol,
+      String memcachedBindAddress, Integer redisPort, String redisBindAddress, String redisPassword,
+      Integer messageTimeToLive, String offHeapMemorySize, File gemfirePropertiesFile,
+      Boolean rebalance, File gemfireSecurityPropertiesFile, String serverBindAddress,
+      Integer serverPort, Integer socketBufferSize, String springXmlLocation,
+      String statisticsArchivePathname, Boolean requestSharedConfiguration, Boolean startRestApi,
+      String httpServicePort, String httpServiceBindAddress, String userName, String passwordToUse,
+      Boolean redirectOutput)
+      throws MalformedObjectNameException, IOException, InterruptedException {
     cacheXmlPathname = CliUtil.resolvePathname(cacheXmlPathname);
 
-    if (StringUtils.isNotBlank(cacheXmlPathname) && !IOUtils.isExistingPathname(cacheXmlPathname)) {
-      return ResultBuilder.createUserErrorResult(
-          CliStrings.format(CliStrings.CACHE_XML_NOT_FOUND_MESSAGE, cacheXmlPathname));
+    if (StringUtils.isNotBlank(cacheXmlPathname)) {
+      if (!IOUtils.isExistingPathname(cacheXmlPathname)) {
+        return ResultModel.createError(
+            CliStrings.format(CliStrings.CACHE_XML_NOT_FOUND_MESSAGE, cacheXmlPathname));
+      } else {
+        getGfsh().logWarning(
+            CliStrings.CLUSTER_CONFIG_PRECEDENCE_OVER_CACHE_XML_WARN + cacheXmlPathname, null);
+      }
     }
 
     if (gemfirePropertiesFile != null && !gemfirePropertiesFile.exists()) {
-      return ResultBuilder.createUserErrorResult(
+      return ResultModel.createError(
           CliStrings.format(CliStrings.GEODE_0_PROPERTIES_1_NOT_FOUND_MESSAGE, StringUtils.EMPTY,
               gemfirePropertiesFile.getAbsolutePath()));
     }
 
     if (gemfireSecurityPropertiesFile != null && !gemfireSecurityPropertiesFile.exists()) {
-      return ResultBuilder.createUserErrorResult(
+      return ResultModel.createError(
           CliStrings.format(CliStrings.GEODE_0_PROPERTIES_1_NOT_FOUND_MESSAGE, "Security ",
               gemfireSecurityPropertiesFile.getAbsolutePath()));
     }
-
-    File serverPidFile = new File(workingDirectory, ProcessType.SERVER.getPidFileName());
-
-    final int oldPid = StartMemberUtils.readPid(serverPidFile);
 
     Properties gemfireProperties = new Properties();
 
@@ -273,10 +308,6 @@ public class StartServerCommand implements GfshCommand {
       gemfireProperties.setProperty(ResourceConstants.PASSWORD, passwordToUse);
     }
 
-    // read the OSProcess enable redirect system property here -- TODO: replace with new GFSH
-    // argument
-    final boolean redirectOutput = Boolean.getBoolean(OSProcess.ENABLE_OUTPUT_REDIRECTION_PROPERTY);
-
     ServerLauncher.Builder serverLauncherBuilder = new ServerLauncher.Builder()
         .setAssignBuckets(assignBuckets).setDisableDefaultServer(disableDefaultServer)
         .setForce(force).setRebalance(rebalance).setRedirectOutput(redirectOutput)
@@ -304,8 +335,8 @@ public class StartServerCommand implements GfshCommand {
       getGfsh().logInfo(StringUtils.join(serverCommandLine, StringUtils.SPACE), null);
     }
 
-    Process serverProcess = new ProcessBuilder(serverCommandLine)
-        .directory(new File(serverLauncher.getWorkingDirectory())).start();
+    Process serverProcess =
+        getProcess(serverLauncher.getWorkingDirectory(), serverCommandLine);
 
     serverProcess.getInputStream().close();
     serverProcess.getOutputStream().close();
@@ -318,7 +349,7 @@ public class StartServerCommand implements GfshCommand {
     ProcessStreamReader.InputListener inputListener = line -> {
       message.append(line);
       if (readingMode == ProcessStreamReader.ReadingMode.BLOCKING) {
-        message.append(StringUtils.LINE_SEPARATOR);
+        message.append(SystemUtils.getLineSeparator());
       }
     };
 
@@ -340,7 +371,6 @@ public class StartServerCommand implements GfshCommand {
           .tryGetCanonicalPathElseGetAbsolutePath(new File(serverLauncher.getWorkingDirectory()))),
           null);
 
-      serverState = ServerLauncher.ServerState.fromDirectory(workingDirectory, memberName);
       do {
         if (serverProcess.isAlive()) {
           Gfsh.print(".");
@@ -364,7 +394,7 @@ public class StartServerCommand implements GfshCommand {
         } else {
           final int exitValue = serverProcess.exitValue();
 
-          return ResultBuilder.createShellClientErrorResult(
+          return ResultModel.createError(
               String.format(CliStrings.START_SERVER__PROCESS_TERMINATED_ABNORMALLY_ERROR_MESSAGE,
                   exitValue, serverLauncher.getWorkingDirectory(), message.toString()));
 
@@ -372,10 +402,8 @@ public class StartServerCommand implements GfshCommand {
       } while (!(registeredServerSignalListener && serverSignalListener.isSignaled())
           && serverState.isStartingOrNotResponding());
     } finally {
-      stderrReader.stopAsync(StartMemberUtils.PROCESS_STREAM_READER_ASYNC_STOP_TIMEOUT_MILLIS); // stop
-                                                                                                // will
-                                                                                                // close
-      // ErrorStream
+      stderrReader.stopAsync(StartMemberUtils.PROCESS_STREAM_READER_ASYNC_STOP_TIMEOUT_MILLIS);
+      // stop will close ErrorStream
       getGfsh().getSignalHandler().unregisterListener(serverSignalListener);
     }
 
@@ -386,10 +414,15 @@ public class StartServerCommand implements GfshCommand {
 
     if (asyncStart) { // async start
       Gfsh.print(String.format(CliStrings.ASYNC_PROCESS_LAUNCH_MESSAGE, SERVER_TERM_NAME));
-      return ResultBuilder.createInfoResult("");
+      return ResultModel.createInfo("");
     } else {
-      return ResultBuilder.createInfoResult(serverState.toString());
+      return ResultModel.createInfo(serverState.toString());
     }
+  }
+
+  Process getProcess(String workingDir, String[] serverCommandLine) throws IOException {
+    return new ProcessBuilder(serverCommandLine)
+        .directory(new File(workingDir)).start();
   }
 
   String[] createStartServerCommandLine(final ServerLauncher launcher,
@@ -426,7 +459,10 @@ public class StartServerCommand implements GfshCommand {
     commandLine.add("-Djava.awt.headless=true");
     commandLine.add(
         "-Dsun.rmi.dgc.server.gcInterval".concat("=").concat(Long.toString(Long.MAX_VALUE - 1)));
-
+    if (launcher.isRedirectingOutput()) {
+      commandLine
+          .add("-D".concat(OSProcess.DISABLE_REDIRECTION_CONFIGURATION_PROPERTY).concat("=true"));
+    }
     commandLine.add(ServerLauncher.class.getName());
     commandLine.add(ServerLauncher.Command.START.getName());
 
@@ -521,19 +557,39 @@ public class StartServerCommand implements GfshCommand {
           + launcher.getHostNameForClients());
     }
 
-    return commandLine.toArray(new String[commandLine.size()]);
+    return commandLine.toArray(new String[] {});
   }
 
   String getServerClasspath(final boolean includeSystemClasspath, final String userClasspath) {
     List<String> jarFilePathnames = new ArrayList<>();
 
     jarFilePathnames.add(StartMemberUtils.CORE_DEPENDENCIES_JAR_PATHNAME);
+    // include all extension dependencies on the CLASSPATH...
+    for (String extensionsJarPathname : getExtensionsJars()) {
+      if (org.apache.commons.lang3.StringUtils.isNotBlank(extensionsJarPathname)) {
+        jarFilePathnames.add(extensionsJarPathname);
+      }
+    }
 
     return StartMemberUtils.toClasspath(includeSystemClasspath,
-        jarFilePathnames.toArray(new String[jarFilePathnames.size()]), userClasspath);
+        jarFilePathnames.toArray(new String[] {}), userClasspath);
   }
 
-  private void addJvmOptionsForOutOfMemoryErrors(final List<String> commandLine) {
+  private String[] getExtensionsJars() {
+    File extensionsDirectory = new File(StartMemberUtils.EXTENSIONS_PATHNAME);
+    File[] extensionsJars = extensionsDirectory.listFiles();
+
+    if (extensionsJars != null) {
+      // assume `extensions` directory does not contain any subdirectories. It only contains jars.
+      return Arrays.stream(extensionsJars).filter(File::isFile).map(
+          file -> IOUtils.appendToPath(StartMemberUtils.GEODE_HOME, "extensions", file.getName()))
+          .toArray(String[]::new);
+    } else {
+      return ArrayUtils.EMPTY_STRING_ARRAY;
+    }
+  }
+
+  static void addJvmOptionsForOutOfMemoryErrors(final List<String> commandLine) {
     if (SystemUtils.isHotSpotVM()) {
       if (SystemUtils.isWindows()) {
         // ProcessBuilder "on Windows" needs every word (space separated) to be

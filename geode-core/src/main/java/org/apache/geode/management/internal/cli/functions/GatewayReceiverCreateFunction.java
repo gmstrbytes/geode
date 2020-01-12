@@ -14,30 +14,28 @@
  */
 package org.apache.geode.management.internal.cli.functions;
 
-import java.util.HashMap;
-import java.util.Map;
 
-import joptsimple.internal.Strings;
 import org.apache.logging.log4j.Logger;
 
+import org.apache.geode.annotations.Immutable;
 import org.apache.geode.cache.Cache;
-import org.apache.geode.cache.execute.Function;
+import org.apache.geode.cache.configuration.GatewayReceiverConfig;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.cache.execute.ResultSender;
 import org.apache.geode.cache.wan.GatewayReceiver;
-import org.apache.geode.cache.wan.GatewayReceiverFactory;
-import org.apache.geode.cache.wan.GatewayTransportFilter;
-import org.apache.geode.internal.ClassPathLoader;
-import org.apache.geode.internal.InternalEntity;
-import org.apache.geode.internal.cache.xmlcache.CacheXml;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.cache.InternalCache;
+import org.apache.geode.internal.cache.execute.InternalFunction;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.configuration.domain.XmlEntity;
+import org.apache.geode.management.internal.configuration.realizers.GatewayReceiverRealizer;
 
 /**
  * The function to a create GatewayReceiver using given configuration parameters.
  */
-public class GatewayReceiverCreateFunction implements Function, InternalEntity {
+public class GatewayReceiverCreateFunction implements InternalFunction {
+  public static final String A_GATEWAY_RECEIVER_ALREADY_EXISTS_ON_THIS_MEMBER =
+      "A Gateway Receiver already exists on this member.";
+
 
   private static final Logger logger = LogService.getLogger();
 
@@ -45,7 +43,8 @@ public class GatewayReceiverCreateFunction implements Function, InternalEntity {
 
   private static final String ID = GatewayReceiverCreateFunction.class.getName();
 
-  public static GatewayReceiverCreateFunction INSTANCE = new GatewayReceiverCreateFunction();
+  @Immutable
+  public static final GatewayReceiverCreateFunction INSTANCE = new GatewayReceiverCreateFunction();
 
   @Override
   public void execute(FunctionContext context) {
@@ -54,29 +53,37 @@ public class GatewayReceiverCreateFunction implements Function, InternalEntity {
     Cache cache = context.getCache();
     String memberNameOrId = context.getMemberName();
 
-    GatewayReceiverFunctionArgs gatewayReceiverCreateArgs =
-        (GatewayReceiverFunctionArgs) context.getArguments();
+    Object[] gatewayReceiverCreateArgs =
+        (Object[]) context.getArguments();
+    GatewayReceiverConfig gatewayReceiverConfig =
+        (GatewayReceiverConfig) gatewayReceiverCreateArgs[0];
+    Boolean ifNotExist = (Boolean) gatewayReceiverCreateArgs[1];
+
+    // Exit early if a receiver already exists.
+    // Consider this a failure unless --if-not-exists was provided.
+    if (gatewayReceiverExists(cache)) {
+      CliFunctionResult result;
+      if (ifNotExist) {
+        result = new CliFunctionResult(memberNameOrId, CliFunctionResult.StatusState.OK,
+            "Skipping: " + A_GATEWAY_RECEIVER_ALREADY_EXISTS_ON_THIS_MEMBER);
+      } else {
+        Exception illegalState =
+            new IllegalStateException(A_GATEWAY_RECEIVER_ALREADY_EXISTS_ON_THIS_MEMBER);
+        result = new CliFunctionResult(memberNameOrId, illegalState, illegalState.getMessage());
+      }
+      resultSender.lastResult(result);
+      return;
+    }
+
 
     try {
-      GatewayReceiver createdGatewayReceiver =
-          createGatewayReceiver(cache, gatewayReceiverCreateArgs);
+      GatewayReceiver createdGatewayReceiver = createGatewayReceiver(cache, gatewayReceiverConfig);
 
-      Map<String, String> attributes = new HashMap<String, String>();
-      if (gatewayReceiverCreateArgs.getStartPort() != null) {
-        attributes.put("start-port", gatewayReceiverCreateArgs.getStartPort().toString());
-      }
-      if (gatewayReceiverCreateArgs.getEndPort() != null) {
-        attributes.put("end-port", gatewayReceiverCreateArgs.getEndPort().toString());
-      }
-      if (gatewayReceiverCreateArgs.getBindAddress() != null) {
-        attributes.put("bind-address", gatewayReceiverCreateArgs.getBindAddress());
-      }
-      XmlEntity xmlEntity = XmlEntity.builder().withType(CacheXml.GATEWAY_RECEIVER)
-          .withAttributes(attributes).build();
-      resultSender.lastResult(new CliFunctionResult(memberNameOrId, xmlEntity,
+      resultSender.lastResult(new CliFunctionResult(memberNameOrId,
+          CliFunctionResult.StatusState.OK,
           CliStrings.format(
               CliStrings.CREATE_GATEWAYRECEIVER__MSG__GATEWAYRECEIVER_CREATED_ON_0_ONPORT_1,
-              new Object[] {memberNameOrId, createdGatewayReceiver.getPort()})));
+              memberNameOrId, Integer.toString(createdGatewayReceiver.getPort()))));
     } catch (IllegalStateException e) {
       // no need to log the stack trace
       resultSender.lastResult(new CliFunctionResult(memberNameOrId, e, e.getMessage()));
@@ -87,72 +94,16 @@ public class GatewayReceiverCreateFunction implements Function, InternalEntity {
 
   }
 
-  /**
-   * GatewayReceiver creation happens here.
-   *
-   * @param cache
-   * @param gatewayReceiverCreateArgs
-   * @return GatewayReceiver
-   */
   GatewayReceiver createGatewayReceiver(Cache cache,
-      GatewayReceiverFunctionArgs gatewayReceiverCreateArgs)
-      throws IllegalAccessException, InstantiationException, ClassNotFoundException {
+      GatewayReceiverConfig gatewayReceiverConfig) {
+    GatewayReceiverRealizer receiverRealizer = new GatewayReceiverRealizer();
+    receiverRealizer.create(gatewayReceiverConfig, (InternalCache) cache);
 
-    GatewayReceiverFactory gatewayReceiverFactory = cache.createGatewayReceiverFactory();
-
-    Integer startPort = gatewayReceiverCreateArgs.getStartPort();
-    if (startPort != null) {
-      gatewayReceiverFactory.setStartPort(startPort);
-    }
-
-    Integer endPort = gatewayReceiverCreateArgs.getEndPort();
-    if (endPort != null) {
-      gatewayReceiverFactory.setEndPort(endPort);
-    }
-
-    String bindAddress = gatewayReceiverCreateArgs.getBindAddress();
-    if (bindAddress != null) {
-      gatewayReceiverFactory.setBindAddress(bindAddress);
-    }
-
-    Integer maxTimeBetweenPings = gatewayReceiverCreateArgs.getMaximumTimeBetweenPings();
-    if (maxTimeBetweenPings != null) {
-      gatewayReceiverFactory.setMaximumTimeBetweenPings(maxTimeBetweenPings);
-    }
-
-    Integer socketBufferSize = gatewayReceiverCreateArgs.getSocketBufferSize();
-    if (socketBufferSize != null) {
-      gatewayReceiverFactory.setSocketBufferSize(socketBufferSize);
-    }
-
-    Boolean manualStart = gatewayReceiverCreateArgs.isManualStart();
-    if (manualStart != null) {
-      gatewayReceiverFactory.setManualStart(manualStart);
-    }
-
-    String[] gatewayTransportFilters = gatewayReceiverCreateArgs.getGatewayTransportFilters();
-    if (gatewayTransportFilters != null) {
-      for (String gatewayTransportFilter : gatewayTransportFilters) {
-        gatewayReceiverFactory.addGatewayTransportFilter(
-            (GatewayTransportFilter) newInstance(gatewayTransportFilter));
-      }
-    }
-
-    String hostnameForSenders = gatewayReceiverCreateArgs.getHostnameForSenders();
-    if (hostnameForSenders != null) {
-      gatewayReceiverFactory.setHostnameForSenders(hostnameForSenders);
-    }
-    return gatewayReceiverFactory.create();
+    return cache.getGatewayReceivers().iterator().next();
   }
 
-
-  private Object newInstance(String className)
-      throws ClassNotFoundException, IllegalAccessException, InstantiationException {
-    if (Strings.isNullOrEmpty(className)) {
-      return null;
-    }
-
-    return ClassPathLoader.getLatest().forName(className).newInstance();
+  boolean gatewayReceiverExists(Cache cache) {
+    return cache.getGatewayReceivers() != null && !cache.getGatewayReceivers().isEmpty();
   }
 
   @Override

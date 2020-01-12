@@ -15,6 +15,7 @@
 package org.apache.geode.pdx.internal;
 
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.geode.cache.wan.GatewaySender;
 
@@ -27,42 +28,37 @@ public interface TypeRegistration {
   /**
    * Define the type in the distributed system
    */
-  public int defineType(PdxType newType);
+  int defineType(PdxType newType);
 
   /**
    * Get the type id from the distributed system
    */
-  public PdxType getType(int typeId);
+  PdxType getType(int typeId);
 
   /**
    * Add a type id that has come from a remote member.
    */
-  public void addRemoteType(int typeId, PdxType type);
+  void addRemoteType(int typeId, PdxType type);
 
-  public void addImportedType(int typeId, PdxType importedType);
+  void addImportedType(int typeId, PdxType importedType);
 
-  /**
-   * Test hook to get the last allocated type id
-   */
-  public int getLastAllocatedTypeId();
+  void initialize();
 
-  public void initialize();
+  void gatewaySenderStarted(GatewaySender gatewaySender);
 
-  public void gatewaySenderStarted(GatewaySender gatewaySender);
+  void creatingPersistentRegion();
 
-  public void creatingPersistentRegion();
+  void creatingPool();
 
-  public void creatingPool();
+  int getEnumId(Enum<?> v);
 
-  public int getEnumId(Enum<?> v);
+  void addRemoteEnum(int enumId, EnumInfo newInfo);
 
-  public void addRemoteEnum(int enumId, EnumInfo newInfo);
+  void addImportedEnum(int enumId, EnumInfo importedInfo);
 
-  public void addImportedEnum(int enumId, EnumInfo importedInfo);
+  int defineEnum(EnumInfo newInfo);
 
-  public int defineEnum(EnumInfo newInfo);
-
-  public EnumInfo getEnumById(int enumId);
+  EnumInfo getEnumById(int enumId);
 
   /**
    * Returns the currently defined types.
@@ -81,21 +77,20 @@ public interface TypeRegistration {
   /**
    * Returns PdxType having the field
    *
-   * @param fieldName
-   * @param className
    * @return PdxType or null if field not present
    */
-  public PdxType getPdxTypeForField(String fieldName, String className);
+  PdxType getPdxTypeForField(String fieldName, String className);
 
-  /*
-   * test hook
+  /**
+   * Returns all the PdxTypes for the given class name.
+   * An empty set will be returned if no types exist.
    */
-  public void testClearRegistry();
+  Set<PdxType> getPdxTypesForClassName(String className);
 
-  public boolean isClient();
+  boolean isClient();
 
   /**
    * Return the size of the type registry in this member.
    */
-  public int getLocalSize();
+  int getLocalSize();
 }

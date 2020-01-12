@@ -26,23 +26,20 @@ import java.util.Set;
 
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 
 import org.apache.geode.CancelCriterion;
 import org.apache.geode.cache.persistence.PersistentID;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.test.junit.categories.UnitTest;
 
-@Category(UnitTest.class)
 public class BackupReplyProcessorTest {
 
   private BackupReplyProcessor backupReplyProcessor;
 
   private BackupResultCollector resultCollector;
-  private DM dm;
+  private DistributionManager dm;
   private InternalDistributedSystem system;
   private InternalDistributedMember sender;
 
@@ -55,7 +52,7 @@ public class BackupReplyProcessorTest {
   @Before
   public void setUp() throws Exception {
     resultCollector = mock(BackupResultCollector.class);
-    dm = mock(DM.class);
+    dm = mock(DistributionManager.class);
     system = mock(InternalDistributedSystem.class);
     backupResponse = mock(BackupResponse.class);
     nonBackupResponse = mock(DistributionMessage.class);

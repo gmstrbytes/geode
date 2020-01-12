@@ -16,7 +16,6 @@
 package org.apache.geode.management.internal.cli.commands;
 
 import static org.apache.geode.management.internal.cli.commands.DataCommandsUtils.callFunctionForRegion;
-import static org.apache.geode.management.internal.cli.commands.DataCommandsUtils.makePresentationResult;
 
 import java.util.Set;
 
@@ -25,23 +24,25 @@ import org.apache.shiro.subject.Subject;
 import org.springframework.shell.core.annotation.CliCommand;
 import org.springframework.shell.core.annotation.CliOption;
 
+import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.Region;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.management.cli.CliMetaData;
 import org.apache.geode.management.cli.ConverterHint;
-import org.apache.geode.management.cli.Result;
+import org.apache.geode.management.cli.GfshCommand;
 import org.apache.geode.management.internal.cli.domain.DataCommandRequest;
 import org.apache.geode.management.internal.cli.domain.DataCommandResult;
 import org.apache.geode.management.internal.cli.functions.DataCommandFunction;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.security.ResourcePermission.Operation;
 import org.apache.geode.security.ResourcePermission.Resource;
 
-public class GetCommand implements GfshCommand {
+public class GetCommand extends GfshCommand {
   @CliMetaData(relatedTopic = {CliStrings.TOPIC_GEODE_DATA, CliStrings.TOPIC_GEODE_REGION})
   @CliCommand(value = {CliStrings.GET}, help = CliStrings.GET__HELP)
-  public Result get(
+  public ResultModel get(
       @CliOption(key = {CliStrings.GET__KEY}, mandatory = true,
           help = CliStrings.GET__KEY__HELP) String key,
       @CliOption(key = {CliStrings.GET__REGIONNAME}, mandatory = true,
@@ -55,15 +56,17 @@ public class GetCommand implements GfshCommand {
           specifiedDefaultValue = "true",
           help = CliStrings.GET__LOAD__HELP) Boolean loadOnCacheMiss) {
 
-    InternalCache cache = getCache();
-    cache.getSecurityService().authorize(Resource.DATA, Operation.READ, regionPath, key);
+    Cache cache = getCache();
+    authorize(Resource.DATA, Operation.READ, regionPath, key);
     DataCommandResult dataResult;
+
+    key = DataCommandsUtils.makeBrokenJsonCompliant(key);
 
     @SuppressWarnings("rawtypes")
     Region region = cache.getRegion(regionPath);
     DataCommandFunction getfn = new DataCommandFunction();
     if (region == null) {
-      Set<DistributedMember> memberList = findAnyMembersForRegion(getCache(), regionPath);
+      Set<DistributedMember> memberList = findAnyMembersForRegion(regionPath);
       if (CollectionUtils.isNotEmpty(memberList)) {
         DataCommandRequest request = new DataCommandRequest();
         request.setCommand(CliStrings.GET);
@@ -72,7 +75,7 @@ public class GetCommand implements GfshCommand {
         request.setRegionName(regionPath);
         request.setValueClass(valueClass);
         request.setLoadOnCacheMiss(loadOnCacheMiss);
-        Subject subject = cache.getSecurityService().getSubject();
+        Subject subject = getSubject();
         if (subject != null) {
           request.setPrincipal(subject.getPrincipal());
         }
@@ -83,13 +86,14 @@ public class GetCommand implements GfshCommand {
             false);
       }
     } else {
-      dataResult = getfn.get(null, key, keyClass, valueClass, regionPath, loadOnCacheMiss, cache);
+      dataResult = getfn.get(null, key, keyClass, valueClass, regionPath, loadOnCacheMiss,
+          (InternalCache) cache);
     }
     dataResult.setKeyClass(keyClass);
     if (valueClass != null) {
       dataResult.setValueClass(valueClass);
     }
 
-    return makePresentationResult(dataResult);
+    return dataResult.toResultModel();
   }
 }

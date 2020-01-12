@@ -15,13 +15,10 @@
 package org.apache.geode.internal.cache.execute.util;
 
 import org.apache.geode.cache.CacheClosedException;
-import org.apache.geode.cache.CacheFactory;
-import org.apache.geode.cache.execute.FunctionAdapter;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.distributed.internal.DistributionConfig;
-import org.apache.geode.distributed.internal.InternalDistributedSystem;
-import org.apache.geode.internal.InternalEntity;
 import org.apache.geode.internal.cache.InternalCache;
+import org.apache.geode.internal.cache.execute.InternalFunction;
 import org.apache.geode.management.internal.RestAgent;
 
 /**
@@ -30,7 +27,7 @@ import org.apache.geode.management.internal.RestAgent;
  *
  * @since GemFire 8.1
  */
-public class FindRestEnabledServersFunction extends FunctionAdapter implements InternalEntity {
+public class FindRestEnabledServersFunction implements InternalFunction {
   private static final long serialVersionUID = 7851518767859544678L;
 
   /**
@@ -40,10 +37,11 @@ public class FindRestEnabledServersFunction extends FunctionAdapter implements I
   public static final String FIND_REST_ENABLED_SERVERS_FUNCTION_ID =
       FindRestEnabledServersFunction.class.getName();
 
+  @Override
   public void execute(FunctionContext context) {
     try {
-      InternalCache cache = (InternalCache) CacheFactory.getAnyInstance();
-      DistributionConfig config = InternalDistributedSystem.getAnyInstance().getConfig();
+      InternalCache cache = (InternalCache) context.getCache();
+      DistributionConfig config = cache.getInternalDistributedSystem().getConfig();
 
       String bindAddress = RestAgent.getBindAddressForHttpService(config);
 
@@ -61,6 +59,7 @@ public class FindRestEnabledServersFunction extends FunctionAdapter implements I
     }
   }
 
+  @Override
   public String getId() {
     return FIND_REST_ENABLED_SERVERS_FUNCTION_ID;
   }

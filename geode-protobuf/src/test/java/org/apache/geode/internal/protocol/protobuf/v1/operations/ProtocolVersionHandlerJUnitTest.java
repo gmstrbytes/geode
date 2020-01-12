@@ -15,9 +15,9 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 
 import org.apache.geode.internal.protocol.protobuf.ProtocolVersion;
+import org.apache.geode.internal.protocol.protobuf.statistics.ClientStatistics;
 import org.apache.geode.internal.protocol.protobuf.v1.MessageUtil;
-import org.apache.geode.internal.protocol.statistics.ProtocolClientStatistics;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.test.junit.categories.ClientServerTest;
 
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more contributor license
@@ -34,7 +34,7 @@ import org.apache.geode.test.junit.categories.UnitTest;
  * the License.
  */
 
-@Category(UnitTest.class)
+@Category({ClientServerTest.class})
 public class ProtocolVersionHandlerJUnitTest {
   private static final int INVALID_MAJOR_VERSION = 67;
   private static final int INVALID_MINOR_VERSION = 92347;
@@ -52,7 +52,7 @@ public class ProtocolVersionHandlerJUnitTest {
 
     ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
     assertTrue(protocolVersionHandler.handleVersionMessage(inputStream, outputStream,
-        mock(ProtocolClientStatistics.class)));
+        mock(ClientStatistics.class)));
 
     ProtocolVersion.VersionAcknowledgement versionResponse = ProtocolVersion.VersionAcknowledgement
         .parseDelimitedFrom(new ByteArrayInputStream(outputStream.toByteArray()));
@@ -89,7 +89,7 @@ public class ProtocolVersionHandlerJUnitTest {
 
     try {
       protocolVersionHandler.handleVersionMessage(inputStream, outputStream,
-          mock(ProtocolClientStatistics.class));
+          mock(ClientStatistics.class));
       fail("Invalid version should throw IOException");
     } catch (IOException e) {
       // expected if version verification fails

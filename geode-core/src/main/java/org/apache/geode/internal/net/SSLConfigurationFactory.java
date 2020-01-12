@@ -19,24 +19,27 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 
-import org.apache.commons.lang.ArrayUtils;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.ArrayUtils;
+import org.apache.commons.lang3.StringUtils;
 
 import org.apache.geode.GemFireConfigException;
+import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionConfigImpl;
 import org.apache.geode.internal.admin.SSLConfig;
 import org.apache.geode.internal.security.SecurableCommunicationChannel;
 
 public class SSLConfigurationFactory {
-
   public static final String JAVAX_KEYSTORE = "javax.net.ssl.keyStore";
   public static final String JAVAX_KEYSTORE_TYPE = "javax.net.ssl.keyStoreType";
   public static final String JAVAX_KEYSTORE_PASSWORD = "javax.net.ssl.keyStorePassword";
   public static final String JAVAX_TRUSTSTORE = "javax.net.ssl.trustStore";
-  public static final String JAVAX_TRUSTSTORE_PASSWORD = "javax.net.ssl.trustStorePassword";
   public static final String JAVAX_TRUSTSTORE_TYPE = "javax.net.ssl.trustStoreType";
+  public static final String JAVAX_TRUSTSTORE_PASSWORD = "javax.net.ssl.trustStorePassword";
+  public static final String GEODE_SSL_CONFIG_PROPERTIES =
+      "org.apache.geode.internal.net.ssl.config";
 
+  @MakeNotStatic
   private static SSLConfigurationFactory instance = new SSLConfigurationFactory();
   private DistributionConfig distributionConfig = null;
   private Map<SecurableCommunicationChannel, SSLConfig> registeredSSLConfig = new HashMap<>();
@@ -168,6 +171,8 @@ public class SSLConfigurationFactory {
     SSLConfig sslConfig = new SSLConfig();
     sslConfig.setCiphers(distributionConfig.getSSLCiphers());
     sslConfig
+        .setEndpointIdentificationEnabled(distributionConfig.getSSLEndPointIdentificationEnabled());
+    sslConfig
         .setEnabled(determineIfSSLEnabledForSSLComponent(distributionConfig, sslEnabledComponent));
     sslConfig.setKeystore(distributionConfig.getSSLKeyStore());
     sslConfig.setKeystorePassword(distributionConfig.getSSLKeyStorePassword());
@@ -178,21 +183,20 @@ public class SSLConfigurationFactory {
     sslConfig.setProtocols(distributionConfig.getSSLProtocols());
     sslConfig.setRequireAuth(distributionConfig.getSSLRequireAuthentication());
     sslConfig.setAlias(distributionConfig.getSSLDefaultAlias());
+    sslConfig.setUseDefaultSSLContext(distributionConfig.getSSLUseDefaultContext());
+
     return sslConfig;
   }
 
   private boolean determineIfSSLEnabledForSSLComponent(final DistributionConfig distributionConfig,
       final SecurableCommunicationChannel sslEnabledComponent) {
     if (ArrayUtils.contains(distributionConfig.getSecurableCommunicationChannels(),
-        SecurableCommunicationChannel.NONE)) {
-      return false;
-    }
-    if (ArrayUtils.contains(distributionConfig.getSecurableCommunicationChannels(),
         SecurableCommunicationChannel.ALL)) {
       return true;
     }
+
     return ArrayUtils.contains(distributionConfig.getSecurableCommunicationChannels(),
-        sslEnabledComponent) ? true : false;
+        sslEnabledComponent);
   }
 
   /**

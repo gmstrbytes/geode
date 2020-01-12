@@ -14,7 +14,6 @@
  */
 package org.apache.geode.internal.cache.eviction;
 
-import org.apache.geode.internal.cache.BucketRegion;
 
 /**
  * NewLIFOClockHand holds the behavior for LIFO logic , Overwriting getLRUEntry() to return most
@@ -24,8 +23,8 @@ import org.apache.geode.internal.cache.BucketRegion;
  */
 public class LIFOList extends AbstractEvictionList {
 
-  LIFOList(InternalEvictionStatistics stats, BucketRegion bucketRegion) {
-    super(stats, bucketRegion);
+  public LIFOList(EvictionController controller) {
+    super(controller);
   }
 
   /**
@@ -55,7 +54,7 @@ public class LIFOList extends AbstractEvictionList {
         }
       }
     }
-    stats.incEvaluations(evaluations);
+    getStatistics().incEvaluations(evaluations);
     return (EvictableEntry) evictionNode;
   }
 

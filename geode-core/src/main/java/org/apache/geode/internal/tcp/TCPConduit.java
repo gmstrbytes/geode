@@ -15,7 +15,6 @@
 package org.apache.geode.internal.tcp;
 
 import java.io.IOException;
-import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -27,40 +26,31 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.Map;
 import java.util.Properties;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.RejectedExecutionHandler;
-import java.util.concurrent.SynchronousQueue;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-
-import javax.net.ssl.SSLException;
 
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.CancelCriterion;
 import org.apache.geode.CancelException;
 import org.apache.geode.SystemFailure;
+import org.apache.geode.alerting.internal.spi.AlertingAction;
+import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.DistributedSystemDisconnectedException;
-import org.apache.geode.distributed.internal.DM;
 import org.apache.geode.distributed.internal.DMStats;
 import org.apache.geode.distributed.internal.DistributionConfig;
+import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.LonerDistributionManager;
 import org.apache.geode.distributed.internal.direct.DirectChannel;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.distributed.internal.membership.MembershipManager;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.LoggingThreadGroup;
-import org.apache.geode.internal.logging.log4j.AlertAppender;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.internal.net.BufferPool;
 import org.apache.geode.internal.net.SocketCreator;
 import org.apache.geode.internal.net.SocketCreatorFactory;
 import org.apache.geode.internal.security.SecurableCommunicationChannel;
+import org.apache.geode.logging.internal.executors.LoggingThread;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * <p>
@@ -91,31 +81,30 @@ public class TCPConduit implements Runnable {
   /**
    * max amount of time (ms) to wait for listener threads to stop
    */
+  @MakeNotStatic
   private static int LISTENER_CLOSE_TIMEOUT;
 
   /**
-   * backlog is the "accept" backlog configuration parameter all conduits server socket
+   * BACKLOG is the "accept" backlog configuration parameter for the conduits server socket.
+   * In most operating systems this is limited to 128 by default and you must change
+   * the OS setting somaxconn to go beyond that limit. Note that setting this too high
+   * can have ramifications when disconnecting from the distributed system if a thread
+   * is trying to connect to another member that is not accepting connections quickly
+   * enough. Setting it too low can also have adverse effects because backlog overflows
+   * aren't handled well by most tcp/ip implementations, causing connect timeouts instead
+   * of expected ServerRefusedConnection exceptions.
+   * <p>
+   * Normally the backlog isn't that important because if it's full of connection requests
+   * a SYN "cookie" mechanism is used to bypass the backlog queue. If this is turned off
+   * though connection requests are dropped when the queue is full.
    */
+  @MakeNotStatic
   private static int BACKLOG;
 
   /**
    * use javax.net.ssl.SSLServerSocketFactory?
    */
-  static boolean useSSL;
-
-  // public static final boolean USE_SYNC_WRITES = Boolean.getBoolean("p2p.useSyncWrites");
-
-  /**
-   * Force use of Sockets rather than SocketChannels (NIO). Note from Bruce: due to a bug in the
-   * java VM, NIO cannot be used with IPv6 addresses on Windows. When that condition holds, the
-   * useNIO flag must be disregarded.
-   */
-  private static boolean USE_NIO;
-
-  /**
-   * use direct ByteBuffers instead of heap ByteBuffers for NIO operations
-   */
-  static boolean useDirectBuffers;
+  boolean useSSL;
 
   /**
    * The socket producer used by the cluster
@@ -124,11 +113,6 @@ public class TCPConduit implements Runnable {
 
 
   private MembershipManager membershipManager;
-
-  /**
-   * true if NIO can be used for the server socket
-   */
-  private boolean useNIO;
 
   static {
     init();
@@ -143,14 +127,13 @@ public class TCPConduit implements Runnable {
   }
 
   public static void init() {
-    useSSL = Boolean.getBoolean("p2p.useSSL");
-    // only use nio if not SSL
-    USE_NIO = !useSSL && !Boolean.getBoolean("p2p.oldIO");
     // only use direct buffers if we are using nio
-    useDirectBuffers = USE_NIO && !Boolean.getBoolean("p2p.nodirectBuffers");
-    LISTENER_CLOSE_TIMEOUT = Integer.getInteger("p2p.listenerCloseTimeout", 60000).intValue();
-    // fix for bug 37730
-    BACKLOG = Integer.getInteger("p2p.backlog", HANDSHAKE_POOL_SIZE + 1).intValue();
+    LISTENER_CLOSE_TIMEOUT = Integer.getInteger("p2p.listenerCloseTimeout", 60000);
+    // note: bug 37730 concerned this defaulting to 50
+    BACKLOG = Integer.getInteger("p2p.backlog", 1280);
+    if (Boolean.getBoolean("p2p.oldIO")) {
+      logger.warn("detected use of p2p.oldIO setting - this is no longer supported");
+    }
   }
 
   ///////////////// permanent conduit state
@@ -158,8 +141,8 @@ public class TCPConduit implements Runnable {
   /**
    * the size of OS TCP/IP buffers, not set by default
    */
-  public int tcpBufferSize = DistributionConfig.DEFAULT_SOCKET_BUFFER_SIZE;
-  public int idleConnectionTimeout = DistributionConfig.DEFAULT_SOCKET_LEASE_TIME;
+  int tcpBufferSize = DistributionConfig.DEFAULT_SOCKET_BUFFER_SIZE;
+  int idleConnectionTimeout = DistributionConfig.DEFAULT_SOCKET_LEASE_TIME;
 
   /**
    * port is the tcp/ip port that this conduit binds to. If it is zero, a port from
@@ -168,7 +151,8 @@ public class TCPConduit implements Runnable {
    */
   private int port;
 
-  private int[] tcpPortRange = new int[] {1024, 65535};
+  private int[] tcpPortRange = new int[] {DistributionConfig.DEFAULT_MEMBERSHIP_PORT_RANGE[0],
+      DistributionConfig.DEFAULT_MEMBERSHIP_PORT_RANGE[1]};
 
   /**
    * The java groups address that this conduit is associated with
@@ -197,7 +181,7 @@ public class TCPConduit implements Runnable {
    *
    * @since GemFire 4.2.1
    */
-  DistributionConfig config;
+  private DistributionConfig config;
 
   ////////////////// runtime state that is re-initialized on a restart
 
@@ -266,31 +250,20 @@ public class TCPConduit implements Runnable {
       this.conTable = ConnectionTable.create(this);
     } catch (IOException io) {
       throw new ConnectionException(
-          LocalizedStrings.TCPConduit_UNABLE_TO_INITIALIZE_CONNECTION_TABLE.toLocalizedString(),
+          "Unable to initialize connection table",
           io);
     }
 
     this.socketCreator =
         SocketCreatorFactory.getSocketCreatorForComponent(SecurableCommunicationChannel.CLUSTER);
+    this.useSSL = socketCreator.useSSL();
 
-    this.useNIO = USE_NIO;
-    if (this.useNIO) {
-      InetAddress addr = address;
-      if (addr == null) {
-        try {
-          addr = SocketCreator.getLocalHost();
-        } catch (java.net.UnknownHostException e) {
-          throw new ConnectionException("Unable to resolve localHost address", e);
-        }
-      }
-      // JDK bug 6230761 - NIO can't be used with IPv6 on Windows
-      if (addr instanceof Inet6Address) {
-        String os = System.getProperty("os.name");
-        if (os != null) {
-          if (os.indexOf("Windows") != -1) {
-            this.useNIO = false;
-          }
-        }
+    InetAddress addr = address;
+    if (addr == null) {
+      try {
+        addr = SocketCreator.getLocalHost();
+      } catch (java.net.UnknownHostException e) {
+        throw new ConnectionException("Unable to resolve localHost address", e);
       }
     }
 
@@ -308,8 +281,7 @@ public class TCPConduit implements Runnable {
       try {
         tcpBufferSize = Integer.parseInt(s);
       } catch (Exception e) {
-        logger.warn(
-            LocalizedMessage.create(LocalizedStrings.TCPConduit_EXCEPTION_PARSING_P2PTCPBUFFERSIZE),
+        logger.warn("exception parsing p2p.tcpBufferSize",
             e);
       }
       if (tcpBufferSize < Connection.SMALL_BUFFER_SIZE) {
@@ -320,50 +292,31 @@ public class TCPConduit implements Runnable {
       try {
         idleConnectionTimeout = Integer.parseInt(s);
       } catch (Exception e) {
-        logger.warn(LocalizedMessage
-            .create(LocalizedStrings.TCPConduit_EXCEPTION_PARSING_P2PIDLECONNECTIONTIMEOUT), e);
+        logger.warn("exception parsing p2p.idleConnectionTimeout", e);
       }
 
       s = p.getProperty("membership_port_range_start");
       try {
         tcpPortRange[0] = Integer.parseInt(s);
       } catch (Exception e) {
-        logger.warn(LocalizedMessage
-            .create(LocalizedStrings.TCPConduit_EXCEPTION_PARSING_TCPPORTRANGESTART), e);
+        logger.warn("Exception parsing membership-port-range start port.", e);
       }
 
       s = p.getProperty("membership_port_range_end");
       try {
         tcpPortRange[1] = Integer.parseInt(s);
       } catch (Exception e) {
-        logger.warn(
-            LocalizedMessage.create(LocalizedStrings.TCPConduit_EXCEPTION_PARSING_TCPPORTRANGEEND),
+        logger.warn("Exception parsing membership-port-range end port.",
             e);
       }
 
     }
   }
 
-  private ThreadPoolExecutor hsPool;
-
   /**
    * the reason for a shutdown, if abnormal
    */
   private volatile Exception shutdownCause;
-
-  private static final int HANDSHAKE_POOL_SIZE =
-      Integer.getInteger("p2p.HANDSHAKE_POOL_SIZE", 10).intValue();
-  private static final long HANDSHAKE_POOL_KEEP_ALIVE_TIME =
-      Long.getLong("p2p.HANDSHAKE_POOL_KEEP_ALIVE_TIME", 60).longValue();
-
-  /**
-   * added to fix bug 40436
-   */
-  public void setMaximumHandshakePoolSize(int maxSize) {
-    if (this.hsPool != null && maxSize > HANDSHAKE_POOL_SIZE) {
-      this.hsPool.setMaximumPoolSize(maxSize);
-    }
-  }
 
   /**
    * binds the server socket and gets threads going
@@ -371,68 +324,26 @@ public class TCPConduit implements Runnable {
   private void startAcceptor() throws ConnectionException {
     int localPort;
     int p = this.port;
-    InetAddress ba = this.address;
 
-    {
-      ThreadPoolExecutor tmp_hsPool = null;
-      String gName = "P2P-Handshaker " + ba + ":" + p;
-      final ThreadGroup socketThreadGroup = LoggingThreadGroup.createThreadGroup(gName, logger);
-
-      ThreadFactory socketThreadFactory = new ThreadFactory() {
-        int connNum = -1;
-
-        public Thread newThread(Runnable command) {
-          int tnum;
-          synchronized (this) {
-            tnum = ++connNum;
-          }
-          String tName = socketThreadGroup.getName() + " Thread " + tnum;
-          return new Thread(socketThreadGroup, command, tName);
-        }
-      };
-      try {
-        final BlockingQueue bq = new SynchronousQueue();
-        final RejectedExecutionHandler reh = new RejectedExecutionHandler() {
-          public void rejectedExecution(Runnable r, ThreadPoolExecutor pool) {
-            try {
-              bq.put(r);
-            } catch (InterruptedException ex) {
-              Thread.currentThread().interrupt(); // preserve the state
-              throw new RejectedExecutionException(
-                  LocalizedStrings.TCPConduit_INTERRUPTED.toLocalizedString(), ex);
-            }
-          }
-        };
-        tmp_hsPool = new ThreadPoolExecutor(1, HANDSHAKE_POOL_SIZE, HANDSHAKE_POOL_KEEP_ALIVE_TIME,
-            TimeUnit.SECONDS, bq, socketThreadFactory, reh);
-      } catch (IllegalArgumentException poolInitException) {
-        throw new ConnectionException(
-            LocalizedStrings.TCPConduit_WHILE_CREATING_HANDSHAKE_POOL.toLocalizedString(),
-            poolInitException);
-      }
-      this.hsPool = tmp_hsPool;
-    }
     createServerSocket();
+
     try {
       localPort = socket.getLocalPort();
 
       id = new InetSocketAddress(socket.getInetAddress(), localPort);
       stopped = false;
-      ThreadGroup group = LoggingThreadGroup.createThreadGroup("P2P Listener Threads", logger);
-      thread = new Thread(group, this, "P2P Listener Thread " + id);
-      thread.setDaemon(true);
+      thread = new LoggingThread("P2P Listener Thread " + id, this);
       try {
-        thread.setPriority(thread.getThreadGroup().getMaxPriority());
+        thread.setPriority(Thread.MAX_PRIORITY);
       } catch (Exception e) {
-        logger.info(LocalizedMessage.create(
-            LocalizedStrings.TCPConduit_UNABLE_TO_SET_LISTENER_PRIORITY__0, e.getMessage()));
+        logger.info("unable to set listener priority: {}", e.getMessage());
       }
       if (!Boolean.getBoolean("p2p.test.inhibitAcceptor")) {
         thread.start();
       } else {
-        logger.fatal(LocalizedMessage.create(LocalizedStrings.TCPConduit_INHIBITACCEPTOR));
+        logger.fatal(
+            "p2p.test.inhibitAcceptor was found to be set, inhibiting incoming tcp/ip connections");
         socket.close();
-        this.hsPool.shutdownNow();
       }
     } catch (IOException io) {
       String s = "While creating ServerSocket on port " + p;
@@ -446,71 +357,46 @@ public class TCPConduit implements Runnable {
    * this.bindAddress, which must be set before invoking this method.
    */
   private void createServerSocket() {
-    int p = this.port;
-    int b = BACKLOG;
+    int serverPort = this.port;
+    int connectionRequestBacklog = BACKLOG;
     InetAddress bindAddress = this.address;
 
     try {
-      if (this.useNIO) {
-        if (p <= 0) {
+      if (serverPort <= 0) {
 
-          socket = socketCreator.createServerSocketUsingPortRange(bindAddress, b, isBindAddress,
-              this.useNIO, 0, tcpPortRange);
-        } else {
-          ServerSocketChannel channel = ServerSocketChannel.open();
-          socket = channel.socket();
-
-          InetSocketAddress inetSocketAddress =
-              new InetSocketAddress(isBindAddress ? bindAddress : null, p);
-          socket.bind(inetSocketAddress, b);
-        }
-
-        if (useNIO) {
-          try {
-            // set these buffers early so that large buffers will be allocated
-            // on accepted sockets (see java.net.ServerSocket.setReceiverBufferSize javadocs)
-            socket.setReceiveBufferSize(tcpBufferSize);
-            int newSize = socket.getReceiveBufferSize();
-            if (newSize != tcpBufferSize) {
-              logger.info(LocalizedMessage.create(
-                  LocalizedStrings.TCPConduit_0_IS_1_INSTEAD_OF_THE_REQUESTED_2,
-                  new Object[] {"Listener receiverBufferSize", Integer.valueOf(newSize),
-                      Integer.valueOf(tcpBufferSize)}));
-            }
-          } catch (SocketException ex) {
-            logger.warn(LocalizedMessage.create(
-                LocalizedStrings.TCPConduit_FAILED_TO_SET_LISTENER_RECEIVERBUFFERSIZE_TO__0,
-                tcpBufferSize));
-          }
-        }
-        channel = socket.getChannel();
+        socket = socketCreator.createServerSocketUsingPortRange(bindAddress,
+            connectionRequestBacklog, isBindAddress,
+            true, 0, tcpPortRange);
       } else {
-        try {
-          if (p <= 0) {
-            socket = socketCreator.createServerSocketUsingPortRange(bindAddress, b, isBindAddress,
-                this.useNIO, this.tcpBufferSize, tcpPortRange);
-          } else {
-            socket = socketCreator.createServerSocket(p, b, isBindAddress ? bindAddress : null,
-                this.tcpBufferSize);
-          }
-          int newSize = socket.getReceiveBufferSize();
-          if (newSize != this.tcpBufferSize) {
-            logger.info(LocalizedMessage.create(
-                LocalizedStrings.TCPConduit_0_IS_1_INSTEAD_OF_THE_REQUESTED_2,
-                new Object[] {"Listener receiverBufferSize", Integer.valueOf(newSize),
-                    Integer.valueOf(this.tcpBufferSize)}));
-          }
-        } catch (SocketException ex) {
-          logger.warn(LocalizedMessage.create(
-              LocalizedStrings.TCPConduit_FAILED_TO_SET_LISTENER_RECEIVERBUFFERSIZE_TO__0,
-              this.tcpBufferSize));
+        ServerSocketChannel channel = ServerSocketChannel.open();
+        socket = channel.socket();
 
-        }
+        InetSocketAddress inetSocketAddress =
+            new InetSocketAddress(isBindAddress ? bindAddress : null, serverPort);
+        socket.bind(inetSocketAddress, connectionRequestBacklog);
       }
+
+      try {
+        // set these buffers early so that large buffers will be allocated
+        // on accepted sockets (see java.net.ServerSocket.setReceiverBufferSize javadocs)
+        socket.setReceiveBufferSize(tcpBufferSize);
+        int newSize = socket.getReceiveBufferSize();
+        if (newSize != tcpBufferSize) {
+          logger.info("{} is {} instead of the requested {}",
+              "Listener receiverBufferSize", newSize,
+              tcpBufferSize);
+        }
+      } catch (SocketException ex) {
+        logger.warn("Failed to set listener receiverBufferSize to {}",
+            tcpBufferSize);
+      }
+      channel = socket.getChannel();
       port = socket.getLocalPort();
     } catch (IOException io) {
-      throw new ConnectionException(LocalizedStrings.TCPConduit_EXCEPTION_CREATING_SERVERSOCKET
-          .toLocalizedString(new Object[] {Integer.valueOf(p), bindAddress}), io);
+      throw new ConnectionException(
+          String.format("While creating ServerSocket on port %s with address %s",
+              serverPort, bindAddress),
+          io);
     }
   }
 
@@ -536,7 +422,6 @@ public class TCPConduit implements Runnable {
 
     stopped = true;
 
-    // System.err.println("DEBUG: TCPConduit emergencyClose");
     try {
       if (channel != null) {
         channel.close();
@@ -551,15 +436,12 @@ public class TCPConduit implements Runnable {
       // ignore, please!
     }
 
-    // this.hsPool.shutdownNow(); // I don't trust this not to allocate objects or to synchronize
     // this.conTable.close(); not safe against deadlocks
     ConnectionTable.emergencyClose();
 
     socket = null;
     thread = null;
     conTable = null;
-
-    // System.err.println("DEBUG: end of TCPConduit emergencyClose");
   }
 
   /* stops the conduit, closing all tcp/ip connections */
@@ -568,14 +450,14 @@ public class TCPConduit implements Runnable {
       stopped = true;
       shutdownCause = cause;
 
-      if (logger.isTraceEnabled(LogMarker.DM)) {
-        logger.trace(LogMarker.DM, "Shutting down conduit");
+      if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+        logger.trace(LogMarker.DM_VERBOSE, "Shutting down conduit");
       }
       try {
         // set timeout endpoint here since interrupt() has been known
         // to hang
         long timeout = System.currentTimeMillis() + LISTENER_CLOSE_TIMEOUT;
-        Thread t = this.thread;;
+        Thread t = this.thread;
         if (channel != null) {
           channel.close();
           // NOTE: do not try to interrupt the listener thread at this point.
@@ -599,15 +481,12 @@ public class TCPConduit implements Runnable {
         } while (timeout > System.currentTimeMillis());
 
         if (t != null && t.isAlive()) {
-          logger.warn(LocalizedMessage.create(
-              LocalizedStrings.TCPConduit_UNABLE_TO_SHUT_DOWN_LISTENER_WITHIN_0_MS_UNABLE_TO_INTERRUPT_SOCKET_ACCEPT_DUE_TO_JDK_BUG_GIVING_UP,
-              Integer.valueOf(LISTENER_CLOSE_TIMEOUT)));
+          logger.warn(
+              "Unable to shut down listener within {}ms.  Unable to interrupt socket.accept() due to JDK bug. Giving up.",
+              LISTENER_CLOSE_TIMEOUT);
         }
-      } catch (IOException e) {
-      } catch (InterruptedException e) {
-        // Ignore, we're trying to stop already.
-      } finally {
-        this.hsPool.shutdownNow();
+      } catch (IOException | InterruptedException e) {
+        // we're already trying to shutdown, ignore
       }
 
       // close connections after shutting down acceptor to fix bug 30695
@@ -647,7 +526,7 @@ public class TCPConduit implements Runnable {
       this.conTable = ConnectionTable.create(this);
     } catch (IOException io) {
       throw new ConnectionException(
-          LocalizedStrings.TCPConduit_UNABLE_TO_INITIALIZE_CONNECTION_TABLE.toLocalizedString(),
+          "Unable to initialize connection table",
           io);
     }
     startAcceptor();
@@ -656,10 +535,11 @@ public class TCPConduit implements Runnable {
   /**
    * this is the server socket listener thread's run loop
    */
+  @Override
   public void run() {
     ConnectionTable.threadWantsSharedResources();
-    if (logger.isTraceEnabled(LogMarker.DM)) {
-      logger.trace(LogMarker.DM, "Starting P2P Listener on  {}", id);
+    if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+      logger.trace(LogMarker.DM_VERBOSE, "Starting P2P Listener on  {}", id);
     }
     for (;;) {
       SystemFailure.checkFailure();
@@ -678,24 +558,8 @@ public class TCPConduit implements Runnable {
 
       Socket othersock = null;
       try {
-        if (this.useNIO) {
-          SocketChannel otherChannel = channel.accept();
-          othersock = otherChannel.socket();
-        } else {
-          try {
-            othersock = socket.accept();
-          } catch (SSLException ex) {
-            // SW: This is the case when there is a problem in P2P
-            // SSL configuration, so need to exit otherwise goes into an
-            // infinite loop just filling the logs
-            logger.warn(
-                LocalizedMessage.create(
-                    LocalizedStrings.TCPConduit_STOPPING_P2P_LISTENER_DUE_TO_SSL_CONFIGURATION_PROBLEM),
-                ex);
-            break;
-          }
-          socketCreator.configureServerSSLSocket(othersock);
-        }
+        SocketChannel otherChannel = channel.accept();
+        othersock = otherChannel.socket();
         if (stopped) {
           try {
             if (othersock != null) {
@@ -710,54 +574,56 @@ public class TCPConduit implements Runnable {
 
       } catch (ClosedByInterruptException cbie) {
         // safe to ignore
-      } catch (ClosedChannelException e) {
-        break; // we're dead
-      } catch (CancelException e) {
+      } catch (ClosedChannelException | CancelException e) {
         break;
-      } catch (Exception e) {
+      } catch (IOException e) {
+        this.getStats().incFailedAccept();
+
+        try {
+          if (othersock != null) {
+            othersock.close();
+          }
+        } catch (IOException ignore) {
+
+        }
+
         if (!stopped) {
           if (e instanceof SocketException && "Socket closed".equalsIgnoreCase(e.getMessage())) {
             // safe to ignore; see bug 31156
             if (!socket.isClosed()) {
-              logger.warn(
-                  LocalizedMessage.create(
-                      LocalizedStrings.TCPConduit_SERVERSOCKET_THREW_SOCKET_CLOSED_EXCEPTION_BUT_SAYS_IT_IS_NOT_CLOSED),
+              logger.warn("ServerSocket threw 'socket closed' exception but says it is not closed",
                   e);
               try {
                 socket.close();
                 createServerSocket();
               } catch (IOException ioe) {
-                logger.fatal(
-                    LocalizedMessage.create(
-                        LocalizedStrings.TCPConduit_UNABLE_TO_CLOSE_AND_RECREATE_SERVER_SOCKET),
+                logger.fatal("Unable to close and recreate server socket",
                     ioe);
                 // post 5.1.0x, this should force shutdown
                 try {
                   Thread.sleep(5000);
                 } catch (InterruptedException ie) {
                   // Don't reset; we're just exiting the thread
-                  logger.info(LocalizedMessage.create(
-                      LocalizedStrings.TCPConduit_INTERRUPTED_AND_EXITING_WHILE_TRYING_TO_RECREATE_LISTENER_SOCKETS));
+                  logger.info("Interrupted and exiting while trying to recreate listener sockets");
                   return;
                 }
               }
             }
+          } else if ("Too many open files".equals(e.getMessage())) {
+            getConTable().fileDescriptorsExhausted();
           } else {
-            this.getStats().incFailedAccept();
-            if (e instanceof IOException && "Too many open files".equals(e.getMessage())) {
-              getConTable().fileDescriptorsExhausted();
-            } else {
-              logger.warn(e.getMessage(), e);
-            }
+            logger.warn(e.getMessage(), e);
           }
+
         }
-        // connections.cleanupLowWater();
+      } catch (Exception e) {
+        logger.warn(e.getMessage(), e);
       }
+
       if (!stopped && socket.isClosed()) {
         // NOTE: do not check for distributed system closing here. Messaging
         // may need to occur during the closing of the DS or cache
-        logger.warn(
-            LocalizedMessage.create(LocalizedStrings.TCPConduit_SERVERSOCKET_CLOSED_REOPENING));
+        logger.warn("ServerSocket closed - reopening");
         try {
           createServerSocket();
         } catch (ConnectionException ex) {
@@ -766,23 +632,8 @@ public class TCPConduit implements Runnable {
       }
     } // for
 
-    if (logger.isTraceEnabled(LogMarker.DM)) {
-      logger.debug("Stopped P2P Listener on  {}", id);
-    }
-  }
-
-  private void acceptConnection(final Socket othersock) {
-    try {
-      this.hsPool.execute(new Runnable() {
-        public void run() {
-          basicAcceptConnection(othersock);
-        }
-      });
-    } catch (RejectedExecutionException rejected) {
-      try {
-        othersock.close();
-      } catch (IOException ignore) {
-      }
+    if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+      logger.trace("Stopped P2P Listener on  {}", id);
     }
   }
 
@@ -791,20 +642,15 @@ public class TCPConduit implements Runnable {
     if (result == null) {
       stopper.checkCancelInProgress(null);
       throw new DistributedSystemDisconnectedException(
-          LocalizedStrings.TCPConduit_TCP_LAYER_HAS_BEEN_SHUTDOWN.toLocalizedString());
+          "tcp layer has been shutdown");
     }
     return result;
   }
 
-  protected void basicAcceptConnection(Socket othersock) {
+  private void acceptConnection(Socket othersock) {
     try {
       getConTable().acceptConnection(othersock, new PeerConnectionFactory());
-    } catch (IOException io) {
-      // exception is logged by the Connection
-      if (!stopped) {
-        this.getStats().incFailedAccept();
-      }
-    } catch (ConnectionException ex) {
+    } catch (IOException | ConnectionException io) {
       // exception is logged by the Connection
       if (!stopped) {
         this.getStats().incFailedAccept();
@@ -812,27 +658,11 @@ public class TCPConduit implements Runnable {
     } catch (CancelException e) {
     } catch (Exception e) {
       if (!stopped) {
-        // if (e instanceof SocketException
-        // && "Socket closed".equals(e.getMessage())) {
-        // // safe to ignore; see bug 31156
-        // }
-        // else
-        {
-          this.getStats().incFailedAccept();
-          logger.warn(LocalizedMessage.create(
-              LocalizedStrings.TCPConduit_FAILED_TO_ACCEPT_CONNECTION_FROM_0_BECAUSE_1,
-              new Object[] {othersock.getInetAddress(), e}), e);
-        }
+        this.getStats().incFailedAccept();
+        logger.warn("Failed to accept connection from {} because {}",
+            othersock.getInetAddress(), e);
       }
-      // connections.cleanupLowWater();
     }
-  }
-
-  /**
-   * return true if "new IO" classes are being used for the server socket
-   */
-  protected boolean useNIO() {
-    return this.useNIO;
   }
 
   /**
@@ -852,8 +682,6 @@ public class TCPConduit implements Runnable {
    */
   public void waitForThreadOwnedOrderedConnectionState(DistributedMember member, Map channelState)
       throws InterruptedException {
-    // if (Thread.interrupted()) throw new InterruptedException(); not necessary done in
-    // waitForThreadOwnedOrderedConnectionState
     getConTable().waitForThreadOwnedOrderedConnectionState(member, channelState);
   }
 
@@ -901,6 +729,12 @@ public class TCPConduit implements Runnable {
     localAddr = addr;
   }
 
+  public DistributionConfig getConfig() {
+    return config;
+  }
+
+
+
   /**
    * Return a connection to the given member. This method must continue to attempt to create a
    * connection to the given member as long as that member is in the membership view and the system
@@ -919,11 +753,9 @@ public class TCPConduit implements Runnable {
   public Connection getConnection(InternalDistributedMember memberAddress,
       final boolean preserveOrder, boolean retry, long startTime, long ackTimeout,
       long ackSATimeout) throws java.io.IOException, DistributedSystemDisconnectedException {
-    // final boolean preserveOrder = (processorType == DistributionManager.SERIAL_EXECUTOR )||
-    // (processorType == DistributionManager.PARTITIONED_REGION_EXECUTOR);
     if (stopped) {
       throw new DistributedSystemDisconnectedException(
-          LocalizedStrings.TCPConduit_THE_CONDUIT_IS_STOPPED.toLocalizedString());
+          "The conduit is stopped");
     }
 
     Connection conn = null;
@@ -941,8 +773,7 @@ public class TCPConduit implements Runnable {
               || membershipManager.isShunned(memberAddress)
               || membershipManager.shutdownInProgress()) {
             throw new IOException(
-                LocalizedStrings.TCPConduit_TCPIP_CONNECTION_LOST_AND_MEMBER_IS_NOT_IN_VIEW
-                    .toLocalizedString());
+                "TCP/IP connection lost and member is not in view");
           }
           // bug35953: Member is still in view; we MUST NOT give up!
 
@@ -959,15 +790,13 @@ public class TCPConduit implements Runnable {
               || membershipManager.isShunned(memberAddress)) {
             // OK, the member left. Just register an error.
             throw new IOException(
-                LocalizedStrings.TCPConduit_TCPIP_CONNECTION_LOST_AND_MEMBER_IS_NOT_IN_VIEW
-                    .toLocalizedString());
+                "TCP/IP connection lost and member is not in view");
           }
 
           // Print a warning (once)
           if (memberInTrouble == null) {
             memberInTrouble = memberAddress;
-            logger.warn(LocalizedMessage.create(
-                LocalizedStrings.TCPConduit_ATTEMPTING_TCPIP_RECONNECT_TO__0, memberInTrouble));
+            logger.warn("Attempting TCP/IP reconnect to  {}", memberInTrouble);
           } else {
             if (logger.isDebugEnabled()) {
               logger.debug("Attempting TCP/IP reconnect to {}", memberInTrouble);
@@ -1004,8 +833,8 @@ public class TCPConduit implements Runnable {
             if (conn == null) {
               // conduit may be closed - otherwise an ioexception would be thrown
               problem = new IOException(
-                  LocalizedStrings.TCPConduit_UNABLE_TO_RECONNECT_TO_SERVER_POSSIBLE_SHUTDOWN_0
-                      .toLocalizedString(memberAddress));
+                  String.format("Unable to reconnect to server; possible shutdown: %s",
+                      memberAddress));
             } else if (conn.isClosing() || !conn.getRemoteAddress().equals(memberAddress)) {
               if (logger.isDebugEnabled()) {
                 logger.debug("Got an old connection for {}: {}@{}", memberAddress, conn,
@@ -1033,7 +862,7 @@ public class TCPConduit implements Runnable {
         } catch (IOException e) {
           problem = e;
           // bug #43962 don't keep trying to connect to an alert listener
-          if (AlertAppender.isThreadAlerting()) {
+          if (AlertingAction.isThreadAlerting()) {
             if (logger.isDebugEnabled()) {
               logger.debug("Giving up connecting to alert listener {}", memberAddress);
             }
@@ -1048,34 +877,30 @@ public class TCPConduit implements Runnable {
             // Bracket our original warning
             if (memberInTrouble != null) {
               // make this msg info to bracket warning
-              logger.info(LocalizedMessage.create(
-                  LocalizedStrings.TCPConduit_ENDING_RECONNECT_ATTEMPT_BECAUSE_0_HAS_DISAPPEARED,
-                  memberInTrouble));
+              logger.info("Ending reconnect attempt because {} has disappeared.",
+                  memberInTrouble);
             }
-            throw new IOException(LocalizedStrings.TCPConduit_PEER_HAS_DISAPPEARED_FROM_VIEW
-                .toLocalizedString(memberAddress));
+            throw new IOException(String.format("Peer has disappeared from view: %s",
+                memberAddress));
           } // left the view
 
           if (membershipManager.shutdownInProgress()) { // shutdown in progress
             // Bracket our original warning
             if (memberInTrouble != null) {
               // make this msg info to bracket warning
-              logger.info(LocalizedMessage.create(
-                  LocalizedStrings.TCPConduit_ENDING_RECONNECT_ATTEMPT_TO_0_BECAUSE_SHUTDOWN_HAS_STARTED,
-                  memberInTrouble));
+              logger.info("Ending reconnect attempt to {} because shutdown has started.",
+                  memberInTrouble);
             }
             stopper.checkCancelInProgress(null);
             throw new DistributedSystemDisconnectedException(
-                LocalizedStrings.TCPConduit_ABANDONED_BECAUSE_SHUTDOWN_IS_IN_PROGRESS
-                    .toLocalizedString());
+                "Abandoned because shutdown is in progress");
           } // shutdown in progress
 
           // Log the warning. We wait until now, because we want
           // to have m defined for a nice message...
           if (memberInTrouble == null) {
-            logger.warn(LocalizedMessage.create(
-                LocalizedStrings.TCPConduit_ERROR_SENDING_MESSAGE_TO_0_WILL_REATTEMPT_1,
-                new Object[] {memberAddress, problem}));
+            logger.warn("Error sending message to {} (will reattempt): {}",
+                memberAddress, problem);
             memberInTrouble = memberAddress;
           } else {
             if (logger.isDebugEnabled()) {
@@ -1085,16 +910,14 @@ public class TCPConduit implements Runnable {
 
           if (breakLoop) {
             if (!problem.getMessage().startsWith("Cannot form connection to alert listener")) {
-              logger.warn(
-                  LocalizedMessage.create(
-                      LocalizedStrings.TCPConduit_THROWING_IOEXCEPTION_AFTER_FINDING_BREAKLOOP_TRUE),
+              logger.warn("Throwing IOException after finding breakLoop=true",
                   problem);
             }
             if (problem instanceof IOException) {
               throw (IOException) problem;
             } else {
-              IOException ioe = new IOException(LocalizedStrings.TCPConduit_PROBLEM_CONNECTING_TO_0
-                  .toLocalizedString(memberAddress));
+              IOException ioe = new IOException(String.format("Problem connecting to %s",
+                  memberAddress));
               ioe.initCause(problem);
               throw ioe;
             }
@@ -1106,8 +929,7 @@ public class TCPConduit implements Runnable {
 
         // Make sure our logging is bracketed if there was a problem
         if (memberInTrouble != null) {
-          logger.info(LocalizedMessage.create(
-              LocalizedStrings.TCPConduit_SUCCESSFULLY_RECONNECTED_TO_MEMBER_0, memberInTrouble));
+          logger.info("Successfully reconnected to member {}", memberInTrouble);
           if (logger.isTraceEnabled()) {
             logger.trace("new connection is {} memberAddress={}", conn, memberAddress);
           }
@@ -1126,32 +948,11 @@ public class TCPConduit implements Runnable {
     return "" + id;
   }
 
-  public boolean threadOwnsResources() {
-    ConnectionTable ct = this.conTable;
-    if (ct == null) {
-      return false;
-    } else {
-      DM d = getDM();
-      if (d != null) {
-        return d.getSystem().threadOwnsResources();
-      } else {
-        return false;
-      }
-    }
-  }
-
   /**
    * Returns the distribution manager of the direct channel
    */
-  public DM getDM() {
+  public DistributionManager getDM() {
     return directChannel.getDM();
-  }
-
-  /**
-   * Closes any connections used to communicate with the given member
-   */
-  public void removeEndpoint(DistributedMember mbr, String reason) {
-    removeEndpoint(mbr, reason, true);
   }
 
   public void removeEndpoint(DistributedMember mbr, String reason, boolean notifyDisconnect) {
@@ -1177,16 +978,19 @@ public class TCPConduit implements Runnable {
     return stats;
   }
 
+  public boolean useSSL() {
+    return useSSL;
+  }
+
+  public BufferPool getBufferPool() {
+    return this.conTable.getBufferPool();
+  }
+
   protected class Stopper extends CancelCriterion {
 
-    /*
-     * (non-Javadoc)
-     *
-     * @see org.apache.geode.CancelCriterion#cancelInProgress()
-     */
     @Override
     public String cancelInProgress() {
-      DM dm = getDM();
+      DistributionManager dm = getDM();
       if (dm == null) {
         return "no distribution manager";
       }
@@ -1196,18 +1000,13 @@ public class TCPConduit implements Runnable {
       return null;
     }
 
-    /*
-     * (non-Javadoc)
-     *
-     * @see org.apache.geode.CancelCriterion#generateCancelledException(java.lang.Throwable)
-     */
     @Override
     public RuntimeException generateCancelledException(Throwable e) {
       String reason = cancelInProgress();
       if (reason == null) {
         return null;
       }
-      DM dm = getDM();
+      DistributionManager dm = getDM();
       if (dm == null) {
         return new DistributedSystemDisconnectedException("no distribution manager");
       }
@@ -1252,20 +1051,4 @@ public class TCPConduit implements Runnable {
   public boolean waitForMembershipCheck(InternalDistributedMember remoteId) {
     return membershipManager.waitForNewMember(remoteId);
   }
-
-  /**
-   * simulate being sick
-   */
-  public void beSick() {
-    // this.inhibitNewConnections = true;
-    // this.conTable.closeReceivers(true);
-  }
-
-  /**
-   * simulate being healthy
-   */
-  public void beHealthy() {
-    // this.inhibitNewConnections = false;
-  }
-
 }

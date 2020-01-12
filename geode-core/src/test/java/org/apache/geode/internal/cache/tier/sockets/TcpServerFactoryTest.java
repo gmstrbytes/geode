@@ -15,20 +15,20 @@
 
 package org.apache.geode.internal.cache.tier.sockets;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 
 import org.apache.geode.distributed.internal.tcpserver.TcpServer;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.test.junit.categories.MembershipTest;
 
-@Category(UnitTest.class)
+@Category({MembershipTest.class})
 public class TcpServerFactoryTest {
   @Test
   public void createsATcpServer() {
     TcpServerFactory factory = new TcpServerFactory();
-    TcpServer server = factory.makeTcpServer(80, null, null, null, null, null, null, null, null);
+    TcpServer server = factory.makeTcpServer(80, null, null, null, null, null, null, null);
     assertTrue(server != null);
   }
 }

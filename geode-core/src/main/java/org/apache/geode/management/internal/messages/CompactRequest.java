@@ -28,9 +28,10 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.CancelException;
 import org.apache.geode.DataSerializer;
+import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.cache.persistence.PersistentID;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.ReplyException;
@@ -40,7 +41,9 @@ import org.apache.geode.internal.admin.remote.AdminResponse;
 import org.apache.geode.internal.cache.DiskStoreImpl;
 import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * An instruction to all members with cache that they should compact their disk stores.
@@ -54,10 +57,11 @@ public class CompactRequest extends AdminRequest {
 
   private String diskStoreName;
 
+  @MakeNotStatic
   private static String notExecutedMembers;
 
-  public static Map<DistributedMember, PersistentID> send(DM dm, String diskStoreName,
-      Set<?> recipients) {
+  public static Map<DistributedMember, PersistentID> send(DistributionManager dm,
+      String diskStoreName, Set<? extends DistributedMember> recipients) {
     Map<DistributedMember, PersistentID> results = Collections.emptyMap();
 
     if (recipients != null && !recipients.isEmpty()) {
@@ -90,12 +94,12 @@ public class CompactRequest extends AdminRequest {
   }
 
   @Override
-  protected void process(DistributionManager dm) {
+  protected void process(ClusterDistributionManager dm) {
     super.process(dm);
   }
 
   @Override
-  protected AdminResponse createResponse(DM dm) {
+  protected AdminResponse createResponse(DistributionManager dm) {
     PersistentID compactedDiskStore = compactDiskStore(this.diskStoreName);
 
     return new CompactResponse(this.getSender(), compactedDiskStore);
@@ -118,19 +122,22 @@ public class CompactRequest extends AdminRequest {
     return notExecutedMembers;
   }
 
+  @Override
   public int getDSFID() {
     return MGMT_COMPACT_REQUEST;
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     this.diskStoreName = DataSerializer.readString(in);
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     DataSerializer.writeString(this.diskStoreName, out);
   }
 
@@ -144,7 +151,7 @@ public class CompactRequest extends AdminRequest {
     Map<DistributedMember, PersistentID> results =
         Collections.synchronizedMap(new HashMap<DistributedMember, PersistentID>());
 
-    public CompactReplyProcessor(DM dm, Collection<?> initMembers) {
+    public CompactReplyProcessor(DistributionManager dm, Collection<?> initMembers) {
       super(dm, initMembers);
     }
 

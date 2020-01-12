@@ -38,9 +38,9 @@ import org.apache.geode.cache.lucene.internal.directory.RegionDirectory;
 import org.apache.geode.cache.lucene.internal.filesystem.FileSystemStats;
 import org.apache.geode.cache.lucene.internal.repository.IndexRepositoryImpl;
 import org.apache.geode.cache.lucene.internal.repository.serializer.HeterogeneousLuceneSerializer;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.test.junit.categories.LuceneTest;
 
-@Category(UnitTest.class)
+@Category({LuceneTest.class})
 public class DistributedScoringJUnitTest {
 
   private String[] indexedFields = new String[] {"txt"};

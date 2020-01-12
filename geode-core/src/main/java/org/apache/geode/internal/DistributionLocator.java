@@ -23,13 +23,13 @@ import java.util.Properties;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.SystemFailure;
+import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.InternalLocator;
 import org.apache.geode.distributed.internal.tcpserver.TcpClient;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
+import org.apache.geode.logging.internal.executors.LoggingThread;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * This class is used to work with a managed VM that hosts a
@@ -58,8 +58,7 @@ public class DistributionLocator {
       int result = Integer.parseInt(portOption);
       if (result < 1 || result > 65535) {
         throw new IllegalArgumentException(
-            LocalizedStrings.DistributionLocator_THE_PORT_ARGUMENT_MUST_BE_GREATER_THAN_0_AND_LESS_THAN_65536
-                .toLocalizedString());
+            "The -port= argument must be greater than 0 and less than 65536.");
       } else {
         return result;
       }
@@ -75,7 +74,9 @@ public class DistributionLocator {
   }
 
 
+  @MakeNotStatic
   private static boolean shutdown = false;
+  @MakeNotStatic
   private static File lockFile = null;
   private static final File directory = (new File("")).getAbsoluteFile();
 
@@ -96,32 +97,27 @@ public class DistributionLocator {
         e.printStackTrace(); // What else to do?
       }
     }
-    logger.info(LocalizedStrings.DistributionLocator_LOCATOR_STOPPED);
+    logger.info("Locator stopped");
   }
 
   public static void main(String args[]) {
     if (args.length == 0 || args.length > 6) {
-      System.err.println(LocalizedStrings.DistributionLocator_USAGE.toLocalizedString()
-          + ": port [bind-address] [peerLocator] [serverLocator] [hostname-for-clients]");
+      System.err.println(
+          "Usage: port [bind-address] [peerLocator] [serverLocator] [hostname-for-clients]");
       System.err
-          .println(LocalizedStrings.DistributionLocator_A_ZEROLENGTH_ADDRESS_WILL_BIND_TO_LOCALHOST
-              .toLocalizedString());
+          .println("A zero-length address will bind to localhost");
       System.err.println(
-          LocalizedStrings.DistributionLocator_A_ZEROLENGTH_GEMFIREPROPERTIESFILE_WILL_MEAN_USE_THE_DEFAULT_SEARCH_PATH
-              .toLocalizedString());
+          "A zero-length gemfire-properties-file will mean use the default search path");
       System.err.println(
-          LocalizedStrings.DistributionLocator_PEERLOCATOR_AND_SERVERLOCATOR_BOTH_DEFAULT_TO_TRUE
-              .toLocalizedString());
+          "peerLocator and serverLocator both default to true");
       System.err.println(
-          LocalizedStrings.DistributionLocator_A_ZEROLENGTH_HOSTNAMEFORCLIENTS_WILL_DEFAULT_TO_BINDADDRESS
-              .toLocalizedString());
+          "A zero-length hostname-for-clients will default to bind-address");
       ExitCode.FATAL.doSystemExit();
     } else {
       shutdown = false;
     }
     SystemFailure.loadEmergencyClasses();
 
-    // log.info(Banner.getString(args));
     final int port = parsePort(args[0]);
     InetAddress address = null;
     boolean peerLocator = true;
@@ -131,8 +127,8 @@ public class DistributionLocator {
       if (args.length > 1 && !args[1].equals("")) {
         if (!SystemAdmin.validLocalAddress(args[1])) {
           System.err.println(
-              LocalizedStrings.DistributionLocator__0_IS_NOT_A_VALID_IP_ADDRESS_FOR_THIS_MACHINE
-                  .toLocalizedString(args[1]));
+              String.format("'%s' is not a valid IP address for this machine",
+                  args[1]));
           ExitCode.FATAL.doSystemExit();
         }
         address = InetAddress.getByName(args[1]);
@@ -151,15 +147,14 @@ public class DistributionLocator {
 
       if (!Boolean.getBoolean(InternalDistributedSystem.DISABLE_SHUTDOWN_HOOK_PROPERTY)) {
         final InetAddress faddress = address;
-        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
-          public void run() {
-            try {
-              DistributionLocator.shutdown(port, faddress);
-            } catch (IOException e) {
-              e.printStackTrace();
-            }
-          }
-        }));
+        Runtime.getRuntime()
+            .addShutdownHook(new LoggingThread("LocatorShutdownThread", false, () -> {
+              try {
+                DistributionLocator.shutdown(port, faddress);
+              } catch (IOException e) {
+                e.printStackTrace();
+              }
+            }));
       }
 
       lockFile = ManagerInfo.setLocatorStarting(directory, port, address);
@@ -182,14 +177,12 @@ public class DistributionLocator {
       // No big deal.
 
     } catch (java.net.BindException ex) {
-      logger.fatal(LocalizedMessage.create(
-          LocalizedStrings.DistributionLocator_COULD_NOT_BIND_LOCATOR_TO__0__1,
-          new Object[] {address, port}));
+      logger.fatal("Could not bind locator to {}[{}]",
+          new Object[] {address, port});
       ExitCode.FATAL.doSystemExit();
 
     } catch (Exception ex) {
-      logger.fatal(
-          LocalizedMessage.create(LocalizedStrings.DistributionLocator_COULD_NOT_START_LOCATOR),
+      logger.fatal("Could not start locator",
           ex);
       ExitCode.FATAL.doSystemExit();
     }

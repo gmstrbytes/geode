@@ -17,10 +17,9 @@ package org.apache.geode.management.internal.cli;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.shell.converters.ArrayConverter;
 import org.springframework.shell.core.CommandMarker;
 import org.springframework.shell.core.Completion;
@@ -29,6 +28,9 @@ import org.springframework.shell.core.Parser;
 import org.springframework.shell.core.SimpleParser;
 import org.springframework.shell.event.ParseResult;
 
+import org.apache.geode.management.cli.ConverterHint;
+import org.apache.geode.management.internal.cli.i18n.CliStrings;
+
 /**
  * Implementation of the {@link Parser} interface for GemFire SHell (gfsh) requirements.
  *
@@ -36,7 +38,7 @@ import org.springframework.shell.event.ParseResult;
  */
 public class GfshParser extends SimpleParser {
 
-  public static final String LINE_SEPARATOR = System.getProperty("line.separator");
+  public static final String LINE_SEPARATOR = System.lineSeparator();
   public static final String OPTION_VALUE_SPECIFIER = "=";
   public static final String OPTION_SEPARATOR = " ";
   public static final String SHORT_OPTION_SPECIFIER = "-";
@@ -48,11 +50,11 @@ public class GfshParser extends SimpleParser {
   public static final String J_ARGUMENT_DELIMITER = "" + ASCII_UNIT_SEPARATOR;
   public static final String J_OPTION_CONTEXT = "splittingRegex=" + J_ARGUMENT_DELIMITER;
 
-  // pattern used to split the user input with whitespaces except those in quotes (single or double)
-  private static Pattern PATTERN =
-      Pattern.compile("\\s*([^\\s']*)'([^']*)'\\s+|\\s*([^\\s\"]*)\"([^\"]*)\"\\s+|\\S+");
+  private final CommandManager commandManager;
 
   public GfshParser(CommandManager commandManager) {
+    this.commandManager = commandManager;
+
     for (CommandMarker command : commandManager.getCommandMarkers()) {
       add(command);
     }
@@ -71,20 +73,57 @@ public class GfshParser extends SimpleParser {
     return getSimpleParserInputFromTokens(inputTokens);
   }
 
-  static List<String> splitUserInput(String userInput) {
-    // make sure the userInput ends with a white space, because our regex expects the the quotes
-    // ends with at least one white space. We will trim the results after we found it.
-    userInput = userInput + " ";
-    // first split with whitespaces except in quotes
-    List<String> splitWithWhiteSpaces = new ArrayList<>();
-    Matcher m = PATTERN.matcher(userInput);
-    while (m.find()) {
-      splitWithWhiteSpaces.add(m.group().trim());
+  /**
+   * it's assumed that the quoted string should not have escaped quotes inside it.
+   */
+  private static List<String> splitWithWhiteSpace(String input) {
+    List<String> tokensList = new ArrayList<>();
+    StringBuilder token = new StringBuilder();
+    char insideQuoteOf = Character.MIN_VALUE;
+
+    for (char c : input.toCharArray()) {
+      if (Character.isWhitespace(c)) {
+        // if we are in the quotes
+        if (insideQuoteOf != Character.MIN_VALUE) {
+          token.append(c);
+        }
+        // if we are not in the quotes, terminate this token and add it to the list
+        else {
+          if (token.length() > 0) {
+            tokensList.add(token.toString());
+          }
+          token = new StringBuilder();
+        }
+      }
+      // not a white space
+      else {
+        token.append(c);
+        // if encountering a quote
+        if (c == '\'' || c == '\"') {
+          // if this is the beginning of quote
+          if (insideQuoteOf == Character.MIN_VALUE) {
+            insideQuoteOf = c;
+          }
+          // this is the ending of quote
+          else if (insideQuoteOf == c) {
+            insideQuoteOf = Character.MIN_VALUE;
+          }
+        }
+      }
     }
+    if (token.length() > 0) {
+      tokensList.add(token.toString());
+    }
+    return tokensList;
+  }
+
+  static List<String> splitUserInput(String userInput) {
+    // first split with whitespaces except in quotes
+    List<String> splitWithWhiteSpaces = splitWithWhiteSpace(userInput);
 
     List<String> furtherSplitWithEquals = new ArrayList<>();
     for (String token : splitWithWhiteSpaces) {
-      // if this token has equal sign, split around the first occurrance of it
+      // if this token has equal sign, split around the first occurrence of it
       int indexOfFirstEqual = token.indexOf('=');
       if (indexOfFirstEqual < 0) {
         furtherSplitWithEquals.add(token);
@@ -134,7 +173,7 @@ public class GfshParser extends SimpleParser {
     }
 
     // concatenate the remaining tokens with space
-    StringBuffer rawInput = new StringBuffer();
+    StringBuilder rawInput = new StringBuilder();
     // firstJIndex must be less than or equal to the length of the inputToken
     for (int i = 0; i <= inputTokens.size(); i++) {
       // stick the --J arguments in the orginal first --J position
@@ -168,6 +207,12 @@ public class GfshParser extends SimpleParser {
     ParseResult result = super.parse(rawInput);
 
     if (result == null) {
+      // do a quick check for required arguments, since SimpleParser unhelpfully suggests everything
+      String missingHelp = commandManager.getHelper().getMiniHelp(userInput);
+      if (missingHelp != null) {
+        System.out.println(missingHelp);
+      }
+
       return null;
     }
 
@@ -186,9 +231,7 @@ public class GfshParser extends SimpleParser {
    *
    * With these limitations, we will need to overwrite this command with some customization
    *
-   * @param userInput
    * @param cursor this input is ignored, we always move the cursor to the end of the userInput
-   * @param candidates
    * @return the cursor point at which the candidate string will begin, this is important if you
    *         have only one candidate, cause tabbing will use it to complete the string for you.
    */
@@ -196,7 +239,6 @@ public class GfshParser extends SimpleParser {
   @Override
   public int completeAdvanced(String userInput, int cursor, final List<Completion> candidates) {
     // move the cursor to the end of the input
-    cursor = userInput.length();
     List<String> inputTokens = splitUserInput(userInput);
 
     // check if the input is before any option is specified, e.g. (start, describe)
@@ -210,6 +252,18 @@ public class GfshParser extends SimpleParser {
 
     // in the case of we are still trying to complete the command name
     if (inputIsBeforeOption) {
+      // workaround for SimpleParser bugs with "" option key, and spaces in option values
+      int curs =
+          completeSpecial(candidates, userInput, inputTokens, CliStrings.HELP, ConverterHint.HELP);
+      if (curs > 0) {
+        return curs;
+      }
+      curs =
+          completeSpecial(candidates, userInput, inputTokens, CliStrings.HINT, ConverterHint.HINT);
+      if (curs > 0) {
+        return curs;
+      }
+
       List<Completion> potentials = getCandidates(userInput);
       if (potentials.size() == 1 && potentials.get(0).getValue().equals(userInput)) {
         potentials = getCandidates(userInput.trim() + " ");
@@ -277,6 +331,40 @@ public class GfshParser extends SimpleParser {
     // between userInput and the converted input
     cursor = candidateBeginAt + (userInput.trim().length() - buffer.length());
     return cursor;
+  }
+
+  /**
+   * gets a specific String converter from the list of registered converters
+   */
+  private Converter<?> converterFor(String converterHint) {
+    for (Converter<?> candidate : getConverters()) {
+      if (candidate.supports(String.class, converterHint)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * uses a specific converter directly, bypassing the need to find it by the command's options
+   */
+  private int completeSpecial(List<Completion> candidates, String userInput,
+      List<String> inputTokens, String cmd,
+      String converterHint) {
+    if (inputTokens.get(0).equals(cmd)) {
+      String prefix = userInput.equals(cmd) ? " " : "";
+      String existing = String.join(" ", inputTokens.subList(1, inputTokens.size())).toLowerCase();
+      List<Completion> all = new ArrayList<>();
+      Converter<?> converter = converterFor(converterHint);
+      if (converter != null) {
+        converter.getAllPossibleValues(all, null, null, null, null);
+        candidates.addAll(all.stream().filter(c -> c.getValue().toLowerCase().startsWith(existing))
+            .map(c -> new Completion(prefix + c.getValue()))
+            .collect(Collectors.toList()));
+        return Math.min(userInput.length(), cmd.length() + 1);
+      }
+    }
+    return 0;
   }
 
   /**

@@ -22,22 +22,19 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 
-import org.apache.geode.distributed.internal.DistributionManager;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.internal.cache.DistributedCacheOperation.CacheOperationMessage;
-import org.apache.geode.test.junit.categories.UnitTest;
 
-@Category(UnitTest.class)
 public class CacheOperationMessageTest {
 
   @Test
   public void shouldBeMockable() throws Exception {
     CacheOperationMessage mockCacheOperationMessage = mock(CacheOperationMessage.class);
-    DistributionManager mockDistributionManager = mock(DistributionManager.class);
+    ClusterDistributionManager mockDistributionManager = mock(ClusterDistributionManager.class);
 
     when(mockCacheOperationMessage.supportsDirectAck()).thenReturn(true);
-    when(mockCacheOperationMessage._mayAddToMultipleSerialGateways(eq(mockDistributionManager)))
+    when(mockCacheOperationMessage.notifiesSerialGatewaySender(eq(mockDistributionManager)))
         .thenReturn(true);
 
     mockCacheOperationMessage.process(mockDistributionManager);
@@ -45,7 +42,7 @@ public class CacheOperationMessageTest {
     verify(mockCacheOperationMessage, times(1)).process(mockDistributionManager);
 
     assertThat(mockCacheOperationMessage.supportsDirectAck()).isTrue();
-    assertThat(mockCacheOperationMessage._mayAddToMultipleSerialGateways(mockDistributionManager))
+    assertThat(mockCacheOperationMessage.notifiesSerialGatewaySender(mockDistributionManager))
         .isTrue();
   }
 }

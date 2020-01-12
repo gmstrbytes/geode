@@ -47,11 +47,12 @@ public interface PdxInstance extends java.io.Serializable {
 
   /**
    * Return the full name of the class that this pdx instance represents.
+   * An empty string will be returned if no class is associated with this instance.
    *
    * @return the name of the class that this pdx instance represents.
    * @since GemFire 6.6.2
    */
-  public String getClassName();
+  String getClassName();
 
   /**
    * Returns true if this instance represents an enum. Enum's have a String field named "name" and
@@ -60,15 +61,16 @@ public interface PdxInstance extends java.io.Serializable {
    *
    * @return true if this instance represents an enum.
    */
-  public boolean isEnum();
+  boolean isEnum();
 
   /**
    * Deserializes and returns the domain object that this instance represents.
+   * If this instance is one that never deserializes then getObject returns "this".
    *
-   * @return the deserialized domain object.
+   * @return the deserialized domain object or "this" if this instance never deserializes
    * @throws PdxSerializationException if the instance could not be deserialized
    */
-  public Object getObject();
+  Object getObject();
 
   /**
    * Checks if the named field exists and returns the result.
@@ -78,14 +80,14 @@ public interface PdxInstance extends java.io.Serializable {
    * @param fieldName the name of the field to check
    * @return <code>true</code> if the named field exists; otherwise <code>false</code>
    */
-  public boolean hasField(String fieldName);
+  boolean hasField(String fieldName);
 
   /**
    * Return an unmodifiable list of the field names on this PdxInstance.
    *
    * @return an unmodifiable list of the field names on this PdxInstance
    */
-  public List<String> getFieldNames();
+  List<String> getFieldNames();
 
   /**
    * Checks if the named field was {@link PdxWriter#markIdentityField(String) marked} as an identity
@@ -98,7 +100,7 @@ public interface PdxInstance extends java.io.Serializable {
    * @return <code>true</code> if the named field exists and was marked as an identify field;
    *         otherwise <code>false</code>
    */
-  public boolean isIdentityField(String fieldName);
+  boolean isIdentityField(String fieldName);
 
   /**
    * Reads the named field and returns its value. If the field does not exist <code>null</code> is
@@ -118,7 +120,7 @@ public interface PdxInstance extends java.io.Serializable {
    *         <code>null</code> is returned.
    * @throws PdxSerializationException if the field could not be deserialized
    */
-  public Object getField(String fieldName);
+  Object getField(String fieldName);
 
   /**
    * Returns true if the given object is equals to this instance.
@@ -132,8 +134,10 @@ public interface PdxInstance extends java.io.Serializable {
    * <li>The domain class name must be equal for both PdxInstances
    * <li>Each identity field must be equal.
    * </ol>
-   * If one of the instances does not have a field that the other one does then equals will assume
-   * it has the field with a default value. If a PdxInstance has marked identity fields using
+   * If the domain class is not the empty string then
+   * if one of the instances does not have a field that the other one does
+   * then equals will assume it has the field with a default value.
+   * If a PdxInstance has marked identity fields using
    * {@link PdxWriter#markIdentityField(String) markIdentityField} then only the marked identity
    * fields are its identity fields. Otherwise all its fields are identity fields.
    * <P>
@@ -166,7 +170,7 @@ public interface PdxInstance extends java.io.Serializable {
    * @param other the other instance to compare to this.
    * @return <code>true</code> if this instance is equal to <code>other</code>.
    */
-  public boolean equals(Object other);
+  boolean equals(Object other);
 
   /**
    * Generates a hashCode based on the identity fields of this PdxInstance.
@@ -190,7 +194,7 @@ public interface PdxInstance extends java.io.Serializable {
    * = hashCode*31 + Arrays.deepHashCode(field); } else { hashCode = hashCode*31 + field.hashCode();
    * } } if (hashCode == 0) { hashCode = 1; }
    */
-  public int hashCode();
+  int hashCode();
 
   /**
    * Prints out all of the identity fields of this PdxInstance.
@@ -199,7 +203,7 @@ public interface PdxInstance extends java.io.Serializable {
    * markIdentityField} then only the marked identity fields are its identity fields. Otherwise all
    * its fields are identity fields.
    */
-  public String toString();
+  String toString();
 
   /**
    * Creates and returns a {@link WritablePdxInstance} whose initial values are those of this
@@ -209,6 +213,21 @@ public interface PdxInstance extends java.io.Serializable {
    * @return a {@link WritablePdxInstance}
    * @throws IllegalStateException if the PdxInstance is an enum.
    */
-  public WritablePdxInstance createWriter();
+  WritablePdxInstance createWriter();
+
+
+  /**
+   * Returns false if this instance will never be deserialized to a domain class.
+   * Instances that never deserialize can be created using
+   * {@link PdxInstanceFactory#neverDeserialize} or by creating a factory with
+   * an empty string as the class name.
+   *
+   * @return false if this instance will never be deserialized to a domain class.
+   *
+   * @since Geode 1.9
+   */
+  default boolean isDeserializable() {
+    return false;
+  }
 
 }

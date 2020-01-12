@@ -14,26 +14,23 @@
  */
 package org.apache.geode.management.internal.cli.functions;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 
-import org.apache.geode.cache.execute.FunctionAdapter;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.internal.InternalLocator;
-import org.apache.geode.internal.InternalEntity;
-import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.internal.cache.InternalCache;
+import org.apache.geode.internal.cache.execute.InternalFunction;
 import org.apache.geode.management.internal.configuration.domain.SharedConfigurationStatus;
 
-public class FetchSharedConfigurationStatusFunction extends FunctionAdapter
-    implements InternalEntity {
+public class FetchSharedConfigurationStatusFunction implements InternalFunction {
 
   private static final long serialVersionUID = 1L;
 
   @Override
   public void execute(FunctionContext context) {
     InternalLocator locator = InternalLocator.getLocator();
-    InternalCache cache = GemFireCacheImpl.getInstance();
+    InternalCache cache = (InternalCache) context.getCache();
     DistributedMember member = cache.getDistributedSystem().getDistributedMember();
     SharedConfigurationStatus status = locator.getSharedConfigurationStatus().getStatus();
 
@@ -42,7 +39,7 @@ public class FetchSharedConfigurationStatusFunction extends FunctionAdapter
       memberId = member.getId();
     }
 
-    CliFunctionResult result = new CliFunctionResult(memberId, new String[] {status.name()});
+    CliFunctionResult result = new CliFunctionResult(memberId, status.name(), null);
     context.getResultSender().lastResult(result);
   }
 

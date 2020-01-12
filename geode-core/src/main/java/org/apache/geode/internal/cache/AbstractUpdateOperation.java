@@ -24,6 +24,7 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.InternalGemFireException;
 import org.apache.geode.InvalidVersionException;
+import org.apache.geode.annotations.internal.MutableForTesting;
 import org.apache.geode.cache.CacheEvent;
 import org.apache.geode.cache.CacheWriterException;
 import org.apache.geode.cache.DataPolicy;
@@ -31,15 +32,16 @@ import org.apache.geode.cache.EntryNotFoundException;
 import org.apache.geode.cache.RegionAttributes;
 import org.apache.geode.cache.Scope;
 import org.apache.geode.cache.TimeoutException;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DirectReplyProcessor;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.Version;
 import org.apache.geode.internal.cache.versions.ConcurrentCacheModificationException;
 import org.apache.geode.internal.cache.versions.VersionTag;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * Common code for both UpdateOperation and DistributedPutAllOperation.
@@ -48,6 +50,7 @@ import org.apache.geode.internal.logging.LogService;
 public abstract class AbstractUpdateOperation extends DistributedCacheOperation {
   private static final Logger logger = LogService.getLogger();
 
+  @MutableForTesting
   public static volatile boolean test_InvalidVersion;
 
   @edu.umd.cs.findbugs.annotations.SuppressWarnings(
@@ -72,7 +75,7 @@ public abstract class AbstractUpdateOperation extends DistributedCacheOperation 
     super.initMessage(msg, pr);
     AbstractUpdateMessage m = (AbstractUpdateMessage) msg;
     DistributedRegion region = getRegion();
-    DM mgr = region.getDistributionManager();
+    DistributionManager mgr = region.getDistributionManager();
     // [bruce] We might have to stop using cacheTimeMillis because it causes a skew between
     // lastModified and the version tag's timestamp
     m.lastModified = this.lastModifiedTime;
@@ -85,9 +88,10 @@ public abstract class AbstractUpdateOperation extends DistributedCacheOperation 
   private static boolean shouldDoRemoteCreate(LocalRegion rgn, EntryEventImpl ev) {
     DataPolicy dp = rgn.getAttributes().getDataPolicy();
     if (!rgn.isAllEvents() || (dp.withReplication() && rgn.isInitialized()
-        && ev.getOperation().isUpdate() && !rgn.concurrencyChecksEnabled // misordered CREATE and
-                                                                         // UPDATE messages can
-                                                                         // cause inconsistencies
+        && ev.getOperation().isUpdate() && !rgn.getConcurrencyChecksEnabled()
+        // misordered CREATE and
+        // UPDATE messages can
+        // cause inconsistencies
         && !ALWAYS_REPLICATE_UPDATES)) {
       // we are not accepting all events
       // or we are a replicate and initialized and it was an update
@@ -96,6 +100,25 @@ public abstract class AbstractUpdateOperation extends DistributedCacheOperation 
     } else {
       return true;
     }
+  }
+
+  private static boolean checkIfToUpdateAfterCreateFailed(LocalRegion rgn, EntryEventImpl ev) {
+    // Try to create is failed due to found the entry exist, double check if should update
+    boolean doUpdate = true;
+    if (ev.oldValueIsDestroyedToken()) {
+      if (rgn.getVersionVector() != null && ev.getVersionTag() != null) {
+        rgn.getVersionVector().recordVersion(
+            (InternalDistributedMember) ev.getDistributedMember(), ev.getVersionTag());
+      }
+      doUpdate = false;
+    }
+    if (ev.isConcurrencyConflict()) {
+      if (logger.isDebugEnabled()) {
+        logger.debug("basicUpdate failed with CME, not to retry:" + ev);
+      }
+      doUpdate = false;
+    }
+    return doUpdate;
   }
 
   /**
@@ -114,9 +137,9 @@ public abstract class AbstractUpdateOperation extends DistributedCacheOperation 
       boolean doUpdate = true; // start with assumption we have key and need value
       if (shouldDoRemoteCreate(rgn, ev)) {
         if (logger.isDebugEnabled()) {
-          logger.debug("doPutOrCreate: attempting to create entry");
+          logger.debug("doPutOrCreate: attempting to update or create entry");
         }
-        final long startPut = CachePerfStats.getStatTime();
+        final long startPut = rgn.getCachePerfStats().getTime();
         final boolean isBucket = rgn.isUsedForPartitionedRegionBucket();
         if (isBucket) {
           BucketRegion br = (BucketRegion) rgn;
@@ -134,13 +157,7 @@ public abstract class AbstractUpdateOperation extends DistributedCacheOperation 
             updated = true;
           } else { // already exists. If it was blocked by the DESTROYED token, then
             // do no update.
-            if (ev.oldValueIsDestroyedToken()) {
-              if (rgn.getVersionVector() != null && ev.getVersionTag() != null) {
-                rgn.getVersionVector().recordVersion(
-                    (InternalDistributedMember) ev.getDistributedMember(), ev.getVersionTag());
-              }
-              doUpdate = false;
-            }
+            doUpdate = checkIfToUpdateAfterCreateFailed(rgn, ev);
           }
         } finally {
           if (isBucket) {
@@ -154,7 +171,7 @@ public abstract class AbstractUpdateOperation extends DistributedCacheOperation 
       // from this message.
       if (doUpdate) {
         if (!ev.isLocalInvalid()) {
-          final long startPut = CachePerfStats.getStatTime();
+          final long startPut = rgn.getCachePerfStats().getTime();
           boolean overwriteDestroyed = ev.getOperation().isCreate();
           final boolean isBucket = rgn.isUsedForPartitionedRegionBucket();
           if (isBucket) {
@@ -171,10 +188,10 @@ public abstract class AbstractUpdateOperation extends DistributedCacheOperation 
               updated = true;
             } else { // key not here or blocked by DESTROYED token
               if (rgn.isUsedForPartitionedRegionBucket()
-                  || (rgn.dataPolicy.withReplication() && rgn.getConcurrencyChecksEnabled())) {
+                  || (rgn.getDataPolicy().withReplication() && rgn.getConcurrencyChecksEnabled())) {
                 overwriteDestroyed = true;
                 ev.makeCreate();
-                rgn.basicUpdate(ev, true /* ifNew */, false/* ifOld */, lastMod,
+                rgn.basicUpdate(ev, false /* ifNew */, false/* ifOld */, lastMod,
                     overwriteDestroyed);
                 rgn.getCachePerfStats().endPut(startPut, ev.isOriginRemote());
                 updated = true;
@@ -217,12 +234,10 @@ public abstract class AbstractUpdateOperation extends DistributedCacheOperation 
       }
       return true;
     } catch (CacheWriterException e) {
-      throw new Error(LocalizedStrings.AbstractUpdateOperation_CACHEWRITER_SHOULD_NOT_BE_CALLED
-          .toLocalizedString(), e);
+      throw new Error("CacheWriter should not be called", e);
     } catch (TimeoutException e) {
       throw new Error(
-          LocalizedStrings.AbstractUpdateOperation_DISTRIBUTEDLOCK_SHOULD_NOT_BE_ACQUIRED
-              .toLocalizedString(),
+          "DistributedLock should not be acquired",
           e);
     }
   }
@@ -231,11 +246,11 @@ public abstract class AbstractUpdateOperation extends DistributedCacheOperation 
     protected long lastModified;
 
     @Override
-    protected boolean operateOnRegion(CacheEvent event, DistributionManager dm)
+    protected boolean operateOnRegion(CacheEvent event, ClusterDistributionManager dm)
         throws EntryNotFoundException {
       EntryEventImpl ev = (EntryEventImpl) event;
-      DistributedRegion rgn = (DistributedRegion) ev.region;
-      DM mgr = dm;
+      DistributedRegion rgn = (DistributedRegion) ev.getRegion();
+      DistributionManager mgr = dm;
       boolean sendReply = true; // by default tell caller to send ack
 
       // if (!rgn.hasSeenEvent((InternalCacheEvent)event)) {
@@ -284,14 +299,16 @@ public abstract class AbstractUpdateOperation extends DistributedCacheOperation 
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.lastModified = in.readLong();
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       out.writeLong(this.lastModified);
     }
 
@@ -306,7 +323,7 @@ public abstract class AbstractUpdateOperation extends DistributedCacheOperation 
         }
 
         String msg =
-            LocalizedStrings.DistributedPutAllOperation_MISSING_VERSION.toLocalizedString(tag);
+            String.format("memberID cannot be null for persistent regions: %s", tag);
         RuntimeException ex = (sender.getVersionObject().compareTo(Version.GFE_80) < 0)
             ? new InternalGemFireException(msg) : new InvalidVersionException(msg);
         throw ex;
@@ -314,8 +331,8 @@ public abstract class AbstractUpdateOperation extends DistributedCacheOperation 
     }
 
     @Override
-    protected boolean mayAddToMultipleSerialGateways(DistributionManager dm) {
-      return _mayAddToMultipleSerialGateways(dm);
+    protected boolean mayNotifySerialGatewaySender(ClusterDistributionManager dm) {
+      return notifiesSerialGatewaySender(dm);
     }
   }
 }

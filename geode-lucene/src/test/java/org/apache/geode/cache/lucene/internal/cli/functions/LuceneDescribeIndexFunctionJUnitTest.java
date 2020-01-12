@@ -14,8 +14,11 @@
  */
 package org.apache.geode.cache.lucene.internal.cli.functions;
 
-import static org.junit.Assert.*;
-import static org.mockito.Mockito.*;
+import static org.junit.Assert.assertEquals;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -36,9 +39,9 @@ import org.apache.geode.cache.lucene.internal.cli.LuceneIndexDetails;
 import org.apache.geode.cache.lucene.internal.cli.LuceneIndexInfo;
 import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.test.fake.Fakes;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.test.junit.categories.LuceneTest;
 
-@Category(UnitTest.class)
+@Category({LuceneTest.class})
 
 public class LuceneDescribeIndexFunctionJUnitTest {
 

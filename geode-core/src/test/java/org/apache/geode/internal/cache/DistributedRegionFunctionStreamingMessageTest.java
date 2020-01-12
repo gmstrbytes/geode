@@ -20,19 +20,16 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 
-import org.apache.geode.distributed.internal.DistributionManager;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 
-@Category(UnitTest.class)
 public class DistributedRegionFunctionStreamingMessageTest {
 
   @Test
   public void shouldBeMockable() throws Exception {
     DistributedRegionFunctionStreamingMessage mockDistributedRegionFunctionStreamingMessage =
         mock(DistributedRegionFunctionStreamingMessage.class);
-    DistributionManager mockDistributionManager = mock(DistributionManager.class);
+    ClusterDistributionManager mockDistributionManager = mock(ClusterDistributionManager.class);
     DistributedRegion mockDistributedRegion = mock(DistributedRegion.class);
 
     when(mockDistributedRegionFunctionStreamingMessage

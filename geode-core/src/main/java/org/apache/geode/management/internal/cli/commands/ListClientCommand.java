@@ -24,39 +24,34 @@ import javax.management.ObjectName;
 
 import org.springframework.shell.core.annotation.CliCommand;
 
-import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.management.CacheServerMXBean;
 import org.apache.geode.management.ManagementService;
 import org.apache.geode.management.cli.CliMetaData;
-import org.apache.geode.management.cli.Result;
+import org.apache.geode.management.cli.GfshCommand;
 import org.apache.geode.management.internal.cli.LogWrapper;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.cli.result.CompositeResultData;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
-import org.apache.geode.management.internal.cli.result.TabularResultData;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
+import org.apache.geode.management.internal.cli.result.model.TabularResultModel;
 import org.apache.geode.management.internal.security.ResourceOperation;
 import org.apache.geode.security.ResourcePermission;
 
-public class ListClientCommand implements GfshCommand {
+public class ListClientCommand extends GfshCommand {
   @CliCommand(value = CliStrings.LIST_CLIENTS, help = CliStrings.LIST_CLIENT__HELP)
   @CliMetaData(relatedTopic = {CliStrings.TOPIC_CLIENT})
   @ResourceOperation(resource = ResourcePermission.Resource.CLUSTER,
       operation = ResourcePermission.Operation.READ)
-  public Result listClient() throws Exception {
-    Result result;
-    CompositeResultData compositeResultData = ResultBuilder.createCompositeResultData();
-    CompositeResultData.SectionResultData section = compositeResultData.addSection("section1");
+  public ResultModel listClient() throws Exception {
+    ResultModel result = new ResultModel();
 
-    TabularResultData resultTable = section.addTable("TableForClientList");
-    String headerText = "ClientList";
-    resultTable = resultTable.setHeader(headerText);
+    TabularResultModel resultTable = result.addTable("clientList");
+    String headerText = "Client List";
+    resultTable.setHeader(headerText);
 
-    InternalCache cache = getCache();
-    ManagementService service = ManagementService.getExistingManagementService(cache);
+    ManagementService service = getManagementService();
     ObjectName[] cacheServers = service.getDistributedSystemMXBean().listCacheServerObjectNames();
 
     if (cacheServers.length == 0) {
-      return ResultBuilder.createGemFireErrorResult(
+      return ResultModel.createInfo(
           CliStrings.format(CliStrings.LIST_CLIENT_COULD_NOT_RETRIEVE_SERVER_LIST));
     }
 
@@ -86,7 +81,7 @@ public class ListClientCommand implements GfshCommand {
     }
 
     if (clientServerMap.size() == 0) {
-      return ResultBuilder.createGemFireErrorResult(
+      return ResultModel.createInfo(
           CliStrings.format(CliStrings.LIST_COULD_NOT_RETRIEVE_CLIENT_LIST));
     }
 
@@ -108,11 +103,8 @@ public class ListClientCommand implements GfshCommand {
       resultTable.accumulate(CliStrings.LIST_CLIENT_COLUMN_Clients, client);
       resultTable.accumulate(CliStrings.LIST_CLIENT_COLUMN_SERVERS, serverListForClient.toString());
     }
-    result = ResultBuilder.buildResult(compositeResultData);
 
-
-
-    LogWrapper.getInstance().info("list client result " + result);
+    LogWrapper.getInstance(getCache()).info("list client result " + result);
 
     return result;
   }

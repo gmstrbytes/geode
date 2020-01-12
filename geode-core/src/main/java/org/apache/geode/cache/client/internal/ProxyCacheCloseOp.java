@@ -21,10 +21,10 @@ import org.apache.geode.cache.client.ServerConnectivityException;
 import org.apache.geode.cache.client.ServerOperationException;
 import org.apache.geode.distributed.internal.ServerLocation;
 import org.apache.geode.internal.HeapDataOutputStream;
-import org.apache.geode.internal.Version;
 import org.apache.geode.internal.cache.tier.MessageType;
 import org.apache.geode.internal.cache.tier.sockets.Message;
 import org.apache.geode.internal.cache.tier.sockets.Part;
+import org.apache.geode.internal.serialization.Version;
 
 public class ProxyCacheCloseOp {
 
@@ -64,7 +64,7 @@ public class ProxyCacheCloseOp {
       }
       hdos.writeLong((Long) userId);
       try {
-        secureBytes = ((ConnectionImpl) cnx).getHandShake().encryptBytes(hdos.toByteArray());
+        secureBytes = ((ConnectionImpl) cnx).encryptBytes(hdos.toByteArray());
       } finally {
         hdos.close();
       }
@@ -83,7 +83,6 @@ public class ProxyCacheCloseOp {
         throw new ServerOperationException(s, (Throwable) part.getObject());
         // Get the exception toString part.
         // This was added for c++ thin client and not used in java
-        // Part exceptionToStringPart = msg.getPart(1);
       } else if (isErrorResponse(msgType)) {
         throw new ServerOperationException(part.getString());
       } else {

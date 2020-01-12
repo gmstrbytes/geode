@@ -17,29 +17,32 @@ package org.apache.geode.management.internal.cli.shell;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
+import org.mockito.Mockito;
 import org.springframework.shell.core.CommandMarker;
 
 import org.apache.geode.management.cli.CliMetaData;
 import org.apache.geode.management.cli.Result;
+import org.apache.geode.management.internal.cli.AbstractCliAroundInterceptor;
 import org.apache.geode.management.internal.cli.CommandRequest;
-import org.apache.geode.management.internal.cli.CommandResponseBuilder;
 import org.apache.geode.management.internal.cli.GfshParseResult;
-import org.apache.geode.management.internal.cli.result.CommandResult;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.management.internal.cli.LogWrapper;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 
 /**
  * GfshExecutionStrategyTest - Includes tests to for GfshExecutionStrategyTest
  */
-@Category(UnitTest.class)
 public class GfshExecutionStrategyTest {
-  private static final String COMMAND1_SUCESS = "Command1 Executed successfully";
-  private static final String COMMAND2_SUCESS = "Command2 Executed successfully";
+  private static final String COMMAND1_SUCCESS = "Command1 Executed successfully";
+  private static final String COMMAND2_SUCCESS = "Command2 Executed successfully";
+  private static final String COMMAND3_SUCCESS = "Command3 Executed successfully";
+  private static final String COMMAND4_SUCCESS = "Command4 Executed successfully";
+
+  private static final String AFTER_INTERCEPTION_MESSAGE = "After Interception";
 
   private Gfsh gfsh;
   private GfshParseResult parsedCommand;
@@ -48,6 +51,7 @@ public class GfshExecutionStrategyTest {
   @Before
   public void before() {
     gfsh = mock(Gfsh.class);
+    when(gfsh.getGfshFileLogger()).thenReturn(LogWrapper.getInstance(null));
     parsedCommand = mock(GfshParseResult.class);
     gfshExecutionStrategy = new GfshExecutionStrategy(gfsh);
   }
@@ -60,7 +64,15 @@ public class GfshExecutionStrategyTest {
     when(parsedCommand.getMethod()).thenReturn(Commands.class.getDeclaredMethod("offlineCommand"));
     when(parsedCommand.getInstance()).thenReturn(new Commands());
     Result result = (Result) gfshExecutionStrategy.execute(parsedCommand);
-    assertThat(result.nextLine().trim()).isEqualTo(COMMAND1_SUCESS);
+    assertThat(result.nextLine().trim()).isEqualTo(COMMAND1_SUCCESS);
+  }
+
+  @Test
+  public void testOfflineCommandThatReturnsResultModel() throws NoSuchMethodException {
+    when(parsedCommand.getMethod()).thenReturn(Commands.class.getDeclaredMethod("offlineCommand2"));
+    when(parsedCommand.getInstance()).thenReturn(new Commands());
+    Result result = (Result) gfshExecutionStrategy.execute(parsedCommand);
+    assertThat(result.nextLine().trim()).isEqualTo(COMMAND3_SUCCESS);
   }
 
   /**
@@ -82,13 +94,29 @@ public class GfshExecutionStrategyTest {
     when(gfsh.isConnectedAndReady()).thenReturn(true);
     OperationInvoker invoker = mock(OperationInvoker.class);
 
-    Result offLineResult = new Commands().onlineCommand();
-    String jsonResult = CommandResponseBuilder.createCommandResponseJson("memberName",
-        (CommandResult) offLineResult);
+    ResultModel offLineResult = new Commands().onlineCommand();
+    String jsonResult = offLineResult.toJson();
     when(invoker.processCommand(any(CommandRequest.class))).thenReturn(jsonResult);
     when(gfsh.getOperationInvoker()).thenReturn(invoker);
     Result result = (Result) gfshExecutionStrategy.execute(parsedCommand);
-    assertThat(result.nextLine().trim()).isEqualTo(COMMAND2_SUCESS);
+    assertThat(result.nextLine().trim()).isEqualTo(COMMAND2_SUCCESS);
+  }
+
+  @Test
+  public void resolveInterceptorClassName() throws Exception {
+    when(parsedCommand.getMethod())
+        .thenReturn(Commands.class.getDeclaredMethod("interceptedCommand"));
+    when(parsedCommand.getInstance()).thenReturn(new Commands());
+    when(gfsh.isConnectedAndReady()).thenReturn(true);
+    OperationInvoker invoker = mock(OperationInvoker.class);
+
+    ResultModel interceptedResult = new Commands().interceptedCommand();
+    String jsonResult = interceptedResult.toJson();
+    when(invoker.processCommand(any(CommandRequest.class))).thenReturn(jsonResult);
+    when(gfsh.getOperationInvoker()).thenReturn(invoker);
+    Result result = (Result) gfshExecutionStrategy.execute(parsedCommand);
+    assertThat(result.nextLine().trim()).isEqualTo(COMMAND4_SUCCESS);
+    Mockito.verify(parsedCommand, times(1)).setUserInput(AFTER_INTERCEPTION_MESSAGE);
   }
 
   /**
@@ -96,13 +124,37 @@ public class GfshExecutionStrategyTest {
    */
   public static class Commands implements CommandMarker {
     @CliMetaData(shellOnly = true)
-    public Result offlineCommand() {
-      return ResultBuilder.createInfoResult(COMMAND1_SUCESS);
+    public ResultModel offlineCommand() {
+      return ResultModel.createInfo(COMMAND1_SUCCESS);
+    }
+
+    @CliMetaData(shellOnly = true)
+    public ResultModel offlineCommand2() {
+      return ResultModel.createInfo(COMMAND3_SUCCESS);
     }
 
     @CliMetaData(shellOnly = false)
-    public Result onlineCommand() {
-      return ResultBuilder.createInfoResult(COMMAND2_SUCESS);
+    public ResultModel onlineCommand() {
+      return ResultModel.createInfo(COMMAND2_SUCCESS);
+    }
+
+    @CliMetaData(shellOnly = false,
+        interceptor = "org.apache.geode.management.internal.cli.shell.GfshExecutionStrategyTest$TestInterceptor")
+    public ResultModel interceptedCommand() {
+      return ResultModel.createInfo(COMMAND4_SUCCESS);
+    }
+  }
+
+  /*
+   * Test interceptor for use in the interceptedCommand
+   */
+  public static class TestInterceptor extends AbstractCliAroundInterceptor {
+
+    @Override
+    public ResultModel preExecution(GfshParseResult parseResult) {
+
+      parseResult.setUserInput(AFTER_INTERCEPTION_MESSAGE);
+      return ResultModel.createInfo("Interceptor Result");
     }
   }
 }

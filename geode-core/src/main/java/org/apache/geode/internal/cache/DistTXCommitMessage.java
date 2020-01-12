@@ -34,7 +34,7 @@ import org.apache.geode.cache.CommitIncompleteException;
 import org.apache.geode.cache.RegionDestroyedException;
 import org.apache.geode.cache.UnsupportedOperationInTransactionException;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.ReplyException;
@@ -43,10 +43,12 @@ import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.ReplySender;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.Assert;
+import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.cache.TXEntryState.DistTxThinEntryState;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 public class DistTXCommitMessage extends TXMessage {
 
@@ -68,7 +70,8 @@ public class DistTXCommitMessage extends TXMessage {
   }
 
   @Override
-  protected boolean operateOnTx(TXId txId, DistributionManager dm) throws RemoteOperationException {
+  protected boolean operateOnTx(TXId txId, ClusterDistributionManager dm)
+      throws RemoteOperationException {
     if (logger.isDebugEnabled()) {
       logger.debug("DistTXCommitMessage.operateOnTx: Tx {}", txId);
     }
@@ -76,17 +79,16 @@ public class DistTXCommitMessage extends TXMessage {
     InternalCache cache = dm.getCache();
     TXManagerImpl txMgr = cache.getTXMgr();
     final TXStateProxy txStateProxy = txMgr.getTXState();
-    TXCommitMessage cmsg = null;
+    TXCommitMessage commitMessage = txMgr.getRecentlyCompletedMessage(txId);
     try {
       // do the actual commit, only if it was not done before
-      if (txMgr.isHostedTxRecentlyCompleted(txId)) {
+      if (commitMessage != null) {
         if (logger.isDebugEnabled()) {
           logger.debug(
               "DistTXCommitMessage.operateOnTx: found a previously committed transaction:{}", txId);
         }
-        cmsg = txMgr.getRecentlyCompletedMessage(txId);
-        if (txMgr.isExceptionToken(cmsg)) {
-          throw txMgr.getExceptionForToken(cmsg, txId);
+        if (txMgr.isExceptionToken(commitMessage)) {
+          throw txMgr.getExceptionForToken(commitMessage, txId);
         }
       } else {
         // [DISTTX] TODO - Handle scenarios of no txState
@@ -100,7 +102,7 @@ public class DistTXCommitMessage extends TXMessage {
            */
           if (!txStateProxy.isDistTx() || txStateProxy.isCreatedOnDistTxCoordinator()) {
             throw new UnsupportedOperationInTransactionException(
-                LocalizedStrings.DISTTX_TX_EXPECTED.toLocalizedString(
+                String.format("Expected %s during a distributed transaction but got %s",
                     "DistTXStateProxyImplOnDatanode", txStateProxy.getClass().getSimpleName()));
           }
           if (logger.isDebugEnabled()) {
@@ -125,13 +127,13 @@ public class DistTXCommitMessage extends TXMessage {
 
           txMgr.commit();
 
-          cmsg = txStateProxy.getCommitMessage();
+          commitMessage = txStateProxy.getCommitMessage();
         }
       }
     } finally {
       txMgr.removeHostedTXState(txId);
     }
-    DistTXCommitReplyMessage.send(getSender(), getProcessorId(), cmsg, getReplySender(dm));
+    DistTXCommitReplyMessage.send(getSender(), getProcessorId(), commitMessage, getReplySender(dm));
 
     /*
      * return false so there isn't another reply
@@ -141,14 +143,16 @@ public class DistTXCommitMessage extends TXMessage {
 
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     this.entryStateList = DataSerializer.readArrayList(in);
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     DataSerializer.writeArrayList(entryStateList, out);
   }
 
@@ -180,7 +184,7 @@ public class DistTXCommitMessage extends TXMessage {
     public DistTXCommitReplyMessage() {}
 
     public DistTXCommitReplyMessage(DataInput in) throws IOException, ClassNotFoundException {
-      fromData(in);
+      fromData(in, InternalDataSerializer.createDeserializationContext(in));
     }
 
     private DistTXCommitReplyMessage(int processorId, TXCommitMessage val) {
@@ -218,17 +222,18 @@ public class DistTXCommitMessage extends TXMessage {
      * @param dm the distribution manager that is processing the message.
      */
     @Override
-    public void process(final DM dm, ReplyProcessor21 processor) {
+    public void process(final DistributionManager dm, ReplyProcessor21 processor) {
       final long startTime = getTimestamp();
-      if (logger.isTraceEnabled(LogMarker.DM)) {
-        logger.trace(LogMarker.DM,
+      if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+        logger.trace(LogMarker.DM_VERBOSE,
             "DistTXCommitPhaseTwoReplyMessage process invoking reply processor with processorId:{}",
             this.processorId);
       }
 
       if (processor == null) {
-        if (logger.isTraceEnabled(LogMarker.DM)) {
-          logger.trace(LogMarker.DM, "DistTXCommitPhaseTwoReplyMessage processor not found");
+        if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+          logger.trace(LogMarker.DM_VERBOSE,
+              "DistTXCommitPhaseTwoReplyMessage processor not found");
         }
         return;
       }
@@ -241,14 +246,16 @@ public class DistTXCommitMessage extends TXMessage {
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       DataSerializer.writeObject(commitMessage, out);
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.commitMessage = (TXCommitMessage) DataSerializer.readObject(in);
     }
 
@@ -279,7 +286,7 @@ public class DistTXCommitMessage extends TXMessage {
     private Map<DistributedMember, TXCommitMessage> commitResponseMap;
     private transient TXId txIdent = null;
 
-    public DistTxCommitReplyProcessor(TXId txUniqId, DM dm, Set initMembers,
+    public DistTxCommitReplyProcessor(TXId txUniqId, DistributionManager dm, Set initMembers,
         HashMap<DistributedMember, DistTXCoordinatorInterface> msgMap) {
       super(dm, initMembers);
       this.msgMap = msgMap;

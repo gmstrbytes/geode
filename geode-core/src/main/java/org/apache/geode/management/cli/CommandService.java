@@ -17,10 +17,11 @@ package org.apache.geode.management.cli;
 import java.util.Collections;
 import java.util.Map;
 
+import org.apache.geode.annotations.Immutable;
+import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.CacheClosedException;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.i18n.LocalizedStrings;
 import org.apache.geode.management.DependenciesNotFoundException;
 import org.apache.geode.management.internal.cli.CliUtil;
 import org.apache.geode.management.internal.cli.remote.MemberCommandService;
@@ -37,8 +38,10 @@ import org.apache.geode.management.internal.cli.remote.MemberCommandService;
  * @deprecated since 1.3 use OnlineCommandProcessor directly
  */
 public abstract class CommandService {
+  @Immutable
   protected static final Map<String, String> EMPTY_ENV = Collections.emptyMap();
 
+  @MakeNotStatic
   private static CommandService localCommandService;
 
   /* ************* Methods to be implemented by sub-classes START *********** */
@@ -112,17 +115,20 @@ public abstract class CommandService {
    */
   public static CommandService createLocalCommandService(Cache cache)
       throws CommandServiceException {
-    if (cache == null || cache.isClosed()) {
-      throw new CacheClosedException(
-          "Can not create command service as cache doesn't exist or cache is closed.");
+    if (cache == null) {
+      throw new CacheClosedException("Can not create command service as cache doesn't exist.");
+    } else if (cache.isClosed()) {
+      throw ((InternalCache) cache)
+          .getCacheClosedException("Can not create command service as cache is closed.");
     }
 
     if (localCommandService == null || !localCommandService.isUsable()) {
       String nonExistingDependency = CliUtil.cliDependenciesExist(false);
       if (nonExistingDependency != null) {
         throw new DependenciesNotFoundException(
-            LocalizedStrings.CommandServiceManager_COULD_NOT_FIND__0__LIB_NEEDED_FOR_CLI_GFSH
-                .toLocalizedString(nonExistingDependency));
+            String.format(
+                "Could not find %s library which is needed for CLI/gfsh in classpath. Internal support for CLI & gfsh is not enabled. Note: For convenience, absolute path of gfsh-dependencies.jar from lib directory of GemFire product distribution can be included in CLASSPATH of an application.",
+                nonExistingDependency));
       }
 
       localCommandService = new MemberCommandService((InternalCache) cache);

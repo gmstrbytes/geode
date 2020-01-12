@@ -18,13 +18,13 @@ import java.util.Set;
 
 import org.apache.logging.log4j.Logger;
 
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.ReplyMessage;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.logging.LogService;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * Processes the replies from a LatestLastAccessTimeMessage. This reply processor only keeps the
@@ -37,7 +37,8 @@ public class LatestLastAccessTimeReplyProcessor extends ReplyProcessor21 {
 
   private long latestLastAccessTime = 0;
 
-  public LatestLastAccessTimeReplyProcessor(DM dm, Set<InternalDistributedMember> recipients) {
+  public LatestLastAccessTimeReplyProcessor(DistributionManager dm,
+      Set<InternalDistributedMember> recipients) {
     super(dm, recipients);
   }
 
@@ -47,8 +48,8 @@ public class LatestLastAccessTimeReplyProcessor extends ReplyProcessor21 {
       ReplyMessage reply = (ReplyMessage) msg;
       long replyTime = (long) reply.getReturnValue();
       updateLatestLastAccessTime(replyTime);
-      if (logger.isTraceEnabled(LogMarker.DM)) {
-        logger.trace(LogMarker.DM, "LatestLastAccessTimeReplyMessage return value is {}",
+      if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+        logger.trace(LogMarker.DM_VERBOSE, "LatestLastAccessTimeReplyMessage return value is {}",
             replyTime);
       }
     } finally {

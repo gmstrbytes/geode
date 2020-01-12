@@ -53,9 +53,8 @@ public interface ResultSender<T> {
    * Sends a result back to the FunctionService calling thread and invokes
    * {@link ResultCollector#addResult(org.apache.geode.distributed.DistributedMember, Object)}.
    *
-   * @param oneResult
    */
-  public void sendResult(T oneResult);
+  void sendResult(T oneResult);
 
   /**
    * Sends a result back to the FunctionService calling thread and invokes
@@ -68,7 +67,7 @@ public interface ResultSender<T> {
    *
    * @see ResultCollector#endResults()
    */
-  public void lastResult(T lastResult);
+  void lastResult(T lastResult);
 
   /**
    * Sends an Exception back to the FunctionService calling thread. sendException adds exception to
@@ -76,10 +75,9 @@ public interface ResultSender<T> {
    * will not throw exception but will have exception as a part of results received. Calling
    * sendException will act as a lastResult.
    *
-   * @param t
    *
    * @see #lastResult(Object)
    * @since GemFire 6.3
    */
-  public void sendException(Throwable t);
+  void sendException(Throwable t);
 }

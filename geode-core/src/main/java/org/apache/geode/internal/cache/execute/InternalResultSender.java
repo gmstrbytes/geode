@@ -16,17 +16,13 @@ package org.apache.geode.internal.cache.execute;
 
 import org.apache.geode.cache.execute.ResultSender;
 
-/**
- *
- *
- */
 public interface InternalResultSender extends ResultSender<Object> {
 
-  public void enableOrderedResultStreming(boolean enable);
+  void enableOrderedResultStreming(boolean enable);
 
-  public boolean isLocallyExecuted();
+  boolean isLocallyExecuted();
 
-  public boolean isLastResultReceived();
+  boolean isLastResultReceived();
 
-  public void setException(Throwable t);
+  void setException(Throwable t);
 }

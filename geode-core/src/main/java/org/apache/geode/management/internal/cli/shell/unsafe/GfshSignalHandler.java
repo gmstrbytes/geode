@@ -14,15 +14,18 @@
  */
 package org.apache.geode.management.internal.cli.shell.unsafe;
 
+import java.io.IOException;
 import java.util.Collections;
 import java.util.Hashtable;
 import java.util.Map;
 
-import sun.misc.SignalHandler;
+import jline.console.ConsoleReader;
 
 import org.apache.geode.internal.process.signal.AbstractSignalNotificationHandler;
 import org.apache.geode.internal.process.signal.Signal;
 import org.apache.geode.internal.process.signal.SignalEvent;
+import org.apache.geode.management.internal.cli.shell.Gfsh;
+import org.apache.geode.unsafe.internal.sun.misc.SignalHandler;
 
 /**
  * This class externalizes signal handling in order to make the GemFire build process a bit cleaner
@@ -38,28 +41,38 @@ import org.apache.geode.internal.process.signal.SignalEvent;
 public class GfshSignalHandler extends AbstractSignalNotificationHandler implements SignalHandler {
 
   private final Map<Signal, SignalHandler> originalSignalHandlers =
-      Collections.synchronizedMap(new Hashtable<Signal, SignalHandler>(Signal.values().length));
+      Collections.synchronizedMap(new Hashtable<>(Signal.values().length));
 
   public GfshSignalHandler() {
     for (final Signal signal : Signal.values()) {
       if (Signal.SIGINT.equals(signal)) {
-        originalSignalHandlers.put(signal,
-            sun.misc.Signal.handle(new sun.misc.Signal(signal.getName()), this));
+        originalSignalHandlers.put(signal, org.apache.geode.unsafe.internal.sun.misc.Signal
+            .handle(new org.apache.geode.unsafe.internal.sun.misc.Signal(signal.getName()), this));
       }
     }
   }
 
   @Override
-  public void handle(final sun.misc.Signal sig) {
+  public void handle(final org.apache.geode.unsafe.internal.sun.misc.Signal sig) {
     notifyListeners(new SignalEvent(sig, Signal.valueOfName(sig.getName())));
-    handleDefault(sig);
+    try {
+      handleDefault(sig, Gfsh.getConsoleReader());
+    } catch (IOException e) {
+      e.printStackTrace();
+    }
   }
 
-  protected void handleDefault(final sun.misc.Signal sig) {
+  protected void handleDefault(final org.apache.geode.unsafe.internal.sun.misc.Signal sig,
+      final ConsoleReader consoleReader)
+      throws IOException {
     final Signal signal = Signal.valueOfName(sig.getName());
     switch (signal) {
       case SIGINT:
-        break; // ignore the interrupt signal
+        if (consoleReader != null) {
+          String prompt = consoleReader.getPrompt();
+          consoleReader.resetPromptLine(prompt, "", -1);
+        }
+        break;
       default:
         final SignalHandler handler = getOriginalSignalHandler(signal);
         if (handler != null) {
@@ -68,7 +81,7 @@ public class GfshSignalHandler extends AbstractSignalNotificationHandler impleme
     }
   }
 
-  protected SignalHandler getOriginalSignalHandler(final Signal signal) {
+  private SignalHandler getOriginalSignalHandler(final Signal signal) {
     final SignalHandler handler = originalSignalHandlers.get(signal);
     return (handler == SignalHandler.SIG_DFL || handler == SignalHandler.SIG_IGN ? null : handler);
   }

@@ -24,10 +24,8 @@ import org.apache.geode.cache.DiskAccessException;
 import org.apache.geode.cache.EntryEvent;
 import org.apache.geode.cache.EntryNotFoundException;
 import org.apache.geode.cache.TimeoutException;
-import org.apache.geode.distributed.internal.DM;
-import org.apache.geode.internal.ByteArrayDataInput;
+import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.internal.InternalStatisticsDisabledException;
-import org.apache.geode.internal.Version;
 import org.apache.geode.internal.cache.DistributedRegion.DiskPosition;
 import org.apache.geode.internal.cache.InitialImageOperation.Entry;
 import org.apache.geode.internal.cache.entries.DiskEntry;
@@ -39,7 +37,8 @@ import org.apache.geode.internal.cache.persistence.DiskRegionView;
 import org.apache.geode.internal.cache.versions.VersionSource;
 import org.apache.geode.internal.cache.versions.VersionStamp;
 import org.apache.geode.internal.cache.versions.VersionTag;
-import org.apache.geode.internal.i18n.LocalizedStrings;
+import org.apache.geode.internal.serialization.ByteArrayDataInput;
+import org.apache.geode.internal.serialization.Version;
 
 /**
  * A disk region that is created when doing offline validation.
@@ -84,7 +83,7 @@ public class ValidatingDiskRegion extends DiskRegion implements DiskRecoveryStor
     ValidatingDiskEntry de = new ValidatingDiskEntry(key, re);
     if (this.map.putIfAbsent(key, de) != null) {
       throw new InternalGemFireError(
-          LocalizedStrings.LocalRegion_ENTRY_ALREADY_EXISTED_0.toLocalizedString(key));
+          String.format("Entry already existed: %s", key));
     }
     return de;
   }
@@ -126,11 +125,6 @@ public class ValidatingDiskRegion extends DiskRegion implements DiskRecoveryStor
 
   @Override
   public int calculateValueSize(Object val) {
-    return 0;
-  }
-
-  @Override
-  public int calculateRegionEntryValueSize(RegionEntry re) {
     return 0;
   }
 
@@ -357,7 +351,7 @@ public class ValidatingDiskRegion extends DiskRegion implements DiskRecoveryStor
 
     @Override
     public boolean fillInValue(InternalRegion region, Entry entry, ByteArrayDataInput in,
-        DM distributionManager, final Version version) {
+        DistributionManager distributionManager, final Version version) {
       return false;
     }
 
@@ -536,6 +530,11 @@ public class ValidatingDiskRegion extends DiskRegion implements DiskRecoveryStor
     public Object prepareValueForCache(RegionEntryContext context, Object value,
         EntryEventImpl event, boolean isEntryUpdate) {
       throw new IllegalStateException("Should never be called");
+    }
+
+    @Override
+    public boolean isEvicted() {
+      return false;
     }
   }
 

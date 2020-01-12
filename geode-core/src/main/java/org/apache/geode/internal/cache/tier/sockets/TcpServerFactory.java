@@ -17,18 +17,28 @@ package org.apache.geode.internal.cache.tier.sockets;
 
 import java.net.InetAddress;
 import java.util.Properties;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.function.Supplier;
 
 import org.apache.logging.log4j.Logger;
 
+import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionConfigImpl;
+import org.apache.geode.distributed.internal.DistributionStats;
 import org.apache.geode.distributed.internal.InternalLocator;
 import org.apache.geode.distributed.internal.PoolStatHelper;
+import org.apache.geode.distributed.internal.ProtocolCheckerImpl;
 import org.apache.geode.distributed.internal.tcpserver.TcpHandler;
 import org.apache.geode.distributed.internal.tcpserver.TcpServer;
 import org.apache.geode.internal.cache.client.protocol.ClientProtocolServiceLoader;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.logging.CoreLoggingExecutors;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 public class TcpServerFactory {
+  private static final int MAX_POOL_SIZE =
+      Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "TcpServer.MAX_POOL_SIZE", 100);
+  private static final int POOL_IDLE_TIMEOUT = 60 * 1000;
   private final ClientProtocolServiceLoader clientProtocolServiceLoader;
   static final Logger logger = LogService.getLogger();
 
@@ -38,9 +48,15 @@ public class TcpServerFactory {
 
   public TcpServer makeTcpServer(int port, InetAddress bind_address, Properties sslConfig,
       DistributionConfigImpl cfg, TcpHandler handler, PoolStatHelper poolHelper,
-      ThreadGroup threadGroup, String threadName, InternalLocator internalLocator) {
+      String threadName, InternalLocator internalLocator) {
 
-    return new TcpServer(port, bind_address, sslConfig, cfg, handler, poolHelper, threadGroup,
-        threadName, internalLocator, clientProtocolServiceLoader);
+    return new TcpServer(port, bind_address, sslConfig, cfg, handler,
+        threadName, new ProtocolCheckerImpl(internalLocator, clientProtocolServiceLoader),
+        DistributionStats::getStatTime, createExecutorServiceSupplier(poolHelper));
+  }
+
+  public static Supplier<ExecutorService> createExecutorServiceSupplier(PoolStatHelper poolHelper) {
+    return () -> CoreLoggingExecutors.newThreadPoolWithSynchronousFeed("locator request thread ",
+        MAX_POOL_SIZE, poolHelper, POOL_IDLE_TIMEOUT, new ThreadPoolExecutor.CallerRunsPolicy());
   }
 }

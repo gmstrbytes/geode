@@ -37,6 +37,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.SystemFailure;
+import org.apache.geode.annotations.internal.MakeNotStatic;
+import org.apache.geode.annotations.internal.MutableForTesting;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.query.AmbiguousNameException;
 import org.apache.geode.cache.query.Index;
@@ -52,7 +54,6 @@ import org.apache.geode.cache.query.QueryException;
 import org.apache.geode.cache.query.TypeMismatchException;
 import org.apache.geode.cache.query.internal.CompiledPath;
 import org.apache.geode.cache.query.internal.CompiledValue;
-import org.apache.geode.cache.query.internal.DefaultQuery;
 import org.apache.geode.cache.query.internal.ExecutionContext;
 import org.apache.geode.cache.query.internal.MapIndexable;
 import org.apache.geode.cache.query.internal.NullToken;
@@ -72,9 +73,8 @@ import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.RegionEntry;
 import org.apache.geode.internal.cache.TXManagerImpl;
 import org.apache.geode.internal.cache.TXStateProxy;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.LoggingThreadGroup;
+import org.apache.geode.logging.internal.executors.LoggingThread;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 public class IndexManager {
   private static final Logger logger = LogService.getLogger();
@@ -85,6 +85,7 @@ public class IndexManager {
   // Asif : This action is to rerun Index creation after
   // clear is called on the region
   public static final int RECREATE_INDEX = 4;
+  private final InternalCache cache;
   protected final Region region;
 
   private final boolean isOverFlowToDisk;
@@ -108,15 +109,16 @@ public class IndexManager {
   private final int INDEX_MAINTENANCE_BUFFER =
       Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "AsynchIndexMaintenanceThreshold", -1);
 
-  public static boolean JOIN_OPTIMIZATION =
+  public static final boolean JOIN_OPTIMIZATION =
       !Boolean.getBoolean(DistributionConfig.GEMFIRE_PREFIX + "index.DisableJoinOptimization");
 
-  // Added for test purposes only.
+  @MutableForTesting
   public static boolean INPLACE_OBJECT_MODIFICATION_FOR_TEST = false;
 
-  // Added for testing only
+  @MutableForTesting
   public static boolean IS_TEST_LDM = false;
 
+  @MutableForTesting
   public static boolean IS_TEST_EXPANSION = false;
 
 
@@ -136,7 +138,7 @@ public class IndexManager {
   public static final boolean RANGEINDEX_ONLY = Boolean.valueOf(
       System.getProperty(DistributionConfig.GEMFIRE_PREFIX + "index.RANGEINDEX_ONLY", "false"));
 
-  /** For test purpose only */
+  @MutableForTesting
   public static boolean TEST_RANGEINDEX_ONLY = false;
   public static final String INDEX_ELEMARRAY_THRESHOLD_PROP = "index_elemarray_threshold";
   public static final String INDEX_ELEMARRAY_SIZE_PROP = "index_elemarray_size";
@@ -144,18 +146,22 @@ public class IndexManager {
       Integer.parseInt(System.getProperty(INDEX_ELEMARRAY_THRESHOLD_PROP, "100"));
   public static final int INDEX_ELEMARRAY_SIZE =
       Integer.parseInt(System.getProperty(INDEX_ELEMARRAY_SIZE_PROP, "5"));
+  @MakeNotStatic
   public static final AtomicLong SAFE_QUERY_TIME = new AtomicLong(0);
+  @MutableForTesting
   public static boolean ENABLE_UPDATE_IN_PROGRESS_INDEX_CALCULATION = true;
   /** The NULL constant */
   public static final Object NULL = new NullToken();
 
+  @MutableForTesting
   public static TestHook testHook;
 
   // private int numCreatorsInWaiting = 0;
   // @todo ericz
   // there should be a read/write lock PER INDEX in order to maximize
   // the concurrency of query execution.
-  public IndexManager(Region region) {
+  public IndexManager(InternalCache cache, Region region) {
+    this.cache = cache;
     this.region = region;
     // must be a SortedMap to ensure the indexes are iterated over in fixed
     // order
@@ -166,9 +172,7 @@ public class IndexManager {
         region.getAttributes().getEvictionAttributes().getAction().isOverflowToDisk();
     this.offHeap = region.getAttributes().getOffHeap();
     if (!indexMaintenanceSynchronous) {
-      final LoggingThreadGroup group =
-          LoggingThreadGroup.createThreadGroup("QueryMonitor Thread Group", logger);
-      updater = new IndexUpdaterThread(group, this.INDEX_MAINTENANCE_BUFFER,
+      updater = new IndexUpdaterThread(this.INDEX_MAINTENANCE_BUFFER,
           "OqlIndexUpdater:" + region.getFullPath());
       updater.start();
     }
@@ -180,11 +184,15 @@ public class IndexManager {
    * aggressively. But the large hiccup will eventually be rolled off as time is always increasing
    * This is a fix for #47475
    *
-   * @param operationTime the last modified time from version tag
+   * @param lastModifiedTime the last modified time from version tag
    */
-  public static boolean setIndexBufferTime(long operationTime, long currentCacheTime) {
-    long timeDifference = currentCacheTime - operationTime;
-    return setNewLargestValue(SAFE_QUERY_TIME, currentCacheTime + timeDifference);
+  public static void setIndexBufferTime(long lastModifiedTime, long currentCacheTime) {
+    long oldValue = SAFE_QUERY_TIME.get();
+    long newValue = currentCacheTime + currentCacheTime - lastModifiedTime;
+    if (oldValue < newValue) {
+      // use compare and set in case the value has been changed since we got the old value
+      SAFE_QUERY_TIME.compareAndSet(oldValue, newValue);
+    }
   }
 
   /**
@@ -212,26 +220,14 @@ public class IndexManager {
    * Small amounts of false positives are ok as it will have a slight impact on performance
    */
   public static boolean needsRecalculation(long queryStartTime, long lastModifiedTime) {
-    return ENABLE_UPDATE_IN_PROGRESS_INDEX_CALCULATION
-        && queryStartTime <= SAFE_QUERY_TIME.get() - queryStartTime + lastModifiedTime;
-  }
-
-  private static boolean setNewLargestValue(AtomicLong value, long newValue) {
-    boolean done = false;
-    while (!done) {
-      long oldValue = value.get();
-      if (oldValue < newValue) {
-        return value.compareAndSet(oldValue, newValue);
-      } else {
-        done = true;
-      }
-    }
-    return false;
+    boolean needsRecalculate =
+        (queryStartTime <= (lastModifiedTime + (SAFE_QUERY_TIME.get() - queryStartTime)));
+    return ENABLE_UPDATE_IN_PROGRESS_INDEX_CALCULATION && needsRecalculate;
   }
 
   /** Test Hook */
   public interface TestHook {
-    public void hook(final int spot) throws RuntimeException;
+    void hook(final int spot) throws RuntimeException;
   }
 
   /**
@@ -269,15 +265,15 @@ public class IndexManager {
 
     if (QueryMonitor.isLowMemory()) {
       throw new IndexInvalidException(
-          LocalizedStrings.IndexCreationMsg_CANCELED_DUE_TO_LOW_MEMORY.toLocalizedString());
+          "Index creation canceled due to low memory");
     }
 
-    boolean oldReadSerialized = DefaultQuery.getPdxReadSerialized();
-    DefaultQuery.setPdxReadSerialized(this.region.getCache(), true);
+    boolean oldReadSerialized = this.cache.getPdxReadSerializedOverride();
+    this.cache.setPdxReadSerializedOverride(true);
 
     TXStateProxy tx = null;
-    if (!((InternalCache) this.region.getCache()).isClient()) {
-      tx = ((TXManagerImpl) this.region.getCache().getCacheTransactionManager()).pauseTransaction();
+    if (!((InternalCache) this.cache).isClient()) {
+      tx = ((TXManagerImpl) this.cache.getCacheTransactionManager()).pauseTransaction();
     }
 
     try {
@@ -285,8 +281,8 @@ public class IndexManager {
 
       if (getIndex(indexName) != null) {
         throw new IndexNameConflictException(
-            LocalizedStrings.IndexManager_INDEX_NAMED_0_ALREADY_EXISTS
-                .toLocalizedString(indexName));
+            String.format("Index named ' %s ' already exists.",
+                indexName));
       }
 
       IndexCreationHelper helper = null;
@@ -317,29 +313,30 @@ public class IndexManager {
         if (indexType == IndexType.HASH) {
           if (!isIndexMaintenanceTypeSynchronous()) {
             throw new UnsupportedOperationException(
-                LocalizedStrings.DefaultQueryService_HASH_INDEX_CREATION_IS_NOT_SUPPORTED_FOR_ASYNC_MAINTENANCE
-                    .toLocalizedString());
+                "Hash index is currently not supported for regions with Asynchronous index maintenance.");
           }
           throw new UnsupportedOperationException(
-              LocalizedStrings.DefaultQueryService_HASH_INDEX_CREATION_IS_NOT_SUPPORTED_FOR_MULTIPLE_ITERATORS
-                  .toLocalizedString());
+              "Hash Index is not supported with from clause having multiple iterators(collections).");
         }
         // Overflow is not supported with range index.
         if (isOverFlowRegion()) {
           throw new UnsupportedOperationException(
-              LocalizedStrings.DefaultQueryService_INDEX_CREATION_IS_NOT_SUPPORTED_FOR_REGIONS_WHICH_OVERFLOW_TO_DISK_THE_REGION_INVOLVED_IS_0
-                  .toLocalizedString(region.getFullPath()));
+              String.format(
+                  "The specified index conditions are not supported for regions which overflow to disk. The region involved is %s",
+                  region.getFullPath()));
         }
         // OffHeap is not supported with range index.
         if (isOffHeap()) {
           if (!isIndexMaintenanceTypeSynchronous()) {
             throw new UnsupportedOperationException(
-                LocalizedStrings.DefaultQueryService_OFF_HEAP_INDEX_CREATION_IS_NOT_SUPPORTED_FOR_ASYNC_MAINTENANCE_THE_REGION_IS_0
-                    .toLocalizedString(region.getFullPath()));
+                String.format(
+                    "Asynchronous index maintenance is currently not supported for off-heap regions. The off-heap region is %s",
+                    region.getFullPath()));
           }
           throw new UnsupportedOperationException(
-              LocalizedStrings.DefaultQueryService_OFF_HEAP_INDEX_CREATION_IS_NOT_SUPPORTED_FOR_MULTIPLE_ITERATORS_THE_REGION_IS_0
-                  .toLocalizedString(region.getFullPath()));
+              String.format(
+                  "From clauses having multiple iterators(collections) are not supported for off-heap regions. The off-heap region is %s",
+                  region.getFullPath()));
         }
       }
 
@@ -360,7 +357,7 @@ public class IndexManager {
         }
       }
 
-      IndexTask indexTask = new IndexTask(indexName, indexType, origFromClause,
+      IndexTask indexTask = new IndexTask(cache, indexName, indexType, origFromClause,
           origIndexedExpression, helper, isCompactOrHash, prIndex, loadEntries);
       FutureTask<Index> indexFutureTask = new FutureTask<Index>(indexTask);
       Object oldIndex = this.indexes.putIfAbsent(indexTask, indexFutureTask);
@@ -387,11 +384,11 @@ public class IndexManager {
           // from this thread.
           if (getIndex(indexName) != null) {
             throw new IndexNameConflictException(
-                LocalizedStrings.IndexManager_INDEX_NAMED_0_ALREADY_EXISTS
-                    .toLocalizedString(indexName));
+                String.format("Index named ' %s ' already exists.",
+                    indexName));
           } else {
             throw new IndexExistsException(
-                LocalizedStrings.IndexManager_SIMILAR_INDEX_EXISTS.toLocalizedString());
+                "Similar Index Exists");
           }
         }
       } catch (InterruptedException ignored) {
@@ -428,12 +425,9 @@ public class IndexManager {
       return index;
 
     } finally {
-      DefaultQuery.setPdxReadSerialized(this.region.getCache(), oldReadSerialized);
+      this.cache.setPdxReadSerializedOverride(oldReadSerialized);
+      ((TXManagerImpl) this.cache.getCacheTransactionManager()).unpauseTransaction(tx);
 
-      if (tx != null) {
-        ((TXManagerImpl) this.region.getCache().getCacheTransactionManager())
-            .unpauseTransaction(tx);
-      }
     }
   }
 
@@ -502,7 +496,7 @@ public class IndexManager {
   }
 
   public Index getIndex(String indexName) {
-    IndexTask indexTask = new IndexTask(indexName);
+    IndexTask indexTask = new IndexTask(cache, indexName);
     Object ind = this.indexes.get(indexTask);
     // Check if the returned value is instance of Index (this means
     // the index is not in create phase, its created successfully).
@@ -513,7 +507,7 @@ public class IndexManager {
   }
 
   public void addIndex(String indexName, Index index) {
-    IndexTask indexTask = new IndexTask(indexName);
+    IndexTask indexTask = new IndexTask(cache, indexName);
     this.indexes.put(indexTask, index);
   }
 
@@ -791,7 +785,7 @@ public class IndexManager {
    * @return the collection of indexes for the specified region and type
    */
   public Collection getIndexes(IndexType indexType) {
-    ArrayList list = new ArrayList();
+    ArrayList<Index> list = new ArrayList<>();
     Iterator it = this.indexes.values().iterator();
     while (it.hasNext()) {
       Object ind = it.next();
@@ -828,8 +822,7 @@ public class IndexManager {
   public void removeIndex(Index index) {
     if (index.getRegion() != this.region) {
       throw new IllegalArgumentException(
-          LocalizedStrings.IndexManager_INDEX_DOES_NOT_BELONG_TO_THIS_INDEXMANAGER
-              .toLocalizedString());
+          "Index does not belong to this IndexManager");
     }
     // Asif: We will just remove the Index from the map. Since the
     // TreeMap is synchronized & the operation of adding a newly created
@@ -839,7 +832,7 @@ public class IndexManager {
     // is OK as we are not clearing data maps . The destroy though marks
     // the index invalid , that is OK. Because of this flag a query
     // may or may not use the Index
-    IndexTask indexTask = new IndexTask(index.getName());
+    IndexTask indexTask = new IndexTask(cache, index.getName());
     if (this.indexes.remove(indexTask) != null) {
       AbstractIndex indexHandle = (AbstractIndex) index;
       indexHandle.destroy();
@@ -906,8 +899,8 @@ public class IndexManager {
     }
     boolean throwException = false;
     HashMap<String, Exception> exceptionsMap = new HashMap<String, Exception>();
-    boolean oldReadSerialized = DefaultQuery.getPdxReadSerialized();
-    DefaultQuery.setPdxReadSerialized(true);
+    boolean oldReadSerialized = this.cache.getPdxReadSerializedOverride();
+    this.cache.setPdxReadSerializedOverride(true);
     try {
       Iterator entryIter = ((LocalRegion) region).getBestIterator(true);
       while (entryIter.hasNext()) {
@@ -948,7 +941,7 @@ public class IndexManager {
         throw new MultiIndexCreationException(exceptionsMap);
       }
     } finally {
-      DefaultQuery.setPdxReadSerialized(oldReadSerialized);
+      this.cache.setPdxReadSerializedOverride(oldReadSerialized);
       notifyAfterUpdate();
     }
   }
@@ -1003,10 +996,11 @@ public class IndexManager {
    */
   private void processAction(RegionEntry entry, int action, int opCode) throws QueryException {
     final long startPA = getCachePerfStats().startIndexUpdate();
-    DefaultQuery.setPdxReadSerialized(this.region.getCache(), true);
+    Boolean initialPdxReadSerialized = this.cache.getPdxReadSerializedOverride();
+    this.cache.setPdxReadSerializedOverride(true);
     TXStateProxy tx = null;
-    if (!((InternalCache) this.region.getCache()).isClient()) {
-      tx = ((TXManagerImpl) this.region.getCache().getCacheTransactionManager()).pauseTransaction();
+    if (!this.cache.isClient()) {
+      tx = ((TXManagerImpl) this.cache.getCacheTransactionManager()).pauseTransaction();
     }
 
     try {
@@ -1144,15 +1138,13 @@ public class IndexManager {
         }
         default: {
           throw new IndexMaintenanceException(
-              LocalizedStrings.IndexManager_INVALID_ACTION.toLocalizedString());
+              "Invalid action");
         }
       }
     } finally {
-      DefaultQuery.setPdxReadSerialized(this.region.getCache(), false);
-      if (tx != null) {
-        ((TXManagerImpl) this.region.getCache().getCacheTransactionManager())
-            .unpauseTransaction(tx);
-      }
+      this.cache.setPdxReadSerializedOverride(initialPdxReadSerialized);
+      ((TXManagerImpl) this.cache.getCacheTransactionManager()).unpauseTransaction(tx);
+
       getCachePerfStats().endIndexUpdate(startPA);
     }
   }
@@ -1395,7 +1387,6 @@ public class IndexManager {
    * Asif : Given a definition returns the canonicalized iterator name for the definition. If the
    * definition does not exist , null is returned
    *
-   * @return String
    */
   public String getCanonicalizedIteratorName(String definition) {
     return ((String) (this.canonicalizedIteratorNameMap.get(definition)));
@@ -1403,7 +1394,7 @@ public class IndexManager {
 
   ////////////////////// Inner Classes //////////////////////
 
-  public class IndexUpdaterThread extends Thread {
+  public class IndexUpdaterThread extends LoggingThread {
 
     private volatile boolean running = true;
 
@@ -1414,8 +1405,8 @@ public class IndexManager {
     /**
      * Creates instance of IndexUpdaterThread
      */
-    IndexUpdaterThread(ThreadGroup group, int updateThreshold, String threadName) {
-      super(group, threadName);
+    IndexUpdaterThread(int updateThreshold, String threadName) {
+      super(threadName);
       // Check if threshold is set.
       if (updateThreshold > 0) {
         // Create a bounded queue.
@@ -1424,7 +1415,6 @@ public class IndexManager {
         // Create non-bounded queue.
         pendingTasks = new LinkedBlockingQueue();
       }
-      this.setDaemon(true);
     }
 
     public void addTask(int action, RegionEntry entry, int opCode) {
@@ -1541,9 +1531,12 @@ public class IndexManager {
 
     public boolean loadEntries;
 
-    IndexTask(String indexName, IndexType type, String origFromClause, String origIndexedExpression,
-        IndexCreationHelper helper, boolean isCompactOrHash, PartitionedIndex prIndex,
-        boolean loadEntries) {
+    private final InternalCache cache;
+
+    IndexTask(InternalCache cache, String indexName, IndexType type, String origFromClause,
+        String origIndexedExpression, IndexCreationHelper helper, boolean isCompactOrHash,
+        PartitionedIndex prIndex, boolean loadEntries) {
+      this.cache = cache;
       this.indexName = indexName;
       this.indexType = type;
       this.origFromClause = origFromClause;
@@ -1555,7 +1548,8 @@ public class IndexManager {
     }
 
     /* For name based index search */
-    IndexTask(String indexName) {
+    IndexTask(InternalCache cache, String indexName) {
+      this.cache = cache;
       this.indexName = indexName;
     }
 
@@ -1599,6 +1593,7 @@ public class IndexManager {
     /*
      * Creates and initializes the index.
      */
+    @Override
     public Index call() {
       Index index = null;
       String indexedExpression = helper.getCanonicalizedIndexedExpression();
@@ -1612,12 +1607,12 @@ public class IndexManager {
         stats = this.prIndex.getStatistics();
       }
       if (indexType == IndexType.PRIMARY_KEY) {
-        index = new PrimaryKeyIndex(indexName, region, fromClause, indexedExpression,
+        index = new PrimaryKeyIndex(cache, indexName, region, fromClause, indexedExpression,
             projectionAttributes, origFromClause, origIndexedExpression, definitions, stats);
         logger.info("Using Primary Key index implementation for '{}' on region {}", indexName,
             region.getFullPath());
       } else if (indexType == IndexType.HASH) {
-        index = new HashIndex(indexName, region, fromClause, indexedExpression,
+        index = new HashIndex(cache, indexName, region, fromClause, indexedExpression,
             projectionAttributes, origFromClause, origIndexedExpression, definitions, stats);
 
         logger.info("Using Hash index implementation for '{}' on region {}", indexName,
@@ -1627,28 +1622,28 @@ public class IndexManager {
         // shouldCreateCompactIndex((FunctionalIndexCreationHelper)helper);
         if (this.isCompactOrHash || this.isLDM) {
           if (indexType == IndexType.FUNCTIONAL && !helper.isMapTypeIndex()) {
-            index = new CompactRangeIndex(indexName, region, fromClause, indexedExpression,
+            index = new CompactRangeIndex(cache, indexName, region, fromClause, indexedExpression,
                 projectionAttributes, origFromClause, origIndexedExpression, definitions, stats);
             logger.info("Using Compact Range index implementation for '{}' on region {}", indexName,
                 region.getFullPath());
           } else {
             FunctionalIndexCreationHelper fich = (FunctionalIndexCreationHelper) helper;
-            index = new CompactMapRangeIndex(indexName, region, fromClause, indexedExpression,
-                projectionAttributes, origFromClause, origIndexedExpression, definitions,
-                fich.isAllKeys(), fich.multiIndexKeysPattern, fich.mapKeys, stats);
+            index = new CompactMapRangeIndex(cache, indexName, region, fromClause,
+                indexedExpression, projectionAttributes, origFromClause, origIndexedExpression,
+                definitions, fich.isAllKeys(), fich.multiIndexKeysPattern, fich.mapKeys, stats);
             logger.info("Using Compact Map Range index implementation for '{}' on region {}",
                 indexName, region.getFullPath());
           }
         } else {
           assert indexType == IndexType.FUNCTIONAL;
           if (!helper.isMapTypeIndex()) {
-            index = new RangeIndex(indexName, region, fromClause, indexedExpression,
+            index = new RangeIndex(cache, indexName, region, fromClause, indexedExpression,
                 projectionAttributes, origFromClause, origIndexedExpression, definitions, stats);
             logger.info("Using Non-Compact index implementation for '{}' on region {}", indexName,
                 region.getFullPath());
           } else {
             FunctionalIndexCreationHelper fich = (FunctionalIndexCreationHelper) helper;
-            index = new MapRangeIndex(indexName, region, fromClause, indexedExpression,
+            index = new MapRangeIndex(cache, indexName, region, fromClause, indexedExpression,
                 projectionAttributes, origFromClause, origIndexedExpression, definitions,
                 fich.isAllKeys(), fich.multiIndexKeysPattern, fich.mapKeys, stats);
             logger.info("Using Non-Compact Map index implementation for '{}' on region {}",

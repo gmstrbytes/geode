@@ -25,7 +25,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.Logger;
 import org.springframework.shell.core.annotation.CliCommand;
 import org.springframework.shell.core.annotation.CliOption;
@@ -34,22 +34,22 @@ import org.apache.geode.cache.Region;
 import org.apache.geode.cache.execute.ResultCollector;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.management.ManagementException;
 import org.apache.geode.management.cli.CliMetaData;
 import org.apache.geode.management.cli.ConverterHint;
-import org.apache.geode.management.cli.Result;
+import org.apache.geode.management.cli.GfshCommand;
 import org.apache.geode.management.internal.cli.functions.ExportLogsFunction;
 import org.apache.geode.management.internal.cli.functions.SizeExportLogsFunction;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.cli.result.CommandResult;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
+import org.apache.geode.management.internal.cli.result.model.FileResultModel;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.management.internal.cli.util.ExportLogsCacheWriter;
 import org.apache.geode.management.internal.configuration.utils.ZipUtils;
 import org.apache.geode.management.internal.security.ResourceOperation;
 import org.apache.geode.security.ResourcePermission;
 
-public class ExportLogsCommand implements GfshCommand {
+public class ExportLogsCommand extends GfshCommand {
 
   private static final Logger logger = LogService.getLogger();
 
@@ -66,7 +66,7 @@ public class ExportLogsCommand implements GfshCommand {
       relatedTopic = {CliStrings.TOPIC_GEODE_SERVER, CliStrings.TOPIC_GEODE_DEBUG_UTIL})
   @ResourceOperation(resource = ResourcePermission.Resource.CLUSTER,
       operation = ResourcePermission.Operation.READ)
-  public Result exportLogs(
+  public ResultModel exportLogs(
       @CliOption(key = CliStrings.EXPORT_LOGS__DIR,
           help = CliStrings.EXPORT_LOGS__DIR__HELP) String dirName,
       @CliOption(key = {CliStrings.GROUP, CliStrings.GROUPS},
@@ -100,8 +100,7 @@ public class ExportLogsCommand implements GfshCommand {
       throws Exception {
 
     long totalEstimatedExportSize = 0;
-    Result result;
-    InternalCache cache = getCache();
+    InternalCache cache = (InternalCache) getCache();
     try {
       Set<DistributedMember> targetMembers = getMembersIncludingLocators(groups, memberIds);
 
@@ -121,14 +120,14 @@ public class ExportLogsCommand implements GfshCommand {
               totalEstimatedExportSize += estimatedSize;
             } else if (results.get(0) instanceof ManagementException) {
               ManagementException exception = (ManagementException) results.get(0);
-              return ResultBuilder.createUserErrorResult(exception.getMessage());
+              return ResultModel.createError(exception.getMessage());
             }
           }
         }
 
         // first check if totalEstimate file size exceeds available disk space on locator
         if (totalEstimatedExportSize > getLocalDiskAvailable()) {
-          return ResultBuilder.createUserErrorResult(
+          return ResultModel.createError(
               "Estimated logs size will exceed the available disk space on the locator.");
         }
         // then check if total estimated file size exceeds user specified value
@@ -139,7 +138,7 @@ public class ExportLogsCommand implements GfshCommand {
               .append(CliStrings.EXPORT_LOGS__FILESIZELIMIT).append(" = ")
               .append(userSpecifiedLimit).append(
                   ". To disable exported logs file size check use option \"--file-size-limit=0\".");
-          return ResultBuilder.createUserErrorResult(sb.toString());
+          return ResultModel.createError(sb.toString());
         }
       }
 
@@ -167,7 +166,7 @@ public class ExportLogsCommand implements GfshCommand {
       }
 
       if (zipFilesFromMembers.isEmpty()) {
-        return ResultBuilder.createUserErrorResult("No files to be exported.");
+        return ResultModel.createError("No files to be exported.");
       }
 
       Path tempDir = Files.createTempDirectory("exportedLogs");
@@ -196,14 +195,12 @@ public class ExportLogsCommand implements GfshCommand {
       ZipUtils.zipDirectory(exportedLogsDir, exportedLogsZipFile);
       FileUtils.deleteDirectory(tempDir.toFile());
 
-      result = new CommandResult(exportedLogsZipFile);
+      ResultModel result = new ResultModel();
+      result.addFile(exportedLogsZipFile.toFile(), FileResultModel.FILE_TYPE_FILE);
+      return result;
     } finally {
       ExportLogsFunction.destroyExportLogsRegion(cache);
     }
-    if (logger.isDebugEnabled()) {
-      logger.debug("Exporting logs returning = {}", result);
-    }
-    return result;
   }
 
   /**

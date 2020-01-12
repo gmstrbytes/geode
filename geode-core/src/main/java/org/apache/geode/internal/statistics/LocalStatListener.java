@@ -16,12 +16,14 @@ package org.apache.geode.internal.statistics;
 
 /**
  * Implement this interface to receive call back when a stat value has changed. The listener has to
- * be registered with statSampler. This can be done in the following manner: <code>
- * InternalDistributedSystem internalSystem = (InternalDistributedSystem)cache
- *                                                      .getDistributedSystem();
+ * be registered with statSampler. This can be done in the following manner:
+ *
+ * <pre>
+ * InternalDistributedSystem internalSystem = (InternalDistributedSystem) cache
+ *     .getStatisticsManagerDistributedSystem();
  * final GemFireStatSampler sampler = internalSystem.getStatSampler();
  * sampler.addLocalStatListener(l, stats, statName);
- * </code>
+ * </pre>
  *
  *
  */
@@ -31,5 +33,5 @@ public interface LocalStatListener {
    *
    * @param value The new value of the statistic
    */
-  public void statValueChanged(double value);
+  void statValueChanged(double value);
 }

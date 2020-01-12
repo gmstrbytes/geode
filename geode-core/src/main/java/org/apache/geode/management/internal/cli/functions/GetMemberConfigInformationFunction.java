@@ -14,40 +14,37 @@
  */
 package org.apache.geode.management.internal.cli.functions;
 
-import static org.apache.geode.distributed.ConfigurationProperties.*;
+import static org.apache.geode.distributed.ConfigurationProperties.SOCKET_BUFFER_SIZE;
 
 import java.lang.management.ManagementFactory;
 import java.lang.management.RuntimeMXBean;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import org.apache.geode.cache.Cache;
-import org.apache.geode.cache.execute.FunctionAdapter;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.cache.server.CacheServer;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionConfigImpl;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.internal.ConfigSource;
-import org.apache.geode.internal.InternalEntity;
 import org.apache.geode.internal.cache.CacheConfig;
 import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.internal.cache.ha.HARegionQueue;
+import org.apache.geode.internal.util.ArgumentRedactor;
+import org.apache.geode.management.cli.CliFunction;
 import org.apache.geode.management.internal.cli.domain.MemberConfigurationInfo;
 
-/****
- *
- *
- */
-public class GetMemberConfigInformationFunction extends FunctionAdapter implements InternalEntity {
-
-  /**
-   *
-   */
+public class GetMemberConfigInformationFunction extends CliFunction {
   private static final long serialVersionUID = 1L;
 
 
   @Override
-  public void execute(FunctionContext context) {
+  public CliFunctionResult executeFunction(FunctionContext context) throws Exception {
     Object argsObject = context.getArguments();
     boolean hideDefaults = ((Boolean) argsObject).booleanValue();
 
@@ -130,7 +127,7 @@ public class GetMemberConfigInformationFunction extends FunctionAdapter implemen
 
     memberConfigInfo.setCacheServerAttributes(cacheServerAttributesList);
 
-    context.getResultSender().lastResult(memberConfigInfo);
+    return new CliFunctionResult(context.getMemberName(), memberConfigInfo);
   }
 
   /****
@@ -194,40 +191,30 @@ public class GetMemberConfigInformationFunction extends FunctionAdapter implemen
   /****
    * Removes the default values from the attributesMap based on defaultAttributesMap
    *
-   * @param attributesMap
-   * @param defaultAttributesMap
    */
   private void removeDefaults(Map<String, String> attributesMap,
       Map<String, String> defaultAttributesMap) {
     // Make a copy to avoid the CME's
     Set<String> attributesSet = new HashSet<String>(attributesMap.keySet());
 
-    if (attributesSet != null) {
-      for (String attribute : attributesSet) {
-        String attributeValue = attributesMap.get(attribute);
-        String defaultValue = defaultAttributesMap.get(attribute);
+    for (String attribute : attributesSet) {
+      String attributeValue = attributesMap.get(attribute);
+      String defaultValue = defaultAttributesMap.get(attribute);
 
-        if (attributeValue != null) {
-          if (attributeValue.equals(defaultValue)) {
-            attributesMap.remove(attribute);
-          }
-        } else {
-          if (defaultValue == null || defaultValue.equals("")) {
-            attributesMap.remove(attribute);
-          }
+      if (attributeValue != null) {
+        if (attributeValue.equals(defaultValue)) {
+          attributesMap.remove(attribute);
+        }
+      } else {
+        if (defaultValue == null || defaultValue.equals("")) {
+          attributesMap.remove(attribute);
         }
       }
     }
   }
 
-  @Override
-  public String getId() {
-    // TODO Auto-generated method stub
-    return GetMemberConfigInformationFunction.class.toString();
-  }
-
   private List<String> getJvmInputArguments() {
     RuntimeMXBean runtimeBean = ManagementFactory.getRuntimeMXBean();
-    return runtimeBean.getInputArguments();
+    return ArgumentRedactor.redactEachInList(runtimeBean.getInputArguments());
   }
 }

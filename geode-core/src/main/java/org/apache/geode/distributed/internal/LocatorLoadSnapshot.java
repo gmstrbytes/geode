@@ -12,14 +12,12 @@
  * or implied. See the License for the specific language governing permissions and limitations under
  * the License.
  */
+
 package org.apache.geode.distributed.internal;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -28,14 +26,14 @@ import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.geode.cache.server.ServerLoad;
 import org.apache.geode.cache.wan.GatewayReceiver;
 import org.apache.geode.internal.cache.tier.sockets.ClientProxyMembershipID;
+import org.apache.geode.logging.internal.executors.LoggingExecutors;
 
 /**
  * A data structure used to hold load information for a locator
@@ -44,30 +42,46 @@ import org.apache.geode.internal.cache.tier.sockets.ClientProxyMembershipID;
  *
  */
 public class LocatorLoadSnapshot {
-  private final Map/* <ServerLocation, String[]> */ serverGroupMap = new HashMap();
 
-  private final Map/* <String(server group), Map<ServerLocation, LoadHolder> */
-  connectionLoadMap = new HashMap();
+  private static final String LOAD_IMBALANCE_THRESHOLD_PROPERTY_NAME =
+      "gemfire.locator-load-imbalance-threshold";
 
-  private final Map/* <String(server group), Map<ServerLocation, LoadHolder> */
-  queueLoadMap = new HashMap();
+  public static final float DEFAULT_LOAD_IMBALANCE_THRESHOLD = 10;
 
-  private final ConcurrentMap/* <EstimateMapKey, LoadEstimateTask> */
-  estimateMap = new ConcurrentHashMap();
+  private final Map<ServerLocation, String[]> serverGroupMap = new HashMap<>();
 
-  private final ScheduledThreadPoolExecutor estimateTimeoutProcessor =
-      new ScheduledThreadPoolExecutor(1, new ThreadFactory() {
-        public Thread newThread(final Runnable r) {
-          Thread result = new Thread(r, "loadEstimateTimeoutProcessor");
-          result.setDaemon(true);
-          return result;
-        }
-      });
+  private final Map<String, Map<ServerLocation, LoadHolder>> connectionLoadMap = new HashMap<>();
+
+  private final Map<String, Map<ServerLocation, LoadHolder>> queueLoadMap = new HashMap<>();
+
+  private final ConcurrentMap<EstimateMapKey, LoadEstimateTask> estimateMap =
+      new ConcurrentHashMap<>();
+
+  /**
+   * when replacing a client's current server we do not move a client from a highly loaded server to
+   * a less loaded server until imbalance reaches this threshold. Then we aggressively move clients
+   * until balance is achieved.
+   */
+  private float loadImbalanceThreshold;
+
+  /**
+   * when the loadImbalanceThreshold is hit this variable will be true and it will remain true until
+   * balance is achieved.
+   */
+  private boolean rebalancing;
+
+  private final ScheduledExecutorService estimateTimeoutProcessor =
+      LoggingExecutors.newScheduledThreadPool("loadEstimateTimeoutProcessor", 1, false);
 
   public LocatorLoadSnapshot() {
-    connectionLoadMap.put(null, new HashMap());
-    queueLoadMap.put(null, new HashMap());
-    this.estimateTimeoutProcessor.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
+    connectionLoadMap.put(null, new HashMap<>());
+    queueLoadMap.put(null, new HashMap<>());
+    String property = System.getProperty(LOAD_IMBALANCE_THRESHOLD_PROPERTY_NAME);
+    if (property != null) {
+      loadImbalanceThreshold = Float.parseFloat(property);
+    } else {
+      loadImbalanceThreshold = DEFAULT_LOAD_IMBALANCE_THRESHOLD;
+    }
   }
 
   public void addServer(ServerLocation location, String[] groups, ServerLoad initialLoad) {
@@ -93,7 +107,7 @@ public class LocatorLoadSnapshot {
    * Remove a server from the load snapshot.
    */
   public synchronized void removeServer(ServerLocation location) {
-    String[] groups = (String[]) serverGroupMap.remove(location);
+    String[] groups = serverGroupMap.remove(location);
     /*
      * Adding null check for #41522 - we were getting a remove from a BridgeServer that was shutting
      * down and the ServerLocation wasn't in this map. The root cause isn't 100% clear but it might
@@ -112,17 +126,17 @@ public class LocatorLoadSnapshot {
   /**
    * Update the load information for a server that was previously added.
    */
-  public synchronized void updateLoad(ServerLocation location, ServerLoad newLoad,
-      List/* <ClientProxyMembershipID> */ clientIds) {
-    String[] groups = (String[]) serverGroupMap.get(location);
+  synchronized void updateLoad(ServerLocation location, ServerLoad newLoad,
+      List<ClientProxyMembershipID> clientIds) {
+    String[] groups = serverGroupMap.get(location);
     // the server was asynchronously removed, so don't do anything.
     if (groups == null) {
       return;
     }
 
     if (clientIds != null) {
-      for (Iterator itr = clientIds.iterator(); itr.hasNext();) {
-        cancelClientEstimate((ClientProxyMembershipID) itr.next(), location);
+      for (ClientProxyMembershipID clientId : clientIds) {
+        cancelClientEstimate(clientId, location);
       }
     }
 
@@ -137,11 +151,16 @@ public class LocatorLoadSnapshot {
       group = null;
     }
 
-    Map groupServers = (Map) connectionLoadMap.get(group);
+    Map<ServerLocation, LoadHolder> groupServers = connectionLoadMap.get(group);
     return isBalanced(groupServers);
   }
 
-  private synchronized boolean isBalanced(Map groupServers) {
+  private synchronized boolean isBalanced(Map<ServerLocation, LoadHolder> groupServers) {
+    return isBalanced(groupServers, false);
+  }
+
+  private synchronized boolean isBalanced(Map<ServerLocation, LoadHolder> groupServers,
+      boolean withThresholdCheck) {
     if (groupServers == null || groupServers.isEmpty()) {
       return true;
     }
@@ -150,9 +169,8 @@ public class LocatorLoadSnapshot {
     float largestLoadPerConnection = Float.MIN_VALUE;
     float worstLoad = Float.MIN_VALUE;
 
-    for (Iterator itr = groupServers.entrySet().iterator(); itr.hasNext();) {
-      Map.Entry next = (Entry) itr.next();
-      LoadHolder nextLoadReference = (LoadHolder) next.getValue();
+    for (Entry<ServerLocation, LoadHolder> loadHolderEntry : groupServers.entrySet()) {
+      LoadHolder nextLoadReference = loadHolderEntry.getValue();
       float nextLoad = nextLoadReference.getLoad();
       float nextLoadPerConnection = nextLoadReference.getLoadPerConnection();
 
@@ -167,7 +185,52 @@ public class LocatorLoadSnapshot {
       }
     }
 
-    return (worstLoad - bestLoad) <= largestLoadPerConnection;
+    boolean balanced = (worstLoad - bestLoad) <= largestLoadPerConnection;
+
+    if (withThresholdCheck) {
+      balanced = thresholdCheck(bestLoad, worstLoad, largestLoadPerConnection, balanced);
+    }
+
+    return balanced;
+  }
+
+
+  /**
+   * In order to keep from ping-ponging clients around the cluster we don't move a client unless
+   * imbalance is greater than the loadImbalanceThreshold.
+   * <p>
+   * When the threshold is reached we report imbalance until proper balance is achieved.
+   * </p>
+   * <p>
+   * This method has the side-effect of setting the <code>rebalancing</code> instance variable
+   * which, at the time of this writing, is only used by this method.
+   * </p>
+   */
+  private synchronized boolean thresholdCheck(float bestLoad, float worstLoad,
+      float largestLoadPerConnection, boolean balanced) {
+    if (rebalancing) {
+      if (balanced) {
+        rebalancing = false;
+      }
+      return balanced;
+    }
+
+    // see if we're out of balance enough to trigger rebalancing or whether we
+    // should tolerate the imbalance
+    if (!balanced) {
+      float imbalance = worstLoad - bestLoad;
+      if (imbalance >= (largestLoadPerConnection * loadImbalanceThreshold)) {
+        rebalancing = true;
+      } else {
+        // we're not in balance but are within the threshold
+        balanced = true;
+      }
+    }
+    return balanced;
+  }
+
+  synchronized boolean isRebalancing() {
+    return rebalancing;
   }
 
   /**
@@ -177,19 +240,20 @@ public class LocatorLoadSnapshot {
    * @param excludedServers a list of servers to exclude as choices
    * @return the least loaded server, or null if there are no servers that aren't excluded.
    */
-  public synchronized ServerLocation getServerForConnection(String group, Set excludedServers) {
+  public synchronized ServerLocation getServerForConnection(String group,
+      Set<ServerLocation> excludedServers) {
     if ("".equals(group)) {
       group = null;
     }
 
-    Map groupServers = (Map) connectionLoadMap.get(group);
+    Map<ServerLocation, LoadHolder> groupServers = connectionLoadMap.get(group);
     if (groupServers == null || groupServers.isEmpty()) {
       return null;
     }
 
     {
       List bestLHs = findBestServers(groupServers, excludedServers, 1);
-      if (bestLHs == null || bestLHs.isEmpty()) {
+      if (bestLHs.isEmpty()) {
         return null;
       }
       LoadHolder lh = (LoadHolder) bestLHs.get(0);
@@ -198,38 +262,20 @@ public class LocatorLoadSnapshot {
     }
   }
 
-  /**
-   * Get the least loaded servers for the given groups as a map. If the given array of groups is
-   * null then returns the least loaded servers for all the known groups.
-   */
-  @SuppressWarnings("unchecked")
-  public synchronized Map<String, ServerLocation> getServersForConnection(Collection<String> groups,
-      Set excludedServers) {
-    final HashMap<String, ServerLocation> loadMap = new HashMap<String, ServerLocation>();
-    if (groups == null) {
-      groups = this.connectionLoadMap.keySet();
-    }
-    for (String group : groups) {
-      loadMap.put(group, getServerForConnection(group, excludedServers));
-    }
-    return loadMap;
-  }
-
   public synchronized ArrayList getServers(String group) {
     if ("".equals(group)) {
       group = null;
     }
-    Map groupServers = (Map) connectionLoadMap.get(group);
+    Map<ServerLocation, LoadHolder> groupServers = connectionLoadMap.get(group);
     if (groupServers == null || groupServers.isEmpty()) {
       return null;
     }
-    ArrayList servers = new ArrayList();
-    servers.addAll(groupServers.keySet());
-    return servers;
+
+    return new ArrayList<>(groupServers.keySet());
   }
 
   public void shutDown() {
-    this.estimateTimeoutProcessor.shutdown();
+    estimateTimeoutProcessor.shutdown();
   }
 
   /**
@@ -241,18 +287,18 @@ public class LocatorLoadSnapshot {
    *         excluded, otherwise the least loaded server in the group.
    */
   public synchronized ServerLocation getReplacementServerForConnection(ServerLocation currentServer,
-      String group, Set excludedServers) {
+      String group, Set<ServerLocation> excludedServers) {
     if ("".equals(group)) {
       group = null;
     }
 
-    Map groupServers = (Map) connectionLoadMap.get(group);
+    Map<ServerLocation, LoadHolder> groupServers = connectionLoadMap.get(group);
     if (groupServers == null || groupServers.isEmpty()) {
       return null;
     }
 
     // check to see if we are currently balanced
-    if (isBalanced(groupServers)) {
+    if (isBalanced(groupServers, true)) {
       // if we are then return currentServer
       return currentServer;
     }
@@ -262,11 +308,11 @@ public class LocatorLoadSnapshot {
       return currentServer;
     }
     {
-      List bestLHs = findBestServers(groupServers, excludedServers, 1);
-      if (bestLHs == null || bestLHs.isEmpty()) {
+      List<LoadHolder> bestLHs = findBestServers(groupServers, excludedServers, 1);
+      if (bestLHs.isEmpty()) {
         return null;
       }
-      LoadHolder bestLH = (LoadHolder) bestLHs.get(0);
+      LoadHolder bestLH = bestLHs.get(0);
       currentServerLH.decConnections();
       bestLH.incConnections();
       return bestLH.getLocation();
@@ -282,8 +328,8 @@ public class LocatorLoadSnapshot {
    * @return a list containing the best servers. The size of the list will be less than or equal to
    *         count, depending on if there are enough servers available.
    */
-  public List getServersForQueue(String group, Set excludedServers, int count) {
-    return getServersForQueue(null/* no id */, group, excludedServers, count);
+  public List getServersForQueue(String group, Set<ServerLocation> excludedServers, int count) {
+    return getServersForQueue(null, group, excludedServers, count);
   }
 
   /**
@@ -296,25 +342,24 @@ public class LocatorLoadSnapshot {
    * @return a list containing the best servers. The size of the list will be less than or equal to
    *         count, depending on if there are enough servers available.
    */
-  public synchronized List getServersForQueue(ClientProxyMembershipID id, String group,
-      Set excludedServers, int count) {
+  synchronized List<ServerLocation> getServersForQueue(ClientProxyMembershipID id, String group,
+      Set<ServerLocation> excludedServers, int count) {
     if ("".equals(group)) {
       group = null;
     }
 
-    Map groupServers = (Map) queueLoadMap.get(group);
+    Map<ServerLocation, LoadHolder> groupServers = queueLoadMap.get(group);
 
     if (groupServers == null || groupServers.isEmpty()) {
-      return Collections.EMPTY_LIST;
+      return Collections.emptyList();
     }
     {
-      List/* <LoadHolder> */ bestLHs = findBestServers(groupServers, excludedServers, count);
-      ArrayList/* <ServerLocation> */ result = new ArrayList(bestLHs.size());
+      List<LoadHolder> bestLHs = findBestServers(groupServers, excludedServers, count);
+      ArrayList<ServerLocation> result = new ArrayList<>(bestLHs.size());
 
       if (id != null) {
         ClientProxyMembershipID.Identity actualId = id.getIdentity();
-        for (Iterator itr = bestLHs.iterator(); itr.hasNext();) {
-          LoadHolder load = (LoadHolder) itr.next();
+        for (LoadHolder load : bestLHs) {
           EstimateMapKey key = new EstimateMapKey(actualId, load.getLocation());
           LoadEstimateTask task = new LoadEstimateTask(key, load);
           try {
@@ -323,8 +368,7 @@ public class LocatorLoadSnapshot {
             if (timeout < MIN_TIMEOUT) {
               timeout = MIN_TIMEOUT;
             }
-            task.setFuture(
-                this.estimateTimeoutProcessor.schedule(task, timeout, TimeUnit.MILLISECONDS));
+            task.setFuture(estimateTimeoutProcessor.schedule(task, timeout, TimeUnit.MILLISECONDS));
             addEstimate(key, task);
           } catch (RejectedExecutionException e) {
             // ignore, the timer has been cancelled, which means we're shutting
@@ -333,8 +377,7 @@ public class LocatorLoadSnapshot {
           result.add(load.getLocation());
         }
       } else {
-        for (Iterator itr = bestLHs.iterator(); itr.hasNext();) {
-          LoadHolder load = (LoadHolder) itr.next();
+        for (LoadHolder load : bestLHs) {
           load.incConnections();
           result.add(load.getLocation());
         }
@@ -347,16 +390,16 @@ public class LocatorLoadSnapshot {
    * Test hook to get the current load for all servers Returns a map of ServerLocation->Load for
    * each server.
    */
-  public synchronized Map getLoadMap() {
-    Map connectionMap = (Map) connectionLoadMap.get(null);
-    Map queueMap = (Map) queueLoadMap.get(null);
-    Map result = new HashMap();
+  public synchronized Map<ServerLocation, ServerLoad> getLoadMap() {
+    Map<ServerLocation, LoadHolder> connectionMap = connectionLoadMap.get(null);
+    Map<ServerLocation, LoadHolder> queueMap = queueLoadMap.get(null);
+    Map<ServerLocation, ServerLoad> result = new HashMap<>();
 
-    for (Iterator itr = connectionMap.entrySet().iterator(); itr.hasNext();) {
-      Map.Entry next = (Entry) itr.next();
-      ServerLocation location = (ServerLocation) next.getKey();
-      LoadHolder connectionLoad = (LoadHolder) next.getValue();
-      LoadHolder queueLoad = (LoadHolder) queueMap.get(location);
+    for (Entry<ServerLocation, LoadHolder> entry : connectionMap
+        .entrySet()) {
+      ServerLocation location = entry.getKey();
+      LoadHolder connectionLoad = entry.getValue();
+      LoadHolder queueLoad = queueMap.get(location);
       // was asynchronously removed
       if (queueLoad == null) {
         continue;
@@ -369,38 +412,31 @@ public class LocatorLoadSnapshot {
     return result;
   }
 
-  private void addGroups(Map map, String[] groups, LoadHolder holder) {
-    for (int i = 0; i < groups.length; i++) {
-      Map groupMap = (Map) map.get(groups[i]);
-      if (groupMap == null) {
-        groupMap = new HashMap();
-        map.put(groups[i], groupMap);
-      }
+  private void addGroups(Map<String, Map<ServerLocation, LoadHolder>> map, String[] groups,
+      LoadHolder holder) {
+    for (String group : groups) {
+      Map<ServerLocation, LoadHolder> groupMap = map.computeIfAbsent(group, k -> new HashMap<>());
       groupMap.put(holder.getLocation(), holder);
     }
-    // Special case for GatewayReceiver where we don't put those serverlocation against
-    // holder
+    // Special case for GatewayReceiver where we don't put those serverlocation against holder
     if (!(groups.length > 0 && groups[0].equals(GatewayReceiver.RECEIVER_GROUP))) {
-      Map groupMap = (Map) map.get(null);
-      if (groupMap == null) {
-        groupMap = new HashMap();
-        map.put(null, groupMap);
-      }
+      Map<ServerLocation, LoadHolder> groupMap = map.computeIfAbsent(null, k -> new HashMap<>());
       groupMap.put(holder.getLocation(), holder);
     }
   }
 
-  private void removeFromMap(Map map, String[] groups, ServerLocation location) {
-    for (int i = 0; i < groups.length; i++) {
-      Map groupMap = (Map) map.get(groups[i]);
+  private void removeFromMap(Map<String, Map<ServerLocation, LoadHolder>> map, String[] groups,
+      ServerLocation location) {
+    for (String group : groups) {
+      Map<ServerLocation, LoadHolder> groupMap = map.get(group);
       if (groupMap != null) {
         groupMap.remove(location);
         if (groupMap.size() == 0) {
-          map.remove(groupMap);
+          map.remove(group);
         }
       }
     }
-    Map groupMap = (Map) map.get(null);
+    Map groupMap = map.get(null);
     groupMap.remove(location);
   }
 
@@ -412,62 +448,69 @@ public class LocatorLoadSnapshot {
     }
   }
 
-  private List/* <LoadHolder> */ findBestServers(Map groupServers, Set excludedServers, int count) {
-    TreeSet bestEntries = new TreeSet(new Comparator() {
-      public int compare(Object o1, Object o2) {
-        LoadHolder l1 = (LoadHolder) o1;
-        LoadHolder l2 = (LoadHolder) o2;
-        int difference = Float.compare(l1.getLoad(), l2.getLoad());
-        if (difference != 0) {
-          return difference;
-        }
-        ServerLocation sl1 = l1.getLocation();
-        ServerLocation sl2 = l2.getLocation();
-        return sl1.compareTo(sl2);
+  /**
+   *
+   * @param groupServers the servers to consider
+   * @param excludedServers servers to exclude
+   * @param count how many you want. a negative number means all of them in order of best to worst
+   * @return a list of best...worst server LoadHolders
+   */
+  private List<LoadHolder> findBestServers(Map<ServerLocation, LoadHolder> groupServers,
+      Set<ServerLocation> excludedServers, int count) {
+
+    TreeSet<LoadHolder> bestEntries = new TreeSet<>((l1, l2) -> {
+      int difference = Float.compare(l1.getLoad(), l2.getLoad());
+      if (difference != 0) {
+        return difference;
       }
+      ServerLocation sl1 = l1.getLocation();
+      ServerLocation sl2 = l2.getLocation();
+      return sl1.compareTo(sl2);
     });
 
+    boolean retainAll = (count < 0);
     float lastBestLoad = Float.MAX_VALUE;
-    for (Iterator itr = groupServers.entrySet().iterator(); itr.hasNext();) {
-      Map.Entry next = (Entry) itr.next();
-      ServerLocation location = (ServerLocation) next.getKey();
+
+    for (Map.Entry<ServerLocation, LoadHolder> loadEntry : groupServers.entrySet()) {
+      ServerLocation location = loadEntry.getKey();
       if (excludedServers.contains(location)) {
         continue;
       }
-      LoadHolder nextLoadReference = (LoadHolder) next.getValue();
+
+      LoadHolder nextLoadReference = loadEntry.getValue();
       float nextLoad = nextLoadReference.getLoad();
 
-      if (bestEntries.size() < count || count == -1 || nextLoad < lastBestLoad) {
+      if ((bestEntries.size() < count) || retainAll || (nextLoad < lastBestLoad)) {
         bestEntries.add(nextLoadReference);
-        if (count != -1 && bestEntries.size() > count) {
+        if (!retainAll && (bestEntries.size() > count)) {
           bestEntries.remove(bestEntries.last());
         }
-        LoadHolder lastBestHolder = (LoadHolder) bestEntries.last();
+        LoadHolder lastBestHolder = bestEntries.last();
         lastBestLoad = lastBestHolder.getLoad();
       }
     }
 
-    return new ArrayList(bestEntries);
+    return new ArrayList<>(bestEntries);
   }
 
   /**
    * If it is most loaded then return its LoadHolder; otherwise return null;
    */
-  private LoadHolder isCurrentServerMostLoaded(ServerLocation currentServer, Map groupServers) {
-    final LoadHolder currentLH = (LoadHolder) groupServers.get(currentServer);
+  private LoadHolder isCurrentServerMostLoaded(ServerLocation currentServer,
+      Map<ServerLocation, LoadHolder> groupServers) {
+    final LoadHolder currentLH = groupServers.get(currentServer);
     if (currentLH == null)
       return null;
     final float currentLoad = currentLH.getLoad();
-    for (Iterator itr = groupServers.entrySet().iterator(); itr.hasNext();) {
-      Map.Entry next = (Entry) itr.next();
-      ServerLocation location = (ServerLocation) next.getKey();
+    for (Map.Entry<ServerLocation, LoadHolder> loadEntry : groupServers.entrySet()) {
+      ServerLocation location = loadEntry.getKey();
       if (location.equals(currentServer)) {
         continue;
       }
-      LoadHolder nextLoadReference = (LoadHolder) next.getValue();
+      LoadHolder nextLoadReference = loadEntry.getValue();
       float nextLoad = nextLoadReference.getLoad();
       if (nextLoad > currentLoad) {
-        // found a guy who has a higher load than us so...
+        // found a server who has a higher load than us
         return null;
       }
     }
@@ -484,8 +527,8 @@ public class LocatorLoadSnapshot {
    * Add the task to the estimate map at the given key and cancel any old task found
    */
   private void addEstimate(EstimateMapKey key, LoadEstimateTask task) {
-    LoadEstimateTask oldTask = null;
-    oldTask = (LoadEstimateTask) this.estimateMap.put(key, task);
+    LoadEstimateTask oldTask;
+    oldTask = estimateMap.put(key, task);
     if (oldTask != null) {
       oldTask.cancel();
     }
@@ -496,7 +539,7 @@ public class LocatorLoadSnapshot {
    *
    * @return true it task was removed; false if it was not the task mapped to key
    */
-  protected boolean removeIfPresentEstimate(EstimateMapKey key, LoadEstimateTask task) {
+  private boolean removeIfPresentEstimate(EstimateMapKey key, LoadEstimateTask task) {
     // no need to cancel task; it already fired
     return estimateMap.remove(key, task);
   }
@@ -505,8 +548,8 @@ public class LocatorLoadSnapshot {
    * Remove and cancel any task estimate mapped to the given key.
    */
   private void removeAndCancelEstimate(EstimateMapKey key) {
-    LoadEstimateTask oldTask = null;
-    oldTask = (LoadEstimateTask) this.estimateMap.remove(key);
+    LoadEstimateTask oldTask;
+    oldTask = estimateMap.remove(key);
     if (oldTask != null) {
       oldTask.cancel();
     }
@@ -521,23 +564,23 @@ public class LocatorLoadSnapshot {
 
     private final ServerLocation serverId;
 
-    public EstimateMapKey(ClientProxyMembershipID.Identity clientId, ServerLocation serverId) {
+    EstimateMapKey(ClientProxyMembershipID.Identity clientId, ServerLocation serverId) {
       this.clientId = clientId;
       this.serverId = serverId;
     }
 
     @Override
     public int hashCode() {
-      return this.clientId.hashCode() ^ this.serverId.hashCode();
+      return clientId.hashCode() ^ serverId.hashCode();
     }
 
     @Override
     public boolean equals(Object obj) {
-      if ((obj == null) || !(obj instanceof EstimateMapKey)) {
+      if (!(obj instanceof EstimateMapKey)) {
         return false;
       }
       EstimateMapKey that = (EstimateMapKey) obj;
-      return this.clientId.equals(that.clientId) && this.serverId.equals(that.serverId);
+      return clientId.equals(that.clientId) && serverId.equals(that.serverId);
     }
   }
 
@@ -548,14 +591,15 @@ public class LocatorLoadSnapshot {
 
     private ScheduledFuture future;
 
-    public LoadEstimateTask(EstimateMapKey key, LoadHolder lh) {
+    LoadEstimateTask(EstimateMapKey key, LoadHolder lh) {
       this.key = key;
       this.lh = lh;
       lh.addEstimate();
     }
 
+    @Override
     public void run() {
-      if (removeIfPresentEstimate(this.key, this)) {
+      if (removeIfPresentEstimate(key, this)) {
         decEstimate();
       }
     }
@@ -567,13 +611,13 @@ public class LocatorLoadSnapshot {
     }
 
     public void cancel() {
-      this.future.cancel(false);
+      future.cancel(false);
       decEstimate();
     }
 
     private void decEstimate() {
       synchronized (LocatorLoadSnapshot.this) {
-        this.lh.removeEstimate();
+        lh.removeEstimate();
       }
     }
   }
@@ -589,7 +633,7 @@ public class LocatorLoadSnapshot {
 
     private final long loadPollInterval;
 
-    public LoadHolder(ServerLocation location, float load, float loadPerConnection,
+    LoadHolder(ServerLocation location, float load, float loadPerConnection,
         long loadPollInterval) {
       this.location = location;
       this.load = load;
@@ -597,27 +641,27 @@ public class LocatorLoadSnapshot {
       this.loadPollInterval = loadPollInterval;
     }
 
-    public void setLoad(float load, float loadPerConnection) {
+    void setLoad(float load, float loadPerConnection) {
       this.loadPerConnection = loadPerConnection;
-      this.load = load + (this.estimateCount * loadPerConnection);
+      this.load = load + (estimateCount * loadPerConnection);
     }
 
-    public void incConnections() {
-      this.load += loadPerConnection;
+    void incConnections() {
+      load += loadPerConnection;
     }
 
-    public void addEstimate() {
-      this.estimateCount++;
+    void addEstimate() {
+      estimateCount++;
       incConnections();
     }
 
-    public void removeEstimate() {
-      this.estimateCount--;
+    void removeEstimate() {
+      estimateCount--;
       decConnections();
     }
 
-    public void decConnections() {
-      this.load -= loadPerConnection;
+    void decConnections() {
+      load -= loadPerConnection;
     }
 
     public float getLoad() {
@@ -633,14 +677,14 @@ public class LocatorLoadSnapshot {
     }
 
     public long getLoadPollInterval() {
-      return this.loadPollInterval;
+      return loadPollInterval;
     }
 
     @Override
     public String toString() {
       return "LoadHolder[" + getLoad() + ", " + getLocation() + ", loadPollInterval="
           + getLoadPollInterval()
-          + ((this.estimateCount != 0) ? (", estimates=" + this.estimateCount) : "") + ", "
+          + ((estimateCount != 0) ? (", estimates=" + estimateCount) : "") + ", "
           + loadPerConnection + "]";
     }
   }

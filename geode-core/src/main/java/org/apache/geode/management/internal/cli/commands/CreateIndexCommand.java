@@ -15,35 +15,45 @@
 
 package org.apache.geode.management.internal.cli.commands;
 
+import static org.apache.geode.management.internal.cli.remote.CommandExecutor.RUN_ON_MEMBER_CHANGE_NOT_PERSISTED;
+import static org.apache.geode.management.internal.cli.remote.CommandExecutor.SERVICE_NOT_RUNNING_CHANGE_NOT_PERSISTED;
+
+import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.springframework.shell.core.annotation.CliCommand;
 import org.springframework.shell.core.annotation.CliOption;
 
+import org.apache.geode.annotations.Immutable;
+import org.apache.geode.cache.configuration.RegionConfig;
 import org.apache.geode.cache.query.IndexType;
 import org.apache.geode.distributed.DistributedMember;
+import org.apache.geode.distributed.internal.InternalConfigurationPersistenceService;
+import org.apache.geode.management.api.ClusterManagementService;
 import org.apache.geode.management.cli.CliMetaData;
 import org.apache.geode.management.cli.ConverterHint;
-import org.apache.geode.management.cli.Result;
-import org.apache.geode.management.internal.cli.domain.IndexInfo;
+import org.apache.geode.management.cli.GfshCommand;
+import org.apache.geode.management.configuration.Region;
 import org.apache.geode.management.internal.cli.functions.CliFunctionResult;
 import org.apache.geode.management.internal.cli.functions.CreateIndexFunction;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
-import org.apache.geode.management.internal.configuration.domain.XmlEntity;
+import org.apache.geode.management.internal.cli.result.model.InfoResultModel;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.management.internal.security.ResourceOperation;
 import org.apache.geode.security.ResourcePermission;
 
-public class CreateIndexCommand implements GfshCommand {
+public class CreateIndexCommand extends GfshCommand {
+  @Immutable
   private static final CreateIndexFunction createIndexFunction = new CreateIndexFunction();
 
   @CliCommand(value = CliStrings.CREATE_INDEX, help = CliStrings.CREATE_INDEX__HELP)
   @CliMetaData(relatedTopic = {CliStrings.TOPIC_GEODE_REGION, CliStrings.TOPIC_GEODE_DATA})
-  // TODO : Add optionContext for indexName
   @ResourceOperation(resource = ResourcePermission.Resource.CLUSTER,
       operation = ResourcePermission.Operation.MANAGE, target = ResourcePermission.Target.QUERY)
-  public Result createIndex(@CliOption(key = CliStrings.CREATE_INDEX__NAME, mandatory = true,
+  public ResultModel createIndex(@CliOption(key = CliStrings.CREATE_INDEX__NAME, mandatory = true,
       help = CliStrings.CREATE_INDEX__NAME__HELP) final String indexName,
 
       @CliOption(key = CliStrings.CREATE_INDEX__EXPRESSION, mandatory = true,
@@ -63,25 +73,127 @@ public class CreateIndexCommand implements GfshCommand {
 
       @CliOption(key = {CliStrings.GROUP, CliStrings.GROUPS},
           optionContext = ConverterHint.MEMBERGROUP,
-          help = CliStrings.CREATE_INDEX__GROUP__HELP) final String[] group) {
+          help = CliStrings.CREATE_INDEX__GROUP__HELP) String[] groups) {
 
-    Result result;
-    final Set<DistributedMember> targetMembers = findMembers(group, memberNameOrID);
+    // first find out what groups this region belongs to when using cluster configuration
+    InternalConfigurationPersistenceService ccService = getConfigurationPersistenceService();
+    ClusterManagementService cms = getClusterManagementService();
+    final Set<DistributedMember> targetMembers;
+    ResultModel resultModel = new ResultModel();
+    InfoResultModel info = resultModel.addInfo();
+    String regionName = null;
+    // if cluster management service is enabled and user did not specify a member id, then
+    // we will find the applicable members based on the what group this region is on
+    if (ccService != null && memberNameOrID == null) {
+      regionName = getValidRegionName(regionPath, cms);
+      Set<String> calculatedGroups = getGroupsContainingRegion(cms, regionName);
+      if (calculatedGroups.isEmpty()) {
+        return ResultModel.createError("Region " + regionName + " does not exist.");
+      }
+      if (groups != null && !calculatedGroups.containsAll(Arrays.asList(groups))) {
+        return ResultModel
+            .createError("Region " + regionName + " does not exist in some of the groups.");
+      }
+      if (groups == null) {
+        // the calculatedGroups will have null value to indicate the "cluster" level, in thise case
+        // we want the groups to an empty array
+        groups = calculatedGroups.stream().filter(Objects::nonNull).toArray(String[]::new);
+      }
+      targetMembers = findMembers(groups, null);
+    }
+    // otherwise use the group/members specified in the option to find the applicable members.
+    else {
+      targetMembers = findMembers(groups, memberNameOrID);
+    }
 
     if (targetMembers.isEmpty()) {
-      return ResultBuilder.createUserErrorResult(CliStrings.NO_MEMBERS_FOUND_MESSAGE);
+      return ResultModel.createError(CliStrings.NO_MEMBERS_FOUND_MESSAGE);
     }
 
-    IndexInfo indexInfo = new IndexInfo(indexName, indexedExpression, regionPath, indexType);
+    RegionConfig.Index index = new RegionConfig.Index();
+    index.setName(indexName);
+    index.setExpression(indexedExpression);
+    index.setFromClause(regionPath);
+    if (indexType == IndexType.PRIMARY_KEY) {
+      index.setKeyIndex(true);
+    } else {
+      index.setKeyIndex(false);
+      index.setType(indexType.getName());
+    }
+
     List<CliFunctionResult> functionResults =
-        executeAndGetFunctionResult(createIndexFunction, indexInfo, targetMembers);
-    result = ResultBuilder.buildResult(functionResults);
-    XmlEntity xmlEntity = findXmlEntity(functionResults);
+        executeAndGetFunctionResult(createIndexFunction, index, targetMembers);
+    resultModel.addTableAndSetStatus("createIndex", functionResults, true, false);
 
-    if (xmlEntity != null) {
-      persistClusterConfiguration(result,
-          () -> getSharedConfiguration().addXmlEntity(xmlEntity, group));
+    if (!resultModel.isSuccessful()) {
+      return resultModel;
     }
-    return result;
+
+    // update the cluster configuration. Can't use SingleGfshCommand to do the update since in some
+    // cases
+    // groups information is inferred by the region, and the --group option might have the wrong
+    // group
+    // information.
+    if (ccService == null) {
+      info.addLine(SERVICE_NOT_RUNNING_CHANGE_NOT_PERSISTED);
+      return resultModel;
+    }
+    if (memberNameOrID != null) {
+      info.addLine(RUN_ON_MEMBER_CHANGE_NOT_PERSISTED);
+      return resultModel;
+    }
+
+    final InfoResultModel groupStatus = resultModel.addInfo("groupStatus");
+    String finalRegionName = regionName;
+    // at this point, groups should be the regionConfig's groups
+    if (groups.length == 0) {
+      groups = new String[] {"cluster"};
+    }
+    for (String group : groups) {
+      ccService.updateCacheConfig(group, cacheConfig -> {
+        RegionConfig regionConfig = cacheConfig.findRegionConfiguration(finalRegionName);
+        regionConfig.getIndexes().add(index);
+        groupStatus
+            .addLine("Cluster configuration for group '" + group + "' is updated.");
+        return cacheConfig;
+      });
+    }
+    return resultModel;
   }
+
+  // find a valid regionName when regionPath passed in is in the form of
+  // "/region1.fieldName.fieldName x"
+  // this also handles the possibility when regionName has "." in it, like "/A.B". It's stripping
+  // . part one by one and check if the remaining part is a valid region name or not. If we
+  // could not find a region with any part of the name, (like, couldn't find A.B or A), then A is
+  // returned.
+  String getValidRegionName(String regionPath, ClusterManagementService cms) {
+    // Check to see if the region path contains an alias e.g "/region1 r1"
+    // Then the first string will be the regionPath
+    String regionName = regionPath.trim().split(" ")[0];
+    // check to see if the region path is in the form of "--region=region.entrySet() z"
+    while (regionName.contains(".")) {
+      Set<String> groupsContainingRegion = getGroupsContainingRegion(cms, regionName);
+      if (!groupsContainingRegion.isEmpty()) {
+        break;
+      }
+      // otherwise, strip one more . part off the regionName
+      else {
+        regionName = regionName.substring(0, regionName.lastIndexOf("."));
+      }
+    }
+    return regionName;
+  }
+
+  // if region belongs to "cluster" level, it will return a set of one null value
+  Set<String> getGroupsContainingRegion(ClusterManagementService cms,
+      String regionName) {
+    Region regionConfig = new Region();
+    regionConfig.setName(regionName);
+    List<Region> regions = cms.list(regionConfig).getConfigResult();
+    return regions.stream().map(Region::getGroup)
+        .collect(Collectors.toSet());
+  }
+
+
 }

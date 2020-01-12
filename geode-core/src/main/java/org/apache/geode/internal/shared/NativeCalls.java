@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.geode.SystemFailure;
+import org.apache.geode.annotations.Immutable;
 
 /**
  * Encapsulates native C/C++ calls via JNA. To obtain an instance of implementation for a platform,
@@ -47,7 +48,8 @@ public abstract class NativeCalls {
    * Note: this variable is deliberately not final so that other clients can plug in their own
    * native implementations of NativeCalls.
    */
-  protected static NativeCalls instance;
+  @Immutable
+  protected static final NativeCalls instance;
 
   static {
     NativeCalls inst;
@@ -78,30 +80,6 @@ public abstract class NativeCalls {
    */
   public static NativeCalls getInstance() {
     return instance;
-  }
-
-  @SuppressWarnings("unchecked")
-  protected static Map<String, String> getModifiableJavaEnv() {
-    final Map<String, String> env = System.getenv();
-    try {
-      final Field m = env.getClass().getDeclaredField("m");
-      m.setAccessible(true);
-      return (Map<String, String>) m.get(env);
-    } catch (Exception ex) {
-      return null;
-    }
-  }
-
-  @SuppressWarnings("unchecked")
-  protected static Map<String, String> getModifiableJavaEnvWIN() {
-    try {
-      final Field envField = Class.forName("java.lang.ProcessEnvironment")
-          .getDeclaredField("theCaseInsensitiveEnvironment");
-      envField.setAccessible(true);
-      return (Map<String, String>) envField.get(null);
-    } catch (Exception ex) {
-      return null;
-    }
   }
 
   /**
@@ -263,17 +241,6 @@ public abstract class NativeCalls {
   public abstract String getEnvironment(String name);
 
   /**
-   * Set the value of an environment variable. This modifies both the value in the process, and the
-   * cached static map maintained by JVM on the first call so further calls to
-   * {@link System#getenv(String)} will also return the modified value.
-   *
-   * @param name the name of the environment variable to be modified
-   * @param value the new value of the environment variable; a value of null clears the existing
-   *        value
-   */
-  public abstract void setEnvironment(String name, String value);
-
-  /**
    * Get the process ID of the current process.
    */
   public abstract int getProcessId();
@@ -431,12 +398,12 @@ public abstract class NativeCalls {
    *
    * @since GemFire 8.0
    */
-  public static interface RehashServerOnSIGHUP {
+  public interface RehashServerOnSIGHUP {
 
     /**
      * Perform the actions required to "rehash" the server.
      */
-    public void rehash();
+    void rehash();
   }
 
   /**
@@ -455,7 +422,6 @@ public abstract class NativeCalls {
    * Linux impls create temporary timespec object and marshals that for invoking native api.
    * Shouldn't be used if to be called too many times, instead jni implementation is more desirable.
    *
-   * @param clock_id
    * @return nanosecond precision performance counter.
    */
   public long nanoTime(int clock_id) {
@@ -479,13 +445,10 @@ public abstract class NativeCalls {
    */
   public static class NativeCallsGeneric extends NativeCalls {
 
-    private static final Map<String, String> javaEnv;
-
     private static final boolean isWin;
 
     static {
       isWin = System.getProperty("os.name").indexOf("Windows") >= 0;
-      javaEnv = isWin ? getModifiableJavaEnvWIN() : getModifiableJavaEnv();
     }
 
     /**
@@ -502,21 +465,6 @@ public abstract class NativeCalls {
     @Override
     public String getEnvironment(final String name) {
       return System.getenv(name);
-    }
-
-    /**
-     * @see NativeCalls#setEnvironment(String, String)
-     */
-    @Override
-    public void setEnvironment(final String name, final String value) {
-      // just change the cached map in java env if possible
-      if (javaEnv != null) {
-        if (value != null) {
-          javaEnv.put(name, value);
-        } else {
-          javaEnv.remove(name);
-        }
-      }
     }
 
     /**

@@ -17,10 +17,10 @@ package org.apache.geode.internal.cache;
 import java.util.Set;
 
 import org.apache.geode.CancelException;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.ReplyException;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.Version;
+import org.apache.geode.internal.serialization.Version;
 
 /**
  * Operation that determines the latest last access time for a given region and key
@@ -28,19 +28,19 @@ import org.apache.geode.internal.Version;
  * @since Geode 1.4
  */
 public class LatestLastAccessTimeOperation<K> {
-  private final InternalDistributedRegion<K, ?> region;
+  private final InternalDistributedRegion region;
   private final K key;
 
-  public LatestLastAccessTimeOperation(InternalDistributedRegion<K, ?> region, K key) {
+  public LatestLastAccessTimeOperation(InternalDistributedRegion region, K key) {
     this.region = region;
     this.key = key;
   }
 
   public long getLatestLastAccessTime() {
     final Set<InternalDistributedMember> recipients =
-        this.region.getCacheDistributionAdvisor().adviseInitializedReplicates();
-    final DM dm = this.region.getDistributionManager();
-    dm.retainMembersWithSameOrNewerVersion(recipients, Version.GEODE_140);
+        this.region.getCacheDistributionAdvisor().adviseNetSearch();
+    final DistributionManager dm = this.region.getDistributionManager();
+    dm.retainMembersWithSameOrNewerVersion(recipients, Version.GEODE_1_4_0);
     final LatestLastAccessTimeReplyProcessor replyProcessor =
         new LatestLastAccessTimeReplyProcessor(dm, recipients);
     dm.putOutgoing(

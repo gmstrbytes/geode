@@ -29,16 +29,18 @@ import com.healthmarketscience.rmiio.RemoteInputStream;
 import com.healthmarketscience.rmiio.SimpleRemoteInputStream;
 import com.healthmarketscience.rmiio.exporter.RemoteStreamExporter;
 import org.apache.commons.io.FilenameUtils;
-import org.apache.commons.lang.ArrayUtils;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.ArrayUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.shell.core.annotation.CliCommand;
 import org.springframework.shell.core.annotation.CliOption;
 
 import org.apache.geode.cache.execute.ResultCollector;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.internal.ClusterConfigurationService;
+import org.apache.geode.distributed.internal.InternalConfigurationPersistenceService;
+import org.apache.geode.internal.DeployedJar;
 import org.apache.geode.management.cli.CliMetaData;
 import org.apache.geode.management.cli.ConverterHint;
+import org.apache.geode.management.cli.GfshCommand;
 import org.apache.geode.management.cli.Result;
 import org.apache.geode.management.internal.ManagementAgent;
 import org.apache.geode.management.internal.SystemManagementService;
@@ -49,13 +51,14 @@ import org.apache.geode.management.internal.cli.functions.CliFunctionResult;
 import org.apache.geode.management.internal.cli.functions.DeployFunction;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
 import org.apache.geode.management.internal.cli.remote.CommandExecutionContext;
-import org.apache.geode.management.internal.cli.result.FileResult;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
-import org.apache.geode.management.internal.cli.result.TabularResultData;
+import org.apache.geode.management.internal.cli.remote.CommandExecutor;
+import org.apache.geode.management.internal.cli.result.model.FileResultModel;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
+import org.apache.geode.management.internal.cli.result.model.TabularResultModel;
 import org.apache.geode.management.internal.security.ResourceOperation;
 import org.apache.geode.security.ResourcePermission;
 
-public class DeployCommand implements GfshCommand {
+public class DeployCommand extends GfshCommand {
   private final DeployFunction deployFunction = new DeployFunction();
 
   /**
@@ -72,20 +75,24 @@ public class DeployCommand implements GfshCommand {
       isFileUploaded = true, relatedTopic = {CliStrings.TOPIC_GEODE_CONFIG})
   @ResourceOperation(resource = ResourcePermission.Resource.CLUSTER,
       operation = ResourcePermission.Operation.MANAGE, target = ResourcePermission.Target.DEPLOY)
-  public Result deploy(
+  public ResultModel deploy(
       @CliOption(key = {CliStrings.GROUP, CliStrings.GROUPS}, help = CliStrings.DEPLOY__GROUP__HELP,
           optionContext = ConverterHint.MEMBERGROUP) String[] groups,
-      @CliOption(key = {CliStrings.JAR, CliStrings.JARS},
+      @CliOption(key = {CliStrings.JAR, CliStrings.JARS}, optionContext = ConverterHint.JARFILES,
           help = CliStrings.DEPLOY__JAR__HELP) String[] jars,
-      @CliOption(key = {CliStrings.DEPLOY__DIR}, help = CliStrings.DEPLOY__DIR__HELP) String dir)
+      @CliOption(key = {CliStrings.DEPLOY__DIR}, optionContext = ConverterHint.JARDIR,
+          help = CliStrings.DEPLOY__DIR__HELP) String dir)
       throws IOException {
 
-    TabularResultData tabularData = ResultBuilder.createTabularResultData();
+    ResultModel result = new ResultModel();
+    TabularResultModel deployResult = result.addTable("deployResult");
 
     List<String> jarFullPaths = CommandExecutionContext.getFilePathFromShell();
 
+    verifyJarContent(jarFullPaths);
+
     Set<DistributedMember> targetMembers;
-    targetMembers = CliUtil.findMembers(groups, null);
+    targetMembers = findMembers(groups, null);
 
     List results = new ArrayList();
     ManagementAgent agent = ((SystemManagementService) getManagementService()).getManagementAgent();
@@ -117,34 +124,38 @@ public class DeployCommand implements GfshCommand {
 
     List<CliFunctionResult> cleanedResults = CliFunctionResult.cleanResults(results);
 
-    for (CliFunctionResult result : cleanedResults) {
-      if (result.getThrowable() != null) {
-        tabularData.accumulate("Member", result.getMemberIdOrName());
-        tabularData.accumulate("Deployed JAR", "");
-        tabularData.accumulate("Deployed JAR Location",
-            "ERROR: " + result.getThrowable().getClass().getName() + ": "
-                + result.getThrowable().getMessage());
-        tabularData.setStatus(Result.Status.ERROR);
+    deployResult.setColumnHeader("Member", "Deployed JAR", "Deployed JAR Location");
+    for (CliFunctionResult cliResult : cleanedResults) {
+      if (cliResult.getThrowable() != null) {
+        deployResult.addRow(cliResult.getMemberIdOrName(), "",
+            "ERROR: " + cliResult.getThrowable().getClass().getName() + ": "
+                + cliResult.getThrowable().getMessage());
+        result.setStatus(Result.Status.ERROR);
       } else {
-        String[] strings = (String[]) result.getSerializables();
+        String[] strings = (String[]) cliResult.getSerializables();
         for (int i = 0; i < strings.length; i += 2) {
-          tabularData.accumulate("Member", result.getMemberIdOrName());
-          tabularData.accumulate("Deployed JAR", strings[i]);
-          tabularData.accumulate("Deployed JAR Location", strings[i + 1]);
+          deployResult.addRow(cliResult.getMemberIdOrName(), strings[i], strings[i + 1]);
         }
       }
     }
 
-    Result result = ResultBuilder.buildResult(tabularData);
-    ClusterConfigurationService sc = getSharedConfiguration();
+    InternalConfigurationPersistenceService sc = getConfigurationPersistenceService();
     if (sc == null) {
-      result.setCommandPersisted(false);
+      result.addInfo().addLine(CommandExecutor.SERVICE_NOT_RUNNING_CHANGE_NOT_PERSISTED);
     } else {
       sc.addJarsToThisLocator(jarFullPaths, groups);
-      result.setCommandPersisted(true);
     }
-
     return result;
+  }
+
+  private void verifyJarContent(List<String> jarNames) {
+    for (String jarName : jarNames) {
+      File jar = new File(jarName);
+      if (!DeployedJar.hasValidJarContent(jar)) {
+        throw new IllegalArgumentException(
+            "File does not contain valid JAR content: " + jar.getName());
+      }
+    }
   }
 
   /**
@@ -153,53 +164,56 @@ public class DeployCommand implements GfshCommand {
   public static class Interceptor extends AbstractCliAroundInterceptor {
     private final DecimalFormat numFormatter = new DecimalFormat("###,##0.00");
 
+    /**
+     *
+     * @return FileResult object or ResultModel in case of errors
+     */
     @Override
-    public Result preExecution(GfshParseResult parseResult) {
+    public ResultModel preExecution(GfshParseResult parseResult) {
       String[] jars = (String[]) parseResult.getParamValue("jar");
       String dir = (String) parseResult.getParamValue("dir");
 
       if (ArrayUtils.isEmpty(jars) && StringUtils.isBlank(dir)) {
-        return ResultBuilder.createUserErrorResult(
+        return ResultModel.createError(
             "Parameter \"jar\" or \"dir\" is required. Use \"help <command name>\" for assistance.");
       }
 
       if (ArrayUtils.isNotEmpty(jars) && StringUtils.isNotBlank(dir)) {
-        return ResultBuilder
-            .createUserErrorResult("Parameters \"jar\" and \"dir\" can not both be specified.");
+        return ResultModel.createError("Parameters \"jar\" and \"dir\" can not both be specified.");
       }
 
-      FileResult fileResult = new FileResult();
+      ResultModel result = new ResultModel();
       if (jars != null) {
         for (String jar : jars) {
           File jarFile = new File(jar);
           if (!jarFile.exists()) {
-            return ResultBuilder.createUserErrorResult(jar + " not found.");
+            return ResultModel.createError(jar + " not found.");
           }
-          fileResult.addFile(jarFile);
+          result.addFile(jarFile, FileResultModel.FILE_TYPE_FILE);
         }
       } else {
         File fileDir = new File(dir);
         if (!fileDir.isDirectory()) {
-          return ResultBuilder.createUserErrorResult(dir + " is not a directory");
+          return ResultModel.createError(dir + " is not a directory");
         }
         File[] childJarFile = fileDir.listFiles(CliUtil.JAR_FILE_FILTER);
         for (File file : childJarFile) {
-          fileResult.addFile(file);
+          result.addFile(file, FileResultModel.FILE_TYPE_FILE);
         }
       }
 
       // check if user wants to upload with the computed file size
       String message =
-          "\nDeploying files: " + fileResult.getFormattedFileList() + "\nTotal file size is: "
-              + this.numFormatter.format((double) fileResult.computeFileSizeTotal() / ONE_MB)
+          "\nDeploying files: " + result.getFormattedFileList() + "\nTotal file size is: "
+              + this.numFormatter.format((double) result.computeFileSizeTotal() / ONE_MB)
               + "MB\n\nContinue? ";
 
       if (readYesNo(message, Response.YES) == Response.NO) {
-        return ResultBuilder.createShellClientAbortOperationResult(
-            "Aborted deploy of " + fileResult.getFormattedFileList() + ".");
+        return ResultModel.createError(
+            "Aborted deploy of " + result.getFormattedFileList() + ".");
       }
 
-      return fileResult;
+      return result;
     }
   }
 }

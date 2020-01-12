@@ -14,8 +14,14 @@
  */
 package org.apache.geode.internal.offheap;
 
-import static org.hamcrest.CoreMatchers.*;
-import static org.junit.Assert.*;
+import static org.hamcrest.CoreMatchers.equalTo;
+import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.not;
+import static org.hamcrest.CoreMatchers.notNullValue;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 
 import java.nio.ByteBuffer;
@@ -23,13 +29,10 @@ import java.nio.ByteBuffer;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 
 import org.apache.geode.internal.cache.EntryEventImpl;
 import org.apache.geode.internal.cache.VMCachedDeserializable;
-import org.apache.geode.test.junit.categories.UnitTest;
 
-@Category(UnitTest.class)
 public class OffHeapHelperJUnitTest extends AbstractStoredObjectTestBase {
 
   private StoredObject storedObject = null;
@@ -156,7 +159,7 @@ public class OffHeapHelperJUnitTest extends AbstractStoredObjectTestBase {
   @Test
   public void copyAndReleaseWithNullReturnsNull() {
     Object testObject = null;
-    Object returnObject = OffHeapHelper.copyAndReleaseIfNeeded(testObject);
+    Object returnObject = OffHeapHelper.copyAndReleaseIfNeeded(testObject, null);
     assertThat(returnObject, is(equalTo(null)));
   }
 
@@ -165,7 +168,7 @@ public class OffHeapHelperJUnitTest extends AbstractStoredObjectTestBase {
     allocateOffHeapDeserialized();
     assertTrue(storedObject.retain());
     assertThat("Retained chunk ref count", storedObject.getRefCount(), is(2));
-    OffHeapHelper.copyAndReleaseIfNeeded(storedObject);
+    OffHeapHelper.copyAndReleaseIfNeeded(storedObject, null);
     assertThat("Chunk ref count decreases", storedObject.getRefCount(), is(1));
   }
 
@@ -174,7 +177,7 @@ public class OffHeapHelperJUnitTest extends AbstractStoredObjectTestBase {
     allocateOffHeapDeserialized();
     // assertTrue(storedObject.retain());
     assertThat("Retained chunk ref count", storedObject.getRefCount(), is(1));
-    OffHeapHelper.copyAndReleaseIfNeeded(storedObject);
+    OffHeapHelper.copyAndReleaseIfNeeded(storedObject, null);
     assertThat("Chunk ref count decreases", storedObject.getRefCount(), is(0));
   }
 
@@ -182,7 +185,7 @@ public class OffHeapHelperJUnitTest extends AbstractStoredObjectTestBase {
   public void copyAndReleaseWithDeserializedReturnsValueOfOriginal() {
     allocateOffHeapDeserialized();
     assertTrue(storedObject.retain());
-    Object returnObject = OffHeapHelper.copyAndReleaseIfNeeded(storedObject);
+    Object returnObject = OffHeapHelper.copyAndReleaseIfNeeded(storedObject, null);
     assertThat(returnObject, is(equalTo(deserializedRegionEntryValue)));
   }
 
@@ -191,7 +194,7 @@ public class OffHeapHelperJUnitTest extends AbstractStoredObjectTestBase {
     allocateOffHeapSerialized();
     assertTrue(storedObject.retain());
     Object returnObject =
-        ((VMCachedDeserializable) OffHeapHelper.copyAndReleaseIfNeeded(storedObject))
+        ((VMCachedDeserializable) OffHeapHelper.copyAndReleaseIfNeeded(storedObject, null))
             .getSerializedValue();
     assertThat(returnObject, is(equalTo(serializedRegionEntryValue)));
   }
@@ -199,36 +202,36 @@ public class OffHeapHelperJUnitTest extends AbstractStoredObjectTestBase {
   @Test
   public void copyAndReleaseNonStoredObjectReturnsOriginal() {
     Object testObject = getValue();
-    Object returnObject = OffHeapHelper.copyAndReleaseIfNeeded(testObject);
+    Object returnObject = OffHeapHelper.copyAndReleaseIfNeeded(testObject, null);
     assertThat(returnObject, is(testObject));
   }
 
   @Test
   public void copyIfNeededWithNullReturnsNull() {
     Object testObject = null;
-    Object returnObject = OffHeapHelper.copyAndReleaseIfNeeded(testObject);
+    Object returnObject = OffHeapHelper.copyAndReleaseIfNeeded(testObject, null);
     assertThat(returnObject, is(equalTo(null)));
   }
 
   @Test
   public void copyIfNeededNonOffHeapReturnsOriginal() {
     Object testObject = getValue();
-    Object returnObject = OffHeapHelper.copyIfNeeded(testObject);
+    Object returnObject = OffHeapHelper.copyIfNeeded(testObject, null);
     assertThat(returnObject, is(testObject));
   }
 
   @Test
   public void copyIfNeededOffHeapSerializedReturnsValueOfOriginal() {
     allocateOffHeapSerialized();
-    Object returnObject =
-        ((VMCachedDeserializable) OffHeapHelper.copyIfNeeded(storedObject)).getSerializedValue();
+    Object returnObject = ((VMCachedDeserializable) OffHeapHelper.copyIfNeeded(storedObject, null))
+        .getSerializedValue();
     assertThat(returnObject, is(equalTo(serializedRegionEntryValue)));
   }
 
   @Test
   public void copyIfNeededOffHeapDeserializedReturnsOriginal() {
     allocateOffHeapDeserialized();
-    Object returnObject = OffHeapHelper.copyIfNeeded(storedObject);
+    Object returnObject = OffHeapHelper.copyIfNeeded(storedObject, null);
     assertThat(returnObject, is(equalTo(deserializedRegionEntryValue)));
   }
 
@@ -236,7 +239,7 @@ public class OffHeapHelperJUnitTest extends AbstractStoredObjectTestBase {
   public void copyIfNeededWithOffHeapDeserializedObjDoesNotRelease() {
     allocateOffHeapDeserialized();
     int initialRefCountOfObject = storedObject.getRefCount();
-    OffHeapHelper.copyIfNeeded(storedObject);
+    OffHeapHelper.copyIfNeeded(storedObject, null);
     assertThat("Ref count after copy", storedObject.getRefCount(), is(initialRefCountOfObject));
   }
 
@@ -244,7 +247,7 @@ public class OffHeapHelperJUnitTest extends AbstractStoredObjectTestBase {
   public void copyIfNeededWithOffHeapSerializedObjDoesNotRelease() {
     allocateOffHeapSerialized();
     int initialRefCountOfObject = storedObject.getRefCount();
-    OffHeapHelper.copyIfNeeded(storedObject);
+    OffHeapHelper.copyIfNeeded(storedObject, null);
     assertThat("Ref count after copy", storedObject.getRefCount(), is(initialRefCountOfObject));
   }
 

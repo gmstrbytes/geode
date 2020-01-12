@@ -23,7 +23,7 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.DataSerializer;
 import org.apache.geode.SystemFailure;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.HighPriorityDistributionMessage;
 import org.apache.geode.distributed.internal.MessageWithReply;
@@ -31,7 +31,9 @@ import org.apache.geode.distributed.internal.ReplyException;
 import org.apache.geode.distributed.internal.ReplyMessage;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 public class ReleaseClearLockMessage extends HighPriorityDistributionMessage
     implements MessageWithReply {
@@ -49,8 +51,8 @@ public class ReleaseClearLockMessage extends HighPriorityDistributionMessage
     this.processorId = processorId;
   }
 
-  public static void send(Set<InternalDistributedMember> members, DM dm, String regionPath)
-      throws ReplyException {
+  public static void send(Set<InternalDistributedMember> members, DistributionManager dm,
+      String regionPath) throws ReplyException {
     ReplyProcessor21 processor = new ReplyProcessor21(dm, members);
     ReleaseClearLockMessage msg =
         new ReleaseClearLockMessage(regionPath, processor.getProcessorId());
@@ -61,7 +63,7 @@ public class ReleaseClearLockMessage extends HighPriorityDistributionMessage
   }
 
   @Override
-  protected void process(DistributionManager dm) {
+  protected void process(ClusterDistributionManager dm) {
     ReplyException exception = null;
     try {
       DistributedRegion region = DistributedClearOperation.regionUnlocked(getSender(), regionPath);
@@ -88,20 +90,23 @@ public class ReleaseClearLockMessage extends HighPriorityDistributionMessage
     }
   }
 
+  @Override
   public int getDSFID() {
     return RELEASE_CLEAR_LOCK_MESSAGE;
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     regionPath = DataSerializer.readString(in);
     processorId = in.readInt();
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     DataSerializer.writeString(regionPath, out);
     out.writeInt(processorId);
   }

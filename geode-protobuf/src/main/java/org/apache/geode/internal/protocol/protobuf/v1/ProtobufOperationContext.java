@@ -16,23 +16,51 @@ package org.apache.geode.internal.protocol.protobuf.v1;
 
 import java.util.function.Function;
 
-import org.apache.geode.internal.protocol.OperationContext;
 import org.apache.geode.internal.protocol.operations.ProtobufOperationHandler;
+import org.apache.geode.internal.protocol.protobuf.v1.serialization.exception.DecodingException;
 import org.apache.geode.security.ResourcePermission;
 
-public class ProtobufOperationContext<OperationRequest, OperationResponse> extends
-    OperationContext<OperationRequest, OperationResponse, ClientProtocol.ErrorResponse, ClientProtocol.Request, ClientProtocol.Response.Builder, ProtobufSerializationService> {
-
-  public ProtobufOperationContext(Function<ClientProtocol.Request, OperationRequest> fromRequest,
-      ProtobufOperationHandler<OperationRequest, OperationResponse> operationHandler,
-      Function<OperationResponse, ClientProtocol.Response.Builder> toResponse,
-      ResourcePermission permissionRequired) {
-    super(fromRequest, operationHandler, toResponse, permissionRequired);
+public class ProtobufOperationContext<OperationRequest, OperationResponse> {
+  @FunctionalInterface
+  public interface PermissionFunction<OperationRequest> {
+    ResourcePermission apply(OperationRequest request, ProtobufSerializationService service)
+        throws DecodingException;
   }
 
-  @Override
-  protected ClientProtocol.Response.Builder makeErrorBuilder(
+  private final ProtobufOperationHandler<OperationRequest, OperationResponse> operationHandler;
+  private final Function<ClientProtocol.Message, OperationRequest> fromRequest;
+  private final Function<OperationResponse, ClientProtocol.Message.Builder> toResponse;
+  private final Function<ClientProtocol.ErrorResponse, ClientProtocol.Message.Builder> toErrorResponse;
+
+
+  public ProtobufOperationContext(Function<ClientProtocol.Message, OperationRequest> fromRequest,
+      ProtobufOperationHandler<OperationRequest, OperationResponse> operationHandler,
+      Function<OperationResponse, ClientProtocol.Message.Builder> toResponse) {
+    this.operationHandler = operationHandler;
+    this.fromRequest = fromRequest;
+    this.toResponse = toResponse;
+    this.toErrorResponse = this::makeErrorBuilder;
+  }
+
+
+  protected ClientProtocol.Message.Builder makeErrorBuilder(
       ClientProtocol.ErrorResponse errorResponse) {
-    return ClientProtocol.Response.newBuilder().setErrorResponse(errorResponse);
+    return ClientProtocol.Message.newBuilder().setErrorResponse(errorResponse);
+  }
+
+  public ProtobufOperationHandler<OperationRequest, OperationResponse> getOperationHandler() {
+    return operationHandler;
+  }
+
+  public Function<ClientProtocol.Message, OperationRequest> getFromRequest() {
+    return fromRequest;
+  }
+
+  public Function<OperationResponse, ClientProtocol.Message.Builder> getToResponse() {
+    return toResponse;
+  }
+
+  public Function<ClientProtocol.ErrorResponse, ClientProtocol.Message.Builder> getToErrorResponse() {
+    return toErrorResponse;
   }
 }

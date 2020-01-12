@@ -26,39 +26,37 @@ import org.apache.geode.modules.session.catalina.internal.DeltaSessionStatistics
 
 public interface SessionCache {
 
-  public void initialize();
+  void initialize();
 
-  public String getDefaultRegionAttributesId();
+  String getDefaultRegionAttributesId();
 
-  public boolean getDefaultEnableLocalCache();
+  boolean getDefaultEnableLocalCache();
 
-  public String getSessionRegionName();
+  String getOperatingRegionName();
 
-  public String getOperatingRegionName();
+  void putSession(Session session);
 
-  public void putSession(Session session);
+  HttpSession getSession(String sessionId);
 
-  public HttpSession getSession(String sessionId);
+  void destroySession(String sessionId);
 
-  public void destroySession(String sessionId);
+  void touchSessions(Set<String> sessionIds);
 
-  public void touchSessions(Set<String> sessionIds);
+  DeltaSessionStatistics getStatistics();
 
-  public DeltaSessionStatistics getStatistics();
+  GemFireCache getCache();
 
-  public GemFireCache getCache();
+  Region<String, HttpSession> getSessionRegion();
 
-  public Region<String, HttpSession> getSessionRegion();
+  Region<String, HttpSession> getOperatingRegion();
 
-  public Region<String, HttpSession> getOperatingRegion();
+  boolean isPeerToPeer();
 
-  public boolean isPeerToPeer();
+  boolean isClientServer();
 
-  public boolean isClientServer();
+  Set<String> keySet();
 
-  public Set<String> keySet();
+  int size();
 
-  public int size();
-
-  public boolean isBackingCacheAvailable();
+  boolean isBackingCacheAvailable();
 }

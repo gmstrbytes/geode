@@ -14,22 +14,22 @@
  */
 package org.apache.geode.distributed.internal.membership.gms;
 
-import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
+import org.apache.geode.distributed.internal.membership.gms.api.MemberIdentifier;
 
 /** represents a suspicion raised about a member */
 public class SuspectMember {
   /** the source of suspicion */
-  public InternalDistributedMember whoSuspected;
+  public MemberIdentifier whoSuspected;
 
   /** suspected member */
-  public InternalDistributedMember suspectedMember;
+  public MemberIdentifier suspectedMember;
 
   /** the reason */
   public String reason;
 
   /** create a new SuspectMember */
-  public SuspectMember(InternalDistributedMember whoSuspected,
-      InternalDistributedMember suspectedMember, String reason) {
+  public SuspectMember(MemberIdentifier whoSuspected,
+      MemberIdentifier suspectedMember, String reason) {
     this.whoSuspected = whoSuspected;
     this.suspectedMember = suspectedMember;
     this.reason = reason;

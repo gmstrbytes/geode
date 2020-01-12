@@ -16,16 +16,9 @@ package org.apache.geode.internal.tcp;
 
 import static org.apache.geode.distributed.ConfigurationProperties.SECURITY_PEER_AUTH_INIT;
 
-import java.io.BufferedInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InterruptedIOException;
-import java.io.OutputStream;
 import java.net.ConnectException;
-import java.net.Inet6Address;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketException;
@@ -45,15 +38,22 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
+import javax.net.ssl.SSLEngine;
+import javax.net.ssl.SSLException;
+
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.CancelException;
+import org.apache.geode.SerializationException;
 import org.apache.geode.SystemFailure;
+import org.apache.geode.alerting.internal.spi.AlertingAction;
+import org.apache.geode.annotations.internal.MakeNotStatic;
+import org.apache.geode.annotations.internal.MutableForTesting;
 import org.apache.geode.cache.CacheClosedException;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.DistributedSystemDisconnectedException;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.ConflationKey;
-import org.apache.geode.distributed.internal.DM;
 import org.apache.geode.distributed.internal.DMStats;
 import org.apache.geode.distributed.internal.DirectReplyProcessor;
 import org.apache.geode.distributed.internal.DistributionConfig;
@@ -61,6 +61,7 @@ import org.apache.geode.distributed.internal.DistributionConfigImpl;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.DistributionStats;
+import org.apache.geode.distributed.internal.OperationExecutors;
 import org.apache.geode.distributed.internal.ReplyException;
 import org.apache.geode.distributed.internal.ReplyMessage;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
@@ -68,22 +69,21 @@ import org.apache.geode.distributed.internal.ReplySender;
 import org.apache.geode.distributed.internal.direct.DirectChannel;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.distributed.internal.membership.MembershipManager;
-import org.apache.geode.i18n.StringId;
+import org.apache.geode.distributed.internal.membership.gms.api.MembershipStatistics;
 import org.apache.geode.internal.Assert;
-import org.apache.geode.internal.ByteArrayDataInput;
 import org.apache.geode.internal.DSFIDFactory;
 import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.SystemTimer;
 import org.apache.geode.internal.SystemTimer.SystemTimerTask;
-import org.apache.geode.internal.Version;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.LoggingThreadGroup;
-import org.apache.geode.internal.logging.log4j.AlertAppender;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
+import org.apache.geode.internal.net.BufferPool;
+import org.apache.geode.internal.net.NioFilter;
+import org.apache.geode.internal.net.NioPlainEngine;
 import org.apache.geode.internal.net.SocketCreator;
+import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.internal.tcp.MsgReader.Header;
 import org.apache.geode.internal.util.concurrent.ReentrantSemaphore;
+import org.apache.geode.logging.internal.executors.LoggingThread;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * Connection is a socket holder that sends and receives serialized message objects. A Connection
@@ -93,31 +93,33 @@ import org.apache.geode.internal.util.concurrent.ReentrantSemaphore;
  */
 public class Connection implements Runnable {
   private static final Logger logger = LogService.getLogger();
+  public static final String THREAD_KIND_IDENTIFIER = "P2P message reader";
 
-  private static final int INITIAL_CAPACITY =
-      Integer.getInteger("p2p.readerBufferSize", 32768).intValue();
+  @MakeNotStatic
   private static int P2P_CONNECT_TIMEOUT;
+  @MakeNotStatic
   private static boolean IS_P2P_CONNECT_TIMEOUT_INITIALIZED = false;
 
-  public static final int NORMAL_MSG_TYPE = 0x4c;
-  public static final int CHUNKED_MSG_TYPE = 0x4d; // a chunk of one logical msg
-  public static final int END_CHUNKED_MSG_TYPE = 0x4e; // last in a series of chunks
-  public static final int DIRECT_ACK_BIT = 0x20;
+  static final int NORMAL_MSG_TYPE = 0x4c;
+  static final int CHUNKED_MSG_TYPE = 0x4d; // a chunk of one logical msg
+  static final int END_CHUNKED_MSG_TYPE = 0x4e; // last in a series of chunks
+  static final int DIRECT_ACK_BIT = 0x20;
 
-  public static final int MSG_HEADER_SIZE_OFFSET = 0;
-  public static final int MSG_HEADER_TYPE_OFFSET = 4;
-  public static final int MSG_HEADER_ID_OFFSET = 5;
-  public static final int MSG_HEADER_BYTES = 7;
+  static final int MSG_HEADER_SIZE_OFFSET = 0;
+  static final int MSG_HEADER_TYPE_OFFSET = 4;
+  static final int MSG_HEADER_ID_OFFSET = 5;
+  static final int MSG_HEADER_BYTES = 7;
 
   /**
    * Small buffer used for send socket buffer on receiver connections and receive buffer on sender
    * connections.
    */
   public static final int SMALL_BUFFER_SIZE =
-      Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "SMALL_BUFFER_SIZE", 4096).intValue();
+      Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "SMALL_BUFFER_SIZE", 4096);
 
   /** counter to give connections a unique id */
-  private static AtomicLong idCounter = new AtomicLong(1);
+  @MakeNotStatic
+  private static final AtomicLong idCounter = new AtomicLong(1);
 
   /** string used as the reason for initiating suspect processing */
   public static final String INITIATING_SUSPECT_PROCESSING =
@@ -127,6 +129,7 @@ public class Connection implements Runnable {
   private final ConnectionTable owner;
 
   private final TCPConduit conduit;
+  private NioFilter ioFilter;
 
   /**
    * Set to false once run() is terminating. Using this instead of Thread.isAlive as the reader
@@ -144,7 +147,12 @@ public class Connection implements Runnable {
   /** The idle timeout timer task for this connection */
   private SystemTimerTask idleTask;
 
-  private static final ThreadLocal isReaderThread = new ThreadLocal();
+  private static final ThreadLocal<Boolean> isReaderThread = new ThreadLocal<Boolean>() {
+    @Override
+    public Boolean initialValue() {
+      return Boolean.FALSE;
+    }
+  };
 
   public static void makeReaderThread() {
     // mark this thread as a reader thread
@@ -156,23 +164,21 @@ public class Connection implements Runnable {
   }
 
   // return true if this thread is a reader thread
-  public static boolean isReaderThread() {
-    Object o = isReaderThread.get();
-    if (o == null) {
-      return false;
-    } else {
-      return ((Boolean) o).booleanValue();
-    }
+  private static boolean isReaderThread() {
+    return isReaderThread.get();
   }
 
-  private int getP2PConnectTimeout() {
+  int getP2PConnectTimeout(DistributionConfig config) {
+    if (AlertingAction.isThreadAlerting()) {
+      return config.getMemberTimeout();
+    }
     if (IS_P2P_CONNECT_TIMEOUT_INITIALIZED)
       return P2P_CONNECT_TIMEOUT;
     String connectTimeoutStr = System.getProperty("p2p.connectTimeout");
     if (connectTimeoutStr != null) {
       P2P_CONNECT_TIMEOUT = Integer.parseInt(connectTimeoutStr);
     } else {
-      P2P_CONNECT_TIMEOUT = 6 * this.conduit.getDM().getConfig().getMemberTimeout();
+      P2P_CONNECT_TIMEOUT = 6 * config.getMemberTimeout();
     }
     IS_P2P_CONNECT_TIMEOUT_INITIALIZED = true;
     return P2P_CONNECT_TIMEOUT;
@@ -185,10 +191,15 @@ public class Connection implements Runnable {
   private static final boolean DOMINO_THREAD_OWNED_SOCKETS =
       Boolean.getBoolean("p2p.ENABLE_DOMINO_THREAD_OWNED_SOCKETS");
 
-  private static final ThreadLocal isDominoThread = new ThreadLocal();
+  private static final ThreadLocal<Boolean> isDominoThread = new ThreadLocal<Boolean>() {
+    @Override
+    public Boolean initialValue() {
+      return Boolean.FALSE;
+    }
+  };
 
   // return true if this thread is a reader thread
-  public static boolean tipDomino() {
+  private static boolean tipDomino() {
     if (DOMINO_THREAD_OWNED_SOCKETS) {
       // mark this thread as one who wants to send ALL on TO sockets
       ConnectionTable.threadWantsOwnResources();
@@ -200,25 +211,17 @@ public class Connection implements Runnable {
   }
 
   public static boolean isDominoThread() {
-    Object o = isDominoThread.get();
-    if (o == null) {
-      return false;
-    } else {
-      return ((Boolean) o).booleanValue();
-    }
+    return isDominoThread.get();
   }
 
   /** the socket entrusted to this connection */
   private final Socket socket;
 
-  /** the non-NIO output stream */
-  OutputStream output;
-
   /** output stream/channel lock */
   private final Object outLock = new Object();
 
   /** the ID string of the conduit (for logging) */
-  String conduitIdStr;
+  private String conduitIdStr;
 
   /** Identifies the java group member on the other side of the connection. */
   InternalDistributedMember remoteAddr;
@@ -226,7 +229,7 @@ public class Connection implements Runnable {
   /**
    * Identifies the version of the member on the other side of the connection.
    */
-  Version remoteVersion;
+  private Version remoteVersion;
 
   /**
    * True if this connection was accepted by a listening socket. This makes it a receiver. False if
@@ -239,7 +242,7 @@ public class Connection implements Runnable {
    * instance, server-connection -> owned p2p reader (count 0) -> owned p2p reader (count 1) ->
    * owned p2p reader (count 2). This shows up in thread names as "DOM #x" (domino #x)
    */
-  private static ThreadLocal<Integer> dominoCount = new ThreadLocal<Integer>() {
+  private static final ThreadLocal<Integer> dominoCount = new ThreadLocal<Integer>() {
     @Override
     protected Integer initialValue() {
       return 0;
@@ -289,16 +292,16 @@ public class Connection implements Runnable {
   /**
    * Number of bytes in the outgoingQueue. Used to control capacity.
    */
-  private long queuedBytes = 0;
+  private long queuedBytes;
 
   /** used for async writes */
-  Thread pusherThread;
+  private Thread pusherThread;
 
   /**
    * The maximum number of concurrent senders sending a message to a single recipient.
    */
   private static final int MAX_SENDERS = Integer
-      .getInteger("p2p.maxConnectionSenders", DirectChannel.DEFAULT_CONCURRENCY_LEVEL).intValue();
+      .getInteger("p2p.maxConnectionSenders", DirectChannel.DEFAULT_CONCURRENCY_LEVEL);
   /**
    * This semaphore is used to throttle how many threads will try to do sends on this connection
    * concurrently. A thread must acquire this semaphore before it is allowed to start serializing
@@ -307,10 +310,10 @@ public class Connection implements Runnable {
   private final Semaphore senderSem = new ReentrantSemaphore(MAX_SENDERS);
 
   /** Set to true once the handshake has been read */
-  volatile boolean handshakeRead = false;
-  volatile boolean handshakeCancelled = false;
+  private volatile boolean handshakeRead;
+  private volatile boolean handshakeCancelled;
 
-  private volatile int replyCode = 0;
+  private volatile int replyCode;
 
   private static final byte REPLY_CODE_OK = (byte) 69;
   private static final byte REPLY_CODE_OK_WITH_ASYNC_INFO = (byte) 70;
@@ -326,7 +329,7 @@ public class Connection implements Runnable {
   /** set to true once a close begins */
   private final AtomicBoolean closing = new AtomicBoolean(false);
 
-  volatile boolean readerShuttingDown = false;
+  private volatile boolean readerShuttingDown = false;
 
   /** whether the socket is connected */
   volatile boolean connected = false;
@@ -334,10 +337,10 @@ public class Connection implements Runnable {
   /**
    * Set to true once a connection finishes its constructor
    */
-  volatile boolean finishedConnecting = false;
+  private volatile boolean finishedConnecting = false;
 
-  volatile boolean accessed = true;
-  volatile boolean socketInUse = false;
+  private volatile boolean accessed = true;
+  private volatile boolean socketInUse = false;
   volatile boolean timedOut = false;
 
   /**
@@ -349,7 +352,7 @@ public class Connection implements Runnable {
    * millisecond clock at the time message transmission started, if doing forced-disconnect
    * processing
    */
-  long transmissionStartTime;
+  private long transmissionStartTime;
 
   /** ack wait timeout - if socketInUse, use this to trigger SUSPECT processing */
   private long ackWaitTimeout;
@@ -361,38 +364,42 @@ public class Connection implements Runnable {
    * other connections participating in the current transmission. we notify them if ackSATimeout
    * expires to keep all members from generating alerts when only one is slow
    */
-  List ackConnectionGroup;
+  private List ackConnectionGroup;
 
   /** name of thread that we're currently performing an operation in (may be null) */
-  String ackThreadName;
+  private String ackThreadName;
 
-  /** the buffer used for NIO message receipt */
-  ByteBuffer nioInputBuffer;
+  /** the buffer used for message receipt */
+  private ByteBuffer inputBuffer;
 
   /** the length of the next message to be dispatched */
-  int nioMessageLength;
+  private int messageLength;
 
   /** the type of message being received */
-  byte nioMessageType;
+  private byte messageType;
+
+  /**
+   * when messages are chunked by a MsgStreamer we track the destreamers on
+   * the receiving side using a message identifier
+   */
+  private short messageId;
+
+  /** whether the length of the next message has been established */
+  private boolean lengthSet = false;
 
   /** used to lock access to destreamer data */
   private final Object destreamerLock = new Object();
 
   /** caches a msg destreamer that is currently not being used */
-  MsgDestreamer idleMsgDestreamer;
+  private MsgDestreamer idleMsgDestreamer;
 
   /**
-   * used to map a msgId to a MsgDestreamer which are used for destreaming chunked messages using
-   * nio
+   * used to map a msgId to a MsgDestreamer which are used for destreaming chunked messages
    */
-  HashMap destreamerMap;
+  private HashMap destreamerMap;
 
-  boolean directAck;
+  private boolean directAck;
 
-  short nioMsgId;
-
-  /** whether the length of the next message has been established */
-  boolean nioLengthSet = false;
 
   /** is this connection used for serial message delivery? */
   boolean preserveOrder = false;
@@ -425,16 +432,7 @@ public class Connection implements Runnable {
     setSocketBufferSize(sock, false, requestedSize);
   }
 
-  public int getReceiveBufferSize() {
-    return recvBufferSize;
-  }
-
   private void setSocketBufferSize(Socket sock, boolean send, int requestedSize) {
-    setSocketBufferSize(sock, send, requestedSize, false);
-  }
-
-  private void setSocketBufferSize(Socket sock, boolean send, int requestedSize,
-      boolean alreadySetInSocket) {
     if (requestedSize > 0) {
       try {
         int currentSize = send ? sock.getSendBufferSize() : sock.getReceiveBufferSize();
@@ -444,13 +442,10 @@ public class Connection implements Runnable {
           }
           return;
         }
-        if (!alreadySetInSocket) {
-          if (send) {
-            sock.setSendBufferSize(requestedSize);
-          } else {
-            sock.setReceiveBufferSize(requestedSize);
-          }
+        if (send) {
+          sock.setSendBufferSize(requestedSize);
         } else {
+          sock.setReceiveBufferSize(requestedSize);
         }
       } catch (SocketException ignore) {
       }
@@ -462,10 +457,9 @@ public class Connection implements Runnable {
           this.recvBufferSize = actualSize;
         }
         if (actualSize < requestedSize) {
-          logger.info(LocalizedMessage.create(
-              LocalizedStrings.Connection_SOCKET_0_IS_1_INSTEAD_OF_THE_REQUESTED_2,
-              new Object[] {(send ? "send buffer size" : "receive buffer size"),
-                  Integer.valueOf(actualSize), Integer.valueOf(requestedSize)}));
+          logger.info("Socket {} is {} instead of the requested {}.",
+              (send ? "send buffer size" : "receive buffer size"),
+              actualSize, requestedSize);
         } else if (actualSize > requestedSize) {
           if (logger.isTraceEnabled()) {
             logger.trace("Socket {} buffer size is {} instead of the requested {}",
@@ -492,7 +486,7 @@ public class Connection implements Runnable {
   /**
    * Returns the size of the send buffer on this connection's socket.
    */
-  public int getSendBufferSize() {
+  int getSendBufferSize() {
     int result = this.sendBufferSize;
     if (result != -1) {
       return result;
@@ -508,41 +502,21 @@ public class Connection implements Runnable {
   }
 
   /**
-   * creates a connection that we accepted (it was initiated by an explicit connect being done on
-   * the other side). We will only receive data on this socket; never send.
-   */
-  protected static Connection createReceiver(ConnectionTable table, Socket socket)
-      throws IOException, ConnectionException {
-    Connection connection = new Connection(table, socket);
-    boolean readerStarted = false;
-    try {
-      connection.startReader(table);
-      readerStarted = true;
-    } finally {
-      if (!readerStarted) {
-        connection.closeForReconnect(
-            LocalizedStrings.Connection_COULD_NOT_START_READER_THREAD.toLocalizedString());
-      }
-    }
-    connection.waitForHandshake();
-    connection.finishedConnecting = true;
-    return connection;
-  }
-
-  /**
-   * creates a connection that we accepted (it was initiated by an explicit connect being done on
+   * creates a "reader" connection that we accepted (it was initiated by an explicit connect being
+   * done on
    * the other side).
    */
-  protected Connection(ConnectionTable t, Socket socket) throws IOException, ConnectionException {
+  protected Connection(ConnectionTable t, Socket socket)
+      throws ConnectionException {
     if (t == null) {
       throw new IllegalArgumentException(
-          LocalizedStrings.Connection_NULL_CONNECTIONTABLE.toLocalizedString());
+          "Null ConnectionTable");
     }
     this.conduit = t.getConduit();
     this.isReceiver = true;
     this.owner = t;
     this.socket = socket;
-    this.conduitIdStr = owner.getConduit().getSocketId().toString();
+    this.conduitIdStr = conduit.getSocketId().toString();
     this.handshakeRead = false;
     this.handshakeCancelled = false;
     this.connected = true;
@@ -556,23 +530,10 @@ public class Connection implements Runnable {
       // unable to get the settings we want. Don't log an error because it will
       // likely happen a lot
     }
-    if (!useNIO()) {
-      try {
-        // this.output = new BufferedOutputStream(socket.getOutputStream(), SMALL_BUFFER_SIZE);
-        this.output = socket.getOutputStream();
-      } catch (IOException io) {
-        logger.fatal(LocalizedMessage
-            .create(LocalizedStrings.Connection_UNABLE_TO_GET_P2P_CONNECTION_STREAMS), io);
-        t.getSocketCloser().asyncClose(socket, this.remoteAddr.toString(), null);
-        throw io;
-      }
-    }
   }
 
-  protected void initReceiver() {
+  void initReceiver() {
     this.startReader(owner);
-    this.waitForHandshake();
-    this.finishedConnecting = true;
   }
 
   void setIdleTimeoutTask(SystemTimerTask task) {
@@ -583,7 +544,7 @@ public class Connection implements Runnable {
   /**
    * Returns true if an idle connection was detected.
    */
-  public boolean checkForIdleTimeout() {
+  boolean checkForIdleTimeout() {
     if (isSocketClosed()) {
       return true;
     }
@@ -612,15 +573,15 @@ public class Connection implements Runnable {
         // which will close an receivers we have if this
         // connection is a shared one.
         closeForReconnect(
-            LocalizedStrings.Connection_IDLE_CONNECTION_TIMED_OUT.toLocalizedString());
+            "idle connection timed out");
       } catch (Exception ignore) {
       }
     }
     return isIdle;
   }
 
-  private static byte[] okHandshakeBytes;
-  private static ByteBuffer okHandshakeBuf;
+  @MakeNotStatic
+  private static final ByteBuffer okHandshakeBuf;
   static {
     int msglen = 1; // one byte for reply code
     byte[] bytes = new byte[MSG_HEADER_BYTES + msglen];
@@ -635,14 +596,13 @@ public class Connection implements Runnable {
     bytes[MSG_HEADER_BYTES] = REPLY_CODE_OK;
     int allocSize = bytes.length;
     ByteBuffer bb;
-    if (TCPConduit.useDirectBuffers) {
+    if (BufferPool.useDirectBuffers) {
       bb = ByteBuffer.allocateDirect(allocSize);
     } else {
       bb = ByteBuffer.allocate(allocSize);
     }
     bb.put(bytes);
     okHandshakeBuf = bb;
-    okHandshakeBytes = bytes;
   }
 
   /**
@@ -650,37 +610,37 @@ public class Connection implements Runnable {
    */
   public static final int MAX_MSG_SIZE = 0x00ffffff;
 
-  public static int calcHdrSize(int byteSize) {
+  static int calcHdrSize(int byteSize) {
     if (byteSize > MAX_MSG_SIZE) {
-      throw new IllegalStateException(LocalizedStrings.Connection_TCP_MESSAGE_EXCEEDED_MAX_SIZE_OF_0
-          .toLocalizedString(Integer.valueOf(MAX_MSG_SIZE)));
+      throw new IllegalStateException(String.format("tcp message exceeded max size of %s",
+          MAX_MSG_SIZE));
     }
     int hdrSize = byteSize;
     hdrSize |= (HANDSHAKE_VERSION << 24);
     return hdrSize;
   }
 
-  public static int calcMsgByteSize(int hdrSize) {
+  static int calcMsgByteSize(int hdrSize) {
     return hdrSize & MAX_MSG_SIZE;
   }
 
-  public static byte calcHdrVersion(int hdrSize) throws IOException {
+  static byte calcHdrVersion(int hdrSize) throws IOException {
     byte ver = (byte) (hdrSize >> 24);
     if (ver != HANDSHAKE_VERSION) {
       throw new IOException(
-          LocalizedStrings.Connection_DETECTED_WRONG_VERSION_OF_GEMFIRE_PRODUCT_DURING_HANDSHAKE_EXPECTED_0_BUT_FOUND_1
-              .toLocalizedString(new Object[] {new Byte(HANDSHAKE_VERSION), new Byte(ver)}));
+          String.format(
+              "Detected wrong version of GemFire product during handshake. Expected %s but found %s",
+              HANDSHAKE_VERSION, ver));
     }
     return ver;
   }
 
   private void sendOKHandshakeReply() throws IOException, ConnectionException {
-    byte[] my_okHandshakeBytes = null;
-    ByteBuffer my_okHandshakeBuf = null;
+    ByteBuffer my_okHandshakeBuf;
     if (this.isReceiver) {
-      DistributionConfig cfg = owner.getConduit().config;
+      DistributionConfig cfg = owner.getConduit().getConfig();
       ByteBuffer bb;
-      if (useNIO() && TCPConduit.useDirectBuffers) {
+      if (BufferPool.useDirectBuffers) {
         bb = ByteBuffer.allocateDirect(128);
       } else {
         bb = ByteBuffer.allocate(128);
@@ -693,38 +653,21 @@ public class Connection implements Runnable {
       bb.putInt(cfg.getAsyncQueueTimeout());
       bb.putInt(cfg.getAsyncMaxQueueSize());
       // write own product version
-      Version.writeOrdinal(bb, Version.CURRENT.ordinal(), true);
+      Version
+          .writeOrdinal(bb, Version.CURRENT.ordinal(), true);
       // now set the msg length into position 0
       bb.putInt(0, calcHdrSize(bb.position() - MSG_HEADER_BYTES));
-      if (useNIO()) {
-        my_okHandshakeBuf = bb;
-        bb.flip();
-      } else {
-        my_okHandshakeBytes = new byte[bb.position()];
-        bb.flip();
-        bb.get(my_okHandshakeBytes);
-      }
+      my_okHandshakeBuf = bb;
+      bb.flip();
     } else {
       my_okHandshakeBuf = okHandshakeBuf;
-      my_okHandshakeBytes = okHandshakeBytes;
     }
-    if (useNIO()) {
-      assert my_okHandshakeBuf != null;
-      synchronized (my_okHandshakeBuf) {
-        my_okHandshakeBuf.position(0);
-        nioWriteFully(getSocket().getChannel(), my_okHandshakeBuf, false, null);
-      }
-    } else {
-      synchronized (outLock) {
-        assert my_okHandshakeBytes != null;
-        this.output.write(my_okHandshakeBytes, 0, my_okHandshakeBytes.length);
-        this.output.flush();
-      }
-    }
+    my_okHandshakeBuf.position(0);
+    writeFully(getSocket().getChannel(), my_okHandshakeBuf, false, null);
   }
 
   private static final int HANDSHAKE_TIMEOUT_MS =
-      Integer.getInteger("p2p.handshakeTimeoutMs", 59000).intValue();
+      Integer.getInteger("p2p.handshakeTimeoutMs", 59000);
   // private static final byte HANDSHAKE_VERSION = 1; // 501
   // public static final byte HANDSHAKE_VERSION = 2; // cbb5x_PerfScale
   // public static final byte HANDSHAKE_VERSION = 3; // durable_client
@@ -734,7 +677,7 @@ public class Connection implements Runnable {
   // NOTICE: handshake_version should not be changed anymore. Use the gemfire
   // version transmitted with the handshake bits and handle old handshakes
   // based on that
-  public static final byte HANDSHAKE_VERSION = 7; // product version exchange during handshake
+  private static final byte HANDSHAKE_VERSION = 7; // product version exchange during handshake
 
   /**
    * @throws ConnectionException if the conduit has stopped
@@ -746,7 +689,7 @@ public class Connection implements Runnable {
       synchronized (this.handshakeSync) {
         if (!this.handshakeRead && !this.handshakeCancelled) {
           boolean success = false;
-          reason = LocalizedStrings.Connection_UNKNOWN.toLocalizedString();
+          reason = "unknown";
           boolean interrupted = Thread.interrupted();
           try {
             final long endTime = System.currentTimeMillis() + HANDSHAKE_TIMEOUT_MS;
@@ -758,7 +701,7 @@ public class Connection implements Runnable {
               }
             }
             if (!this.handshakeRead && !this.handshakeCancelled) {
-              reason = LocalizedStrings.Connection_HANDSHAKE_TIMED_OUT.toLocalizedString();
+              reason = "handshake timed out";
               String peerName;
               if (this.remoteAddr != null) {
                 peerName = this.remoteAddr.toString();
@@ -767,24 +710,25 @@ public class Connection implements Runnable {
                 // to occur in the handshake threads instead of causing failures in
                 // connection-formation. So, we need to initiate suspect processing here
                 owner.getDM().getMembershipManager().suspectMember(this.remoteAddr,
-                    LocalizedStrings.Connection_CONNECTION_HANDSHAKE_WITH_0_TIMED_OUT_AFTER_WAITING_1_MILLISECONDS
-                        .toLocalizedString(
-                            new Object[] {peerName, Integer.valueOf(HANDSHAKE_TIMEOUT_MS)}));
+                    String.format(
+                        "Connection handshake with %s timed out after waiting %s milliseconds.",
+
+                        peerName, HANDSHAKE_TIMEOUT_MS));
               } else {
                 peerName = "socket " + this.socket.getRemoteSocketAddress().toString() + ":"
                     + this.socket.getPort();
               }
               throw new ConnectionException(
-                  LocalizedStrings.Connection_CONNECTION_HANDSHAKE_WITH_0_TIMED_OUT_AFTER_WAITING_1_MILLISECONDS
-                      .toLocalizedString(
-                          new Object[] {peerName, Integer.valueOf(HANDSHAKE_TIMEOUT_MS)}));
+                  String.format(
+                      "Connection handshake with %s timed out after waiting %s milliseconds.",
+                      peerName, HANDSHAKE_TIMEOUT_MS));
             } else {
               success = this.handshakeRead;
             }
           } catch (InterruptedException ex) {
             interrupted = true;
             this.owner.getConduit().getCancelCriterion().checkCancelInProgress(ex);
-            reason = LocalizedStrings.Connection_INTERRUPTED.toLocalizedString();
+            reason = "interrupted";
           } finally {
             if (interrupted) {
               Thread.currentThread().interrupt();
@@ -816,6 +760,11 @@ public class Connection implements Runnable {
   }
 
   private void notifyHandshakeWaiter(boolean success) {
+    if (getConduit().useSSL() && ioFilter != null) {
+      // clear out any remaining handshake bytes
+      ByteBuffer buffer = ioFilter.getUnwrappedBuffer(inputBuffer);
+      buffer.position(0).limit(0);
+    }
     synchronized (this.handshakeSync) {
       if (success) {
         this.handshakeRead = true;
@@ -831,9 +780,9 @@ public class Connection implements Runnable {
   /**
    * asynchronously close this connection
    *
-   * @param beingSick test hook to simulate sickness in communications & membership
+   * @param beingSickForTests test hook to simulate sickness in communications & membership
    */
-  private void asyncClose(boolean beingSick) {
+  private void asyncClose(boolean beingSickForTests) {
     // note: remoteAddr may be null if this is a receiver that hasn't finished its handshake
 
     // we do the close in a background thread because the operation may hang if
@@ -841,14 +790,15 @@ public class Connection implements Runnable {
 
     // if simulating sickness, sockets must be closed in-line so that tests know
     // that the vm is sick when the beSick operation completes
-    if (beingSick) {
+    if (beingSickForTests) {
       prepareForAsyncClose();
     } else {
       if (this.asyncCloseCalled.compareAndSet(false, true)) {
         Socket s = this.socket;
         if (s != null && !s.isClosed()) {
           prepareForAsyncClose();
-          this.owner.getSocketCloser().asyncClose(s, String.valueOf(this.remoteAddr), null);
+          this.owner.getSocketCloser().asyncClose(s, String.valueOf(this.remoteAddr),
+              () -> ioFilter.close(s.getChannel()));
         }
       }
     }
@@ -884,7 +834,7 @@ public class Connection implements Runnable {
     }
   }
 
-  private void handshakeNio() throws IOException {
+  private void handshakeFromNewSender() throws IOException {
     waitForAddressCompletion();
 
     InternalDistributedMember myAddr = this.owner.getConduit().getMemberId();
@@ -915,44 +865,9 @@ public class Connection implements Runnable {
     // }
     // connectHandshake.writeUTF("["+name+"] "+Thread.currentThread().getName());
     // }
-    connectHandshake.setMessageHeader(NORMAL_MSG_TYPE, DistributionManager.STANDARD_EXECUTOR,
+    connectHandshake.setMessageHeader(NORMAL_MSG_TYPE, OperationExecutors.STANDARD_EXECUTOR,
         MsgIdGenerator.NO_MSG_ID);
-    nioWriteFully(getSocket().getChannel(), connectHandshake.getContentBuffer(), false, null);
-  }
-
-  private void handshakeStream() throws IOException {
-    waitForAddressCompletion();
-
-    this.output = getSocket().getOutputStream();
-    ByteArrayOutputStream baos = new ByteArrayOutputStream(CONNECT_HANDSHAKE_SIZE);
-    DataOutputStream os = new DataOutputStream(baos);
-    InternalDistributedMember myAddr = owner.getConduit().getMemberId();
-    os.writeByte(0);
-    os.writeByte(HANDSHAKE_VERSION);
-    // NOTE: if you add or remove code in this section bump HANDSHAKE_VERSION
-    InternalDataSerializer.invokeToData(myAddr, os);
-    os.writeBoolean(this.sharedResource);
-    os.writeBoolean(this.preserveOrder);
-    os.writeLong(this.uniqueId);
-    Version.CURRENT.writeOrdinal(os, true);
-    os.writeInt(dominoCount.get() + 1);
-    os.flush();
-
-    byte[] msg = baos.toByteArray();
-    int len = calcHdrSize(msg.length);
-    byte[] lenbytes = new byte[MSG_HEADER_BYTES];
-    lenbytes[MSG_HEADER_SIZE_OFFSET] = (byte) ((len / 0x1000000) & 0xff);
-    lenbytes[MSG_HEADER_SIZE_OFFSET + 1] = (byte) ((len / 0x10000) & 0xff);
-    lenbytes[MSG_HEADER_SIZE_OFFSET + 2] = (byte) ((len / 0x100) & 0xff);
-    lenbytes[MSG_HEADER_SIZE_OFFSET + 3] = (byte) (len & 0xff);
-    lenbytes[MSG_HEADER_TYPE_OFFSET] = (byte) NORMAL_MSG_TYPE;
-    lenbytes[MSG_HEADER_ID_OFFSET] = (byte) ((MsgIdGenerator.NO_MSG_ID >> 8) & 0xff);
-    lenbytes[MSG_HEADER_ID_OFFSET + 1] = (byte) (MsgIdGenerator.NO_MSG_ID & 0xff);
-    synchronized (outLock) {
-      this.output.write(lenbytes, 0, lenbytes.length);
-      this.output.write(msg, 0, msg.length);
-      this.output.flush();
-    }
+    writeFully(getSocket().getChannel(), connectHandshake.getContentBuffer(), false, null);
   }
 
   /**
@@ -961,20 +876,18 @@ public class Connection implements Runnable {
    */
   private void attemptHandshake(ConnectionTable connTable) throws IOException {
     // send HANDSHAKE
-    // send this server's port. It's expected on the other side
-    if (useNIO()) {
-      handshakeNio();
-    } else {
-      handshakeStream();
+    // send this member's information. It's expected on the other side
+    if (logger.isDebugEnabled()) {
+      logger.debug("starting peer-to-peer handshake on socket {}", socket);
     }
-
+    handshakeFromNewSender();
     startReader(connTable); // this reader only reads the handshake and then exits
     waitForHandshake(); // waiting for reply
   }
 
   /** time between connection attempts */
   private static final int RECONNECT_WAIT_TIME = Integer
-      .getInteger(DistributionConfig.GEMFIRE_PREFIX + "RECONNECT_WAIT_TIME", 2000).intValue();
+      .getInteger(DistributionConfig.GEMFIRE_PREFIX + "RECONNECT_WAIT_TIME", 2000);
 
   /**
    * creates a new connection to a remote server. We are initiating this connection; the other side
@@ -1005,20 +918,17 @@ public class Connection implements Runnable {
         if (!severeAlertIssued && ackSATimeout > 0 && startTime + ackTimeout < now) {
           if (startTime + ackTimeout + ackSATimeout < now) {
             if (remoteAddr != null) {
-              logger.fatal(LocalizedMessage.create(
-                  LocalizedStrings.Connection_UNABLE_TO_FORM_A_TCPIP_CONNECTION_TO_0_IN_OVER_1_SECONDS,
-                  new Object[] {remoteAddr, (ackSATimeout + ackTimeout) / 1000}));
+              logger.fatal("Unable to form a TCP/IP connection to {} in over {} seconds",
+                  remoteAddr, (ackSATimeout + ackTimeout) / 1000);
             }
             severeAlertIssued = true;
           } else if (!suspected) {
             if (remoteAddr != null) {
-              logger.warn(LocalizedMessage.create(
-                  LocalizedStrings.Connection_UNABLE_TO_FORM_A_TCPIP_CONNECTION_TO_0_IN_OVER_1_SECONDS,
-                  new Object[] {remoteAddr, (ackTimeout) / 1000}));
+              logger.warn("Unable to form a TCP/IP connection to {} in over {} seconds",
+                  remoteAddr, (ackTimeout) / 1000);
             }
-            mgr.suspectMember(remoteAddr,
-                LocalizedStrings.Connection_UNABLE_TO_FORM_A_TCPIP_CONNECTION_IN_A_REASONABLE_AMOUNT_OF_TIME
-                    .toLocalizedString());
+            mgr.suspectMember((InternalDistributedMember) remoteAddr,
+                "Unable to form a TCP/IP connection in a reasonable amount of time");
             suspected = true;
           }
           reconnectWaitTime =
@@ -1028,9 +938,8 @@ public class Connection implements Runnable {
           }
         } else if (!suspected && (startTime > 0) && (ackTimeout > 0)
             && (startTime + ackTimeout < now)) {
-          mgr.suspectMember(remoteAddr,
-              LocalizedStrings.Connection_UNABLE_TO_FORM_A_TCPIP_CONNECTION_IN_A_REASONABLE_AMOUNT_OF_TIME
-                  .toLocalizedString());
+          mgr.suspectMember((InternalDistributedMember) remoteAddr,
+              "Unable to form a TCP/IP connection in a reasonable amount of time");
           suspected = true;
         }
         if (firstTime) {
@@ -1042,7 +951,7 @@ public class Connection implements Runnable {
         } else {
           // if we're sending an alert and can't connect, bail out. A sick
           // alert listener should not prevent cache operations from continuing
-          if (AlertAppender.isThreadAlerting()) {
+          if (AlertingAction.isThreadAlerting()) {
             // do not change the text of this exception - it is looked for in exception handlers
             throw new IOException("Cannot form connection to alert listener " + remoteAddr);
           }
@@ -1058,13 +967,12 @@ public class Connection implements Runnable {
           t.getConduit().getCancelCriterion().checkCancelInProgress(null);
           if (giveUpOnMember(mgr, remoteAddr)) {
             throw new IOException(
-                LocalizedStrings.Connection_MEMBER_LEFT_THE_GROUP.toLocalizedString(remoteAddr));
+                String.format("Member %s left the group", remoteAddr));
           }
           if (!warningPrinted) {
             warningPrinted = true;
-            logger.warn(LocalizedMessage.create(
-                LocalizedStrings.Connection_CONNECTION_ATTEMPTING_RECONNECT_TO_PEER__0,
-                remoteAddr));
+            logger.warn("Connection: Attempting reconnect to peer {}",
+                remoteAddr);
           }
           t.getConduit().getStats().incReconnectAttempts();
         }
@@ -1086,9 +994,9 @@ public class Connection implements Runnable {
           } else if (!connectionErrorLogged) {
             connectionErrorLogged = true; // otherwise change to use 100ms intervals causes a lot of
                                           // these
-            logger.info(LocalizedMessage.create(
-                LocalizedStrings.Connection_CONNECTION_FAILED_TO_CONNECT_TO_PEER_0_BECAUSE_1,
-                new Object[] {sharedResource, preserveOrder, remoteAddr, ioe}));
+            logger.info("Connection: shared={} ordered={} failed to connect to peer {} because: {}",
+                sharedResource, preserveOrder, remoteAddr,
+                ioe.getCause() != null ? ioe.getCause() : ioe);
           }
         } // IOException
         finally {
@@ -1102,45 +1010,40 @@ public class Connection implements Runnable {
             conn.attemptHandshake(t);
             if (conn.isSocketClosed()) {
               // something went wrong while reading the handshake
-              // and the socket was closed or this guy sent us a
+              // and the socket was closed or we were sent
               // ShutdownMessage
               if (giveUpOnMember(mgr, remoteAddr)) {
-                throw new IOException(LocalizedStrings.Connection_MEMBER_LEFT_THE_GROUP
-                    .toLocalizedString(remoteAddr));
+                throw new IOException(String.format("Member %s left the group",
+                    remoteAddr));
               }
               t.getConduit().getCancelCriterion().checkCancelInProgress(null);
               // no success but no need to log; just retry
             } else {
               success = true;
             }
-          } catch (DistributedSystemDisconnectedException e) {
-            throw e;
           } catch (ConnectionException e) {
             if (giveUpOnMember(mgr, remoteAddr)) {
-              IOException ioe =
-                  new IOException(LocalizedStrings.Connection_HANDSHAKE_FAILED.toLocalizedString());
-              ioe.initCause(e);
-              throw ioe;
+              throw new IOException("Handshake failed", e);
             }
             t.getConduit().getCancelCriterion().checkCancelInProgress(null);
-            logger.info(LocalizedMessage.create(
-                LocalizedStrings.Connection_CONNECTION_HANDSHAKE_FAILED_TO_CONNECT_TO_PEER_0_BECAUSE_1,
-                new Object[] {sharedResource, preserveOrder, remoteAddr, e}));
+            logger.info(
+                "Connection: shared={} ordered={} handshake failed to connect to peer {} because: {}",
+                sharedResource, preserveOrder, remoteAddr, e);
           } catch (IOException e) {
             if (giveUpOnMember(mgr, remoteAddr)) {
               throw e;
             }
             t.getConduit().getCancelCriterion().checkCancelInProgress(null);
-            logger.info(LocalizedMessage.create(
-                LocalizedStrings.Connection_CONNECTION_HANDSHAKE_FAILED_TO_CONNECT_TO_PEER_0_BECAUSE_1,
-                new Object[] {sharedResource, preserveOrder, remoteAddr, e}));
+            logger.info(
+                "Connection: shared={} ordered={} handshake failed to connect to peer {} because: {}",
+                sharedResource, preserveOrder, remoteAddr, e);
             if (!sharedResource && "Too many open files".equals(e.getMessage())) {
               t.fileDescriptorsExhausted();
             }
           } finally {
             if (!success) {
               try {
-                conn.requestClose(LocalizedStrings.Connection_FAILED_HANDSHAKE.toLocalizedString());
+                conn.requestClose("failed handshake");
               } catch (Exception ignore) {
               }
               conn = null;
@@ -1149,15 +1052,14 @@ public class Connection implements Runnable {
         }
       } // while
       if (warningPrinted) {
-        logger.info(LocalizedMessage.create(
-            LocalizedStrings.Connection_0_SUCCESSFULLY_REESTABLISHED_CONNECTION_TO_PEER_1,
-            new Object[] {mgr.getLocalMember(), remoteAddr}));
+        logger.info("{}: Successfully reestablished connection to peer {}",
+            mgr.getLocalMember(), remoteAddr);
       }
     } finally {
       try {
         if (!success) {
           if (conn != null) {
-            conn.requestClose(LocalizedStrings.Connection_FAILED_CONSTRUCTION.toLocalizedString());
+            conn.requestClose("failed construction");
             conn = null;
           }
         }
@@ -1170,8 +1072,8 @@ public class Connection implements Runnable {
     // Assert.assertTrue(conn != null);
     if (conn == null) {
       throw new ConnectionException(
-          LocalizedStrings.Connection_CONNECTION_FAILED_CONSTRUCTION_FOR_PEER_0
-              .toLocalizedString(remoteAddr));
+          String.format("Connection: failed construction for peer %s",
+              remoteAddr));
     }
     if (preserveOrder && BATCH_SENDS) {
       conn.createBatchSendBuffer();
@@ -1180,7 +1082,8 @@ public class Connection implements Runnable {
     return conn;
   }
 
-  private static boolean giveUpOnMember(MembershipManager mgr, DistributedMember remoteAddr) {
+  private static boolean giveUpOnMember(MembershipManager mgr,
+      DistributedMember remoteAddr) {
     return !mgr.memberExists(remoteAddr) || mgr.isShunned(remoteAddr) || mgr.shutdownInProgress();
   }
 
@@ -1201,7 +1104,7 @@ public class Connection implements Runnable {
     InternalDistributedMember remoteAddr = (InternalDistributedMember) remoteID;
     if (t == null) {
       throw new IllegalArgumentException(
-          LocalizedStrings.Connection_CONNECTIONTABLE_IS_NULL.toLocalizedString());
+          "ConnectionTable is null.");
     }
     this.conduit = t.getConduit();
     this.isReceiver = false;
@@ -1220,80 +1123,69 @@ public class Connection implements Runnable {
 
     InetSocketAddress addr =
         new InetSocketAddress(remoteAddr.getInetAddress(), remoteAddr.getDirectChannelPort());
-    if (useNIO()) {
-      SocketChannel channel = SocketChannel.open();
-      this.owner.addConnectingSocket(channel.socket(), addr.getAddress());
-      try {
-        channel.socket().setTcpNoDelay(true);
+    SocketChannel channel = SocketChannel.open();
+    this.owner.addConnectingSocket(channel.socket(), addr.getAddress());
 
-        channel.socket().setKeepAlive(SocketCreator.ENABLE_TCP_KEEP_ALIVE);
+    try {
+      channel.socket().setTcpNoDelay(true);
+      channel.socket().setKeepAlive(SocketCreator.ENABLE_TCP_KEEP_ALIVE);
 
-        /*
-         * If conserve-sockets is false, the socket can be used for receiving responses, so set the
-         * receive buffer accordingly.
-         */
-        if (!sharedResource) {
-          setReceiveBufferSize(channel.socket(), this.owner.getConduit().tcpBufferSize);
-        } else {
-          setReceiveBufferSize(channel.socket(), SMALL_BUFFER_SIZE); // make small since only
-                                                                     // receive ack messages
-        }
-        setSendBufferSize(channel.socket());
-        channel.configureBlocking(true);
-
-        int connectTime = getP2PConnectTimeout();
-
-        try {
-          channel.socket().connect(addr, connectTime);
-        } catch (NullPointerException e) {
-          // bug #45044 - jdk 1.7 sometimes throws an NPE here
-          ConnectException c = new ConnectException("Encountered bug #45044 - retrying");
-          c.initCause(e);
-          // prevent a hot loop by sleeping a little bit
-          try {
-            Thread.sleep(1000);
-          } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-          }
-          throw c;
-        } catch (CancelledKeyException | ClosedSelectorException e) {
-          // bug #44469: for some reason NIO throws this runtime exception
-          // instead of an IOException on timeouts
-          ConnectException c = new ConnectException(
-              LocalizedStrings.Connection_ATTEMPT_TO_CONNECT_TIMED_OUT_AFTER_0_MILLISECONDS
-                  .toLocalizedString(new Object[] {connectTime}));
-          c.initCause(e);
-          throw c;
-        }
-      } finally {
-        this.owner.removeConnectingSocket(channel.socket());
-      }
-      this.socket = channel.socket();
-    } else {
-      if (TCPConduit.useSSL) {
-        int socketBufferSize =
-            sharedResource ? SMALL_BUFFER_SIZE : this.owner.getConduit().tcpBufferSize;
-        this.socket = owner.getConduit().getSocketCreator().connectForServer(
-            remoteAddr.getInetAddress(), remoteAddr.getDirectChannelPort(), socketBufferSize);
-        // Set the receive buffer size local fields. It has already been set in the socket.
-        setSocketBufferSize(this.socket, false, socketBufferSize, true);
-        setSendBufferSize(this.socket);
+      /*
+       * If conserve-sockets is false, the socket can be used for receiving responses, so set the
+       * receive buffer accordingly.
+       */
+      if (!sharedResource) {
+        setReceiveBufferSize(channel.socket(), this.owner.getConduit().tcpBufferSize);
       } else {
-        Socket s = new Socket();
-        this.socket = s;
-        s.setTcpNoDelay(true);
-        s.setKeepAlive(SocketCreator.ENABLE_TCP_KEEP_ALIVE);
-        setReceiveBufferSize(s, SMALL_BUFFER_SIZE);
-        setSendBufferSize(s);
-        s.connect(addr, 0);
+        setReceiveBufferSize(channel.socket(), SMALL_BUFFER_SIZE); // make small since only
+        // receive ack messages
       }
+      setSendBufferSize(channel.socket());
+      channel.configureBlocking(true);
+
+      int connectTime = getP2PConnectTimeout(conduit.getDM().getConfig());
+
+      try {
+
+        channel.socket().connect(addr, connectTime);
+
+        createIoFilter(channel, true);
+
+      } catch (NullPointerException e) {
+        // bug #45044 - jdk 1.7 sometimes throws an NPE here
+        ConnectException c = new ConnectException("Encountered bug #45044 - retrying");
+        c.initCause(e);
+        // prevent a hot loop by sleeping a little bit
+        try {
+          Thread.sleep(1000);
+        } catch (InterruptedException ie) {
+          Thread.currentThread().interrupt();
+        }
+        throw c;
+      } catch (SSLException e) {
+        ConnectException c = new ConnectException("Problem connecting to peer " + addr);
+        c.initCause(e);
+        throw c;
+      } catch (CancelledKeyException | ClosedSelectorException e) {
+        // bug #44469: for some reason NIO throws this runtime exception
+        // instead of an IOException on timeouts
+        ConnectException c = new ConnectException(
+            String.format("Attempt timed out after %s milliseconds",
+                connectTime));
+        c.initCause(e);
+        throw c;
+      }
+    } finally {
+      this.owner.removeConnectingSocket(channel.socket());
     }
+    this.socket = channel.socket();
+
     if (logger.isDebugEnabled()) {
-      logger.debug("Connection: connected to {} with stub {}", remoteAddr, addr);
+      logger.debug("Connection: connected to {} with IP address {}", remoteAddr, addr);
     }
     try {
       getSocket().setTcpNoDelay(true);
-    } catch (SocketException e) {
+    } catch (SocketException ignored) {
     }
   }
 
@@ -1305,20 +1197,15 @@ public class Connection implements Runnable {
    */
   private static final boolean BATCH_SENDS = Boolean.getBoolean("p2p.batchSends");
   private static final int BATCH_BUFFER_SIZE =
-      Integer.getInteger("p2p.batchBufferSize", 1024 * 1024).intValue();
-  private static final int BATCH_FLUSH_MS = Integer.getInteger("p2p.batchFlushTime", 50).intValue();
-  private Object batchLock;
+      Integer.getInteger("p2p.batchBufferSize", 1024 * 1024);
+  private static final int BATCH_FLUSH_MS = Integer.getInteger("p2p.batchFlushTime", 50);
+  private final Object batchLock = new Object();
   private ByteBuffer fillBatchBuffer;
   private ByteBuffer sendBatchBuffer;
   private BatchBufferFlusher batchFlusher;
 
   private void createBatchSendBuffer() {
-    // batch send buffer isn't needed if old-io is being used
-    if (!this.useNIO) {
-      return;
-    }
-    this.batchLock = new Object();
-    if (TCPConduit.useDirectBuffers) {
+    if (BufferPool.useDirectBuffers) {
       this.fillBatchBuffer = ByteBuffer.allocateDirect(BATCH_BUFFER_SIZE);
       this.sendBatchBuffer = ByteBuffer.allocateDirect(BATCH_BUFFER_SIZE);
     } else {
@@ -1329,12 +1216,16 @@ public class Connection implements Runnable {
     this.batchFlusher.start();
   }
 
-  public void cleanUpOnIdleTaskCancel() {
+  void cleanUpOnIdleTaskCancel() {
     // Make sure receivers are removed from the connection table, this should always be a noop, but
     // is done here as a failsafe.
     if (isReceiver) {
       owner.removeReceiver(this);
     }
+  }
+
+  public void setInputBuffer(ByteBuffer buffer) {
+    this.inputBuffer = buffer;
   }
 
   private class BatchBufferFlusher extends Thread {
@@ -1343,7 +1234,7 @@ public class Connection implements Runnable {
     private DMStats stats;
 
 
-    public BatchBufferFlusher() {
+    BatchBufferFlusher() {
       setDaemon(true);
       this.stats = owner.getConduit().getStats();
     }
@@ -1351,7 +1242,7 @@ public class Connection implements Runnable {
     /**
      * Called when a message writer needs the current fillBatchBuffer flushed
      */
-    public void flushBuffer(ByteBuffer bb) {
+    void flushBuffer(ByteBuffer bb) {
       final long start = DistributionStats.getStatTime();
       try {
         synchronized (this) {
@@ -1420,14 +1311,13 @@ public class Connection implements Runnable {
                 try {
                   sendBatchBuffer.flip();
                   SocketChannel channel = getSocket().getChannel();
-                  nioWriteFully(channel, sendBatchBuffer, false, null);
+                  writeFully(channel, sendBatchBuffer, false, null);
                   sendBatchBuffer.clear();
                 } catch (IOException | ConnectionException ex) {
-                  logger.fatal(LocalizedMessage.create(
-                      LocalizedStrings.Connection_EXCEPTION_FLUSHING_BATCH_SEND_BUFFER_0, ex));
+                  logger.fatal("Exception flushing batch send buffer: %s", ex);
                   readerShuttingDown = true;
-                  requestClose(LocalizedStrings.Connection_EXCEPTION_FLUSHING_BATCH_SEND_BUFFER_0
-                      .toLocalizedString(ex));
+                  requestClose(String.format("Exception flushing batch send buffer: %s",
+                      ex));
                 } finally {
                   accessed();
                   socketInUse = origSocketInUse;
@@ -1561,15 +1451,17 @@ public class Connection implements Runnable {
               }
             }
           }
-          if (logger.isDebugEnabled()) {
-            logger.debug("Closing socket for {}", this);
-          }
         } else if (!forceRemoval) {
           removeEndpoint = false;
         }
         // make sure our socket is closed
         asyncClose(false);
-        nioLengthSet = false;
+        if (!this.isReceiver) {
+          // receivers release the input buffer when exiting run(). Senders use the
+          // inputBuffer for reading direct-reply responses
+          releaseInputBuffer();
+        }
+        lengthSet = false;
       } // synchronized
 
       // moved the call to notifyHandshakeWaiter out of the above
@@ -1582,9 +1474,9 @@ public class Connection implements Runnable {
       // if network partition detection is enabled or this is an admin vm
       // we can't wait for the reader thread when running in an IBM JRE. See
       // bug 41889
-      if (this.conduit.config.getEnableNetworkPartitionDetection()
-          || this.conduit.getMemberId().getVmKind() == DistributionManager.ADMIN_ONLY_DM_TYPE
-          || this.conduit.getMemberId().getVmKind() == DistributionManager.LOCATOR_DM_TYPE) {
+      if (this.conduit.getConfig().getEnableNetworkPartitionDetection()
+          || this.conduit.getMemberId().getVmKind() == ClusterDistributionManager.ADMIN_ONLY_DM_TYPE
+          || this.conduit.getMemberId().getVmKind() == ClusterDistributionManager.LOCATOR_DM_TYPE) {
         isIBM = "IBM Corporation".equals(System.getProperty("java.vm.vendor"));
       }
       {
@@ -1602,9 +1494,8 @@ public class Connection implements Runnable {
                                                            // failure
               readerThreadSnapshot.join(1500);
               if (this.isRunning) {
-                logger.info(LocalizedMessage.create(
-                    LocalizedStrings.Connection_TIMED_OUT_WAITING_FOR_READERTHREAD_ON_0_TO_FINISH,
-                    this));
+                logger.info("Timed out waiting for readerThread on {} to finish.",
+                    this);
               }
             }
           } catch (IllegalThreadStateException ignore) {
@@ -1669,6 +1560,9 @@ public class Connection implements Runnable {
 
   /** starts a reader thread */
   private void startReader(ConnectionTable connTable) {
+    if (logger.isDebugEnabled()) {
+      logger.debug("Starting thread for " + p2pReaderName());
+    }
     Assert.assertTrue(!this.isRunning);
     stopped = false;
     this.isRunning = true;
@@ -1680,36 +1574,33 @@ public class Connection implements Runnable {
    * in order to read non-NIO socket-based messages we need to have a thread actively trying to grab
    * bytes out of the sockets input queue. This is that thread.
    */
+  @Override
   public void run() {
     this.readerThread = Thread.currentThread();
     this.readerThread.setName(p2pReaderName());
     ConnectionTable.threadWantsSharedResources();
     makeReaderThread(this.isReceiver);
     try {
-      if (useNIO()) {
-        runNioReader();
-      } else {
-        runOioReader();
-      }
+      readMessages();
     } finally {
       // bug36060: do the socket close within a finally block
       if (logger.isDebugEnabled()) {
         logger.debug("Stopping {} for {}", p2pReaderName(), remoteAddr);
       }
-      initiateSuspicionIfSharedUnordered();
       if (this.isReceiver) {
+        try {
+          initiateSuspicionIfSharedUnordered();
+        } catch (CancelException e) {
+          // shutting down
+        }
         if (!this.sharedResource) {
           this.conduit.getStats().incThreadOwnedReceivers(-1L, dominoCount.get());
         }
         asyncClose(false);
         this.owner.removeAndCloseThreadOwnedSockets();
       }
-      ByteBuffer tmp = this.nioInputBuffer;
-      if (tmp != null) {
-        this.nioInputBuffer = null;
-        final DMStats stats = this.owner.getConduit().getStats();
-        Buffers.releaseReceiveBuffer(tmp, stats);
-      }
+      releaseInputBuffer();
+
       // make sure that if the reader thread exits we notify a thread waiting
       // for the handshake.
       // see bug 37524 for an example of listeners hung in waitForHandshake
@@ -1722,10 +1613,25 @@ public class Connection implements Runnable {
     } // finally
   }
 
+  private void releaseInputBuffer() {
+    ByteBuffer tmp = this.inputBuffer;
+    if (tmp != null) {
+      this.inputBuffer = null;
+      final MembershipStatistics stats = this.owner.getConduit().getStats();
+      getBufferPool().releaseReceiveBuffer(tmp);
+    }
+  }
+
+  BufferPool getBufferPool() {
+    return owner.getBufferPool();
+  }
+
   private String p2pReaderName() {
     StringBuilder sb = new StringBuilder(64);
     if (this.isReceiver) {
-      sb.append("P2P message reader@");
+      sb.append(THREAD_KIND_IDENTIFIER + "@");
+    } else if (this.handshakeRead) {
+      sb.append("P2P message sender@");
     } else {
       sb.append("P2P handshake reader@");
     }
@@ -1736,18 +1642,23 @@ public class Connection implements Runnable {
     return sb.toString();
   }
 
-  private void runNioReader() {
+  private void readMessages() {
     // take a snapshot of uniqueId to detect reconnect attempts; see bug 37592
-    SocketChannel channel = null;
+    SocketChannel channel;
     try {
       channel = getSocket().getChannel();
+      socket.setSoTimeout(0);
+      socket.setTcpNoDelay(true);
+      if (ioFilter == null) {
+        createIoFilter(channel, false);
+      }
       channel.configureBlocking(true);
     } catch (ClosedChannelException e) {
       // bug 37693: the channel was asynchronously closed. Our work
       // is done.
       try {
         requestClose(
-            LocalizedStrings.Connection_RUNNIOREADER_CAUGHT_CLOSED_CHANNEL.toLocalizedString());
+            "readMessages caught closed channel");
       } catch (Exception ignore) {
       }
       return; // exit loop and thread
@@ -1755,17 +1666,17 @@ public class Connection implements Runnable {
       if (stopped || owner.getConduit().getCancelCriterion().isCancelInProgress()) {
         try {
           requestClose(
-              LocalizedStrings.Connection_RUNNIOREADER_CAUGHT_SHUTDOWN.toLocalizedString());
+              "readMessages caught shutdown");
         } catch (Exception ignore) {
         }
         return; // bug37520: exit loop (and thread)
       }
-      logger.fatal(LocalizedMessage
-          .create(LocalizedStrings.Connection_FAILED_SETTING_CHANNEL_TO_BLOCKING_MODE_0, ex));
+      logger.info("Failed initializing socket for message {}: {}",
+          (this.isReceiver ? "receiver" : "sender"), ex.getMessage());
       this.readerShuttingDown = true;
       try {
-        requestClose(LocalizedStrings.Connection_FAILED_SETTING_CHANNEL_TO_BLOCKING_MODE_0
-            .toLocalizedString(ex));
+        requestClose(String.format("Failed initializing socket %s",
+            ex));
       } catch (Exception ignore) {
       }
       return;
@@ -1774,13 +1685,16 @@ public class Connection implements Runnable {
     if (!stopped) {
       // Assert.assertTrue(owner != null, "How did owner become null");
       if (logger.isDebugEnabled()) {
-        logger.debug("Starting {}", p2pReaderName());
+        logger.debug("Starting {} on {}", p2pReaderName(), socket);
       }
     }
     // we should not change the state of the connection if we are a handshake reader thread
     // as there is a race between this thread and the application thread doing direct ack
     // fix for #40869
     boolean isHandShakeReader = false;
+    // if we're using SSL/TLS the input buffer may already have data to process
+    boolean skipInitialRead = getInputBuffer().position() > 0;
+    boolean isInitialRead = true;
     try {
       for (;;) {
         if (stopped) {
@@ -1791,6 +1705,7 @@ public class Connection implements Runnable {
           Socket s = this.socket;
           if (s != null) {
             try {
+              ioFilter.close(s.getChannel());
               s.close();
             } catch (IOException e) {
               // don't care
@@ -1803,36 +1718,45 @@ public class Connection implements Runnable {
         }
 
         try {
-          ByteBuffer buff = getNIOBuffer();
+          ByteBuffer buff = getInputBuffer();
           synchronized (stateLock) {
             connectionState = STATE_READING;
           }
-          int amt = channel.read(buff);
+          int amountRead;
+          if (!isInitialRead) {
+            amountRead = channel.read(buff);
+          } else {
+            isInitialRead = false;
+            if (!skipInitialRead) {
+              amountRead = channel.read(buff);
+            } else {
+              amountRead = buff.position();
+            }
+          }
           synchronized (stateLock) {
             connectionState = STATE_IDLE;
           }
-          if (amt == 0) {
+          if (amountRead == 0) {
             continue;
           }
-          if (amt < 0) {
+          if (amountRead < 0) {
             this.readerShuttingDown = true;
             try {
               requestClose("SocketChannel.read returned EOF");
-              requestClose(
-                  LocalizedStrings.Connection_SOCKETCHANNEL_READ_RETURNED_EOF.toLocalizedString());
             } catch (Exception e) {
               // ignore - shutting down
             }
             return;
           }
 
-          processNIOBuffer();
+          processInputBuffer();
+
           if (!this.isReceiver && (this.handshakeRead || this.handshakeCancelled)) {
             if (logger.isDebugEnabled()) {
               if (this.handshakeRead) {
-                logger.debug("{} handshake has been read {}", p2pReaderName(), this);
+                logger.debug("handshake has been read {}", this);
               } else {
-                logger.debug("{} handshake has been cancelled {}", p2pReaderName(), this);
+                logger.debug("handshake has been cancelled {}", this);
               }
             }
             isHandShakeReader = true;
@@ -1846,16 +1770,16 @@ public class Connection implements Runnable {
           this.readerShuttingDown = true;
           try {
             requestClose(
-                LocalizedStrings.Connection_CACHECLOSED_IN_CHANNEL_READ_0.toLocalizedString(e));
-          } catch (Exception ex) {
+                String.format("CacheClosed in channel read: %s", e));
+          } catch (Exception ignored) {
           }
           return;
         } catch (ClosedChannelException e) {
           this.readerShuttingDown = true;
           try {
-            requestClose(LocalizedStrings.Connection_CLOSEDCHANNELEXCEPTION_IN_CHANNEL_READ_0
-                .toLocalizedString(e));
-          } catch (Exception ex) {
+            requestClose(String.format("ClosedChannelException in channel read: %s",
+                e));
+          } catch (Exception ignored) {
           }
           return;
         } catch (IOException e) {
@@ -1877,22 +1801,21 @@ public class Connection implements Runnable {
           this.readerShuttingDown = true;
           try {
             requestClose(
-                LocalizedStrings.Connection_IOEXCEPTION_IN_CHANNEL_READ_0.toLocalizedString(e));
-          } catch (Exception ex) {
+                String.format("IOException in channel read: %s", e));
+          } catch (Exception ignored) {
           }
           return;
 
         } catch (Exception e) {
           this.owner.getConduit().getCancelCriterion().checkCancelInProgress(null); // bug 37101
           if (!stopped && !isSocketClosed()) {
-            logger.fatal(LocalizedMessage.create(
-                LocalizedStrings.Connection_0_EXCEPTION_IN_CHANNEL_READ, p2pReaderName()), e);
+            logger.fatal(String.format("%s exception in channel read", p2pReaderName()), e);
           }
           this.readerShuttingDown = true;
           try {
             requestClose(
-                LocalizedStrings.Connection_0_EXCEPTION_IN_CHANNEL_READ.toLocalizedString(e));
-          } catch (Exception ex) {
+                String.format("%s exception in channel read", e));
+          } catch (Exception ignored) {
           }
           return;
         }
@@ -1904,9 +1827,38 @@ public class Connection implements Runnable {
         }
       }
       if (logger.isDebugEnabled()) {
-        logger.debug("{} runNioReader terminated id={} from {}", p2pReaderName(), conduitIdStr,
-            remoteAddr);
+        logger.debug("readMessages terminated id={} from {} isHandshakeReader={}", conduitIdStr,
+            remoteAddr, isHandShakeReader);
       }
+    }
+  }
+
+  private void createIoFilter(SocketChannel channel, boolean clientSocket) throws IOException {
+    if (getConduit().useSSL() && channel != null) {
+      InetSocketAddress address = (InetSocketAddress) channel.getRemoteAddress();
+      SSLEngine engine =
+          getConduit().getSocketCreator().createSSLEngine(address.getHostName(), address.getPort());
+
+      int packetBufferSize = engine.getSession().getPacketBufferSize();
+      if (inputBuffer == null
+          || (inputBuffer.capacity() < packetBufferSize)) {
+        // TLS has a minimum input buffer size constraint
+        if (inputBuffer != null) {
+          getBufferPool().releaseReceiveBuffer(inputBuffer);
+        }
+        inputBuffer = getBufferPool().acquireDirectReceiveBuffer(packetBufferSize);
+      }
+      if (channel.socket().getReceiveBufferSize() < packetBufferSize) {
+        channel.socket().setReceiveBufferSize(packetBufferSize);
+      }
+      if (channel.socket().getSendBufferSize() < packetBufferSize) {
+        channel.socket().setSendBufferSize(packetBufferSize);
+      }
+      ioFilter = getConduit().getSocketCreator().handshakeSSLSocketChannel(channel, engine,
+          getConduit().idleConnectionTimeout, clientSocket, inputBuffer,
+          getBufferPool());
+    } else {
+      ioFilter = new NioPlainEngine(getBufferPool());
     }
   }
 
@@ -1926,7 +1878,7 @@ public class Connection implements Runnable {
    * checks to see if an exception should not be logged: i.e., "forcibly closed", "reset by peer",
    * or "connection reset"
    */
-  public static boolean isIgnorableIOException(Exception e) {
+  private static boolean isIgnorableIOException(Exception e) {
     if (e instanceof ClosedChannelException) {
       return true;
     }
@@ -1999,528 +1951,17 @@ public class Connection implements Runnable {
   }
 
   private void sendFailureReply(int rpId, String exMsg, Throwable ex, boolean directAck) {
-    ReplySender dm = null;
+    ReplyException exception = new ReplyException(exMsg, ex);
     if (directAck) {
-      dm = new DirectReplySender(this);
+      ReplySender dm = new DirectReplySender(this);
+      ReplyMessage.send(getRemoteAddress(), rpId, exception, dm);
     } else if (rpId != 0) {
-      dm = this.owner.getDM();
-    }
-    if (dm != null) {
-      ReplyMessage.send(getRemoteAddress(), rpId, new ReplyException(exMsg, ex), dm);
-    }
-  }
-
-  private void runOioReader() {
-    InputStream input = null;
-    try {
-      if (logger.isDebugEnabled()) {
-        logger.debug("Socket is of type: {}", getSocket().getClass());
-      }
-      input = new BufferedInputStream(getSocket().getInputStream(), INITIAL_CAPACITY);
-    } catch (IOException io) {
-      if (stopped || owner.getConduit().getCancelCriterion().isCancelInProgress()) {
-        return; // bug 37520: exit run loop (and thread)
-      }
-      logger.fatal(LocalizedMessage.create(LocalizedStrings.Connection_UNABLE_TO_GET_INPUT_STREAM),
-          io);
-      stopped = true;
-    }
-
-    if (!stopped) {
-      Assert.assertTrue(owner != null,
-          LocalizedStrings.Connection_OWNER_SHOULD_NOT_BE_NULL.toLocalizedString());
-      if (logger.isDebugEnabled()) {
-        logger.debug("Starting {}", p2pReaderName());
-      }
-    }
-
-    byte[] headerBytes = new byte[MSG_HEADER_BYTES];
-
-    final ByteArrayDataInput dis = new ByteArrayDataInput();
-    while (!stopped) {
-      try {
-        if (SystemFailure.getFailure() != null) {
-          // Allocate no objects here!
-          Socket s = this.socket;
-          if (s != null) {
-            try {
-              s.close();
-            } catch (IOException e) {
-              // don't care
-            }
-          }
-          SystemFailure.checkFailure(); // throws
-        }
-        if (this.owner.getConduit().getCancelCriterion().isCancelInProgress()) {
-          break;
-        }
-        int len = 0;
-        if (readFully(input, headerBytes, headerBytes.length) < 0) {
-          stopped = true;
-          continue;
-        }
-        // long recvNanos = DistributionStats.getStatTime();
-        len = ((headerBytes[MSG_HEADER_SIZE_OFFSET] & 0xff) * 0x1000000)
-            + ((headerBytes[MSG_HEADER_SIZE_OFFSET + 1] & 0xff) * 0x10000)
-            + ((headerBytes[MSG_HEADER_SIZE_OFFSET + 2] & 0xff) * 0x100)
-            + (headerBytes[MSG_HEADER_SIZE_OFFSET + 3] & 0xff);
-        /* byte msgHdrVersion = */ calcHdrVersion(len);
-        len = calcMsgByteSize(len);
-        int msgType = headerBytes[MSG_HEADER_TYPE_OFFSET];
-        short msgId = (short) (((headerBytes[MSG_HEADER_ID_OFFSET] & 0xff) << 8)
-            + (headerBytes[MSG_HEADER_ID_OFFSET + 1] & 0xff));
-        boolean myDirectAck = (msgType & DIRECT_ACK_BIT) != 0;
-        if (myDirectAck) {
-          msgType &= ~DIRECT_ACK_BIT; // clear the bit
-        }
-        // Following validation fixes bug 31145
-        if (!validMsgType(msgType)) {
-          logger.fatal(LocalizedMessage.create(
-              LocalizedStrings.Connection_UNKNOWN_P2P_MESSAGE_TYPE_0, Integer.valueOf(msgType)));
-          this.readerShuttingDown = true;
-          requestClose(LocalizedStrings.Connection_UNKNOWN_P2P_MESSAGE_TYPE_0
-              .toLocalizedString(Integer.valueOf(msgType)));
-          break;
-        }
-        if (logger.isTraceEnabled())
-          logger.trace("{} reading {} bytes", conduitIdStr, len);
-        byte[] bytes = new byte[len];
-        if (readFully(input, bytes, len) < 0) {
-          stopped = true;
-          continue;
-        }
-        boolean interrupted = Thread.interrupted();
-        try {
-          if (this.handshakeRead) {
-            if (msgType == NORMAL_MSG_TYPE) {
-              // DMStats stats = this.owner.getConduit().stats;
-              // long start = DistributionStats.getStatTime();
-              this.owner.getConduit().getStats().incMessagesBeingReceived(true, len);
-              dis.initialize(bytes, this.remoteVersion);
-              DistributionMessage msg = null;
-              try {
-                ReplyProcessor21.initMessageRPId();
-                long startSer = this.owner.getConduit().getStats().startMsgDeserialization();
-                msg = (DistributionMessage) InternalDataSerializer.readDSFID(dis);
-                this.owner.getConduit().getStats().endMsgDeserialization(startSer);
-                if (dis.available() != 0) {
-                  logger.warn(LocalizedMessage.create(
-                      LocalizedStrings.Connection_MESSAGE_DESERIALIZATION_OF_0_DID_NOT_READ_1_BYTES,
-                      new Object[] {msg, Integer.valueOf(dis.available())}));
-                }
-                // stats.incBatchCopyTime(start);
-                try {
-                  // start = DistributionStats.getStatTime();
-                  if (!dispatchMessage(msg, len, myDirectAck)) {
-                    continue;
-                  }
-                  // stats.incBatchSendTime(start);
-                } catch (MemberShunnedException e) {
-                  continue;
-                } catch (Exception de) {
-                  this.owner.getConduit().getCancelCriterion().checkCancelInProgress(de); // bug
-                                                                                          // 37101
-                  logger.fatal(LocalizedMessage
-                      .create(LocalizedStrings.Connection_ERROR_DISPATCHING_MESSAGE), de);
-                }
-              } catch (VirtualMachineError err) {
-                SystemFailure.initiateFailure(err);
-                // If this ever returns, rethrow the error. We're poisoned
-                // now, so don't let this thread continue.
-                throw err;
-              } catch (Throwable e) {
-                // Whenever you catch Error or Throwable, you must also
-                // catch VirtualMachineError (see above). However, there is
-                // _still_ a possibility that you are dealing with a cascading
-                // error condition, so you also need to check to see if the JVM
-                // is still usable:
-                SystemFailure.checkFailure();
-                // In particular I want OutOfMem to be caught here
-                if (!myDirectAck) {
-                  String reason =
-                      LocalizedStrings.Connection_ERROR_DESERIALIZING_MESSAGE.toLocalizedString();
-                  sendFailureReply(ReplyProcessor21.getMessageRPId(), reason, e, myDirectAck);
-                }
-                if (e instanceof CancelException) {
-                  if (!(e instanceof CacheClosedException)) {
-                    // Just log a message if we had trouble deserializing due to
-                    // CacheClosedException; see bug 43543
-                    throw (CancelException) e;
-                  }
-                }
-                logger.fatal(LocalizedMessage
-                    .create(LocalizedStrings.Connection_ERROR_DESERIALIZING_MESSAGE), e);
-                // requestClose();
-                // return;
-              } finally {
-                ReplyProcessor21.clearMessageRPId();
-              }
-            } else if (msgType == CHUNKED_MSG_TYPE) {
-              MsgDestreamer md = obtainMsgDestreamer(msgId, remoteVersion);
-              this.owner.getConduit().getStats().incMessagesBeingReceived(md.size() == 0, len);
-              try {
-                md.addChunk(bytes);
-              } catch (IOException ex) {
-                logger.fatal(LocalizedMessage
-                    .create(LocalizedStrings.Connection_FAILED_HANDLING_CHUNK_MESSAGE), ex);
-              }
-            } else /* (messageType == END_CHUNKED_MSG_TYPE) */ {
-              MsgDestreamer md = obtainMsgDestreamer(msgId, remoteVersion);
-              this.owner.getConduit().getStats().incMessagesBeingReceived(md.size() == 0, len);
-              try {
-                md.addChunk(bytes);
-              } catch (IOException ex) {
-                logger.fatal(LocalizedMessage
-                    .create(LocalizedStrings.Connection_FAILED_HANDLING_END_CHUNK_MESSAGE), ex);
-              }
-              DistributionMessage msg = null;
-              int msgLength = 0;
-              String failureMsg = null;
-              Throwable failureEx = null;
-              int rpId = 0;
-              try {
-                msg = md.getMessage();
-              } catch (ClassNotFoundException ex) {
-                this.owner.getConduit().getStats().decMessagesBeingReceived(md.size());
-                failureEx = ex;
-                rpId = md.getRPid();
-                logger.warn(LocalizedMessage
-                    .create(LocalizedStrings.Connection_CLASSNOTFOUND_DESERIALIZING_MESSAGE_0, ex));
-              } catch (IOException ex) {
-                this.owner.getConduit().getStats().decMessagesBeingReceived(md.size());
-                failureMsg = LocalizedStrings.Connection_IOEXCEPTION_DESERIALIZING_MESSAGE
-                    .toLocalizedString();
-                failureEx = ex;
-                rpId = md.getRPid();
-                logger.fatal(LocalizedMessage.create(
-                    LocalizedStrings.Connection_IOEXCEPTION_DESERIALIZING_MESSAGE), failureEx);
-              } catch (InterruptedException ex) {
-                Thread.currentThread().interrupt();
-                throw ex; // caught by outer try
-              } catch (VirtualMachineError err) {
-                SystemFailure.initiateFailure(err);
-                // If this ever returns, rethrow the error. We're poisoned
-                // now, so don't let this thread continue.
-                throw err;
-              } catch (Throwable ex) {
-                // Whenever you catch Error or Throwable, you must also
-                // catch VirtualMachineError (see above). However, there is
-                // _still_ a possibility that you are dealing with a cascading
-                // error condition, so you also need to check to see if the JVM
-                // is still usable:
-                SystemFailure.checkFailure();
-                this.owner.getConduit().getStats().decMessagesBeingReceived(md.size());
-                failureMsg = LocalizedStrings.Connection_UNEXPECTED_FAILURE_DESERIALIZING_MESSAGE
-                    .toLocalizedString();
-                failureEx = ex;
-                rpId = md.getRPid();
-                logger.fatal(
-                    LocalizedMessage.create(
-                        LocalizedStrings.Connection_UNEXPECTED_FAILURE_DESERIALIZING_MESSAGE),
-                    failureEx);
-              } finally {
-                msgLength = md.size();
-                releaseMsgDestreamer(msgId, md);
-              }
-              if (msg != null) {
-                try {
-                  if (!dispatchMessage(msg, msgLength, myDirectAck)) {
-                    continue;
-                  }
-                } catch (MemberShunnedException e) {
-                  continue;
-                } catch (Exception de) {
-                  this.owner.getConduit().getCancelCriterion().checkCancelInProgress(de);
-                  logger.fatal(LocalizedMessage
-                      .create(LocalizedStrings.Connection_ERROR_DISPATCHING_MESSAGE), de);
-                } catch (ThreadDeath td) {
-                  throw td;
-                } catch (VirtualMachineError err) {
-                  SystemFailure.initiateFailure(err);
-                  // If this ever returns, rethrow the error. We're poisoned
-                  // now, so don't let this thread continue.
-                  throw err;
-                } catch (Throwable t) {
-                  // Whenever you catch Error or Throwable, you must also
-                  // catch VirtualMachineError (see above). However, there is
-                  // _still_ a possibility that you are dealing with a cascading
-                  // error condition, so you also need to check to see if the JVM
-                  // is still usable:
-                  SystemFailure.checkFailure();
-                  logger.fatal(LocalizedMessage
-                      .create(LocalizedStrings.Connection_THROWABLE_DISPATCHING_MESSAGE), t);
-                }
-              } else if (failureEx != null) {
-                sendFailureReply(rpId, failureMsg, failureEx, myDirectAck);
-              }
-            }
-          } else {
-            dis.initialize(bytes, null);
-            if (!this.isReceiver) {
-              this.replyCode = dis.readUnsignedByte();
-              if (this.replyCode != REPLY_CODE_OK
-                  && this.replyCode != REPLY_CODE_OK_WITH_ASYNC_INFO) {
-                Integer replyCodeInteger = Integer.valueOf(this.replyCode);
-                String err = LocalizedStrings.Connection_UNKNOWN_HANDSHAKE_REPLY_CODE_0
-                    .toLocalizedString(replyCodeInteger);
-
-                if (this.replyCode == 0) { // bug 37113
-                  if (logger.isDebugEnabled()) {
-                    logger.debug("{} (peer probably departed ungracefully)", err);
-                  }
-                } else {
-                  logger.fatal(LocalizedMessage.create(
-                      LocalizedStrings.Connection_UNKNOWN_HANDSHAKE_REPLY_CODE_0,
-                      replyCodeInteger));
-                }
-                this.readerShuttingDown = true;
-                requestClose(err);
-                break;
-              }
-              if (this.replyCode == REPLY_CODE_OK_WITH_ASYNC_INFO) {
-                this.asyncDistributionTimeout = dis.readInt();
-                this.asyncQueueTimeout = dis.readInt();
-                this.asyncMaxQueueSize = (long) dis.readInt() * (1024 * 1024);
-                if (this.asyncDistributionTimeout != 0) {
-                  logger.info(LocalizedMessage.create(
-                      LocalizedStrings.Connection_0_ASYNC_CONFIGURATION_RECEIVED_1,
-                      new Object[] {p2pReaderName(),
-                          " asyncDistributionTimeout=" + this.asyncDistributionTimeout
-                              + " asyncQueueTimeout=" + this.asyncQueueTimeout
-                              + " asyncMaxQueueSize=" + (this.asyncMaxQueueSize / (1024 * 1024))}));
-                }
-                // read the product version ordinal for on-the-fly serialization
-                // transformations (for rolling upgrades)
-                this.remoteVersion = Version.readVersion(dis, true);
-              }
-              notifyHandshakeWaiter(true);
-            } else {
-              byte b = dis.readByte();
-              if (b != 0) {
-                throw new IllegalStateException(
-                    LocalizedStrings.Connection_DETECTED_OLD_VERSION_PRE_5_0_1_OF_GEMFIRE_OR_NONGEMFIRE_DURING_HANDSHAKE_DUE_TO_INITIAL_BYTE_BEING_0
-                        .toLocalizedString(new Byte(b)));
-              }
-              byte handShakeByte = dis.readByte();
-              if (handShakeByte != HANDSHAKE_VERSION) {
-                throw new IllegalStateException(
-                    LocalizedStrings.Connection_DETECTED_WRONG_VERSION_OF_GEMFIRE_PRODUCT_DURING_HANDSHAKE_EXPECTED_0_BUT_FOUND_1
-                        .toLocalizedString(
-                            new Object[] {new Byte(HANDSHAKE_VERSION), new Byte(handShakeByte)}));
-              }
-              InternalDistributedMember remote = DSFIDFactory.readInternalDistributedMember(dis);
-              setRemoteAddr(remote);
-              Thread.currentThread().setName(LocalizedStrings.Connection_P2P_MESSAGE_READER_FOR_0
-                  .toLocalizedString(this.remoteAddr, this.socket.getPort()));
-              this.sharedResource = dis.readBoolean();
-              this.preserveOrder = dis.readBoolean();
-              this.uniqueId = dis.readLong();
-              // read the product version ordinal for on-the-fly serialization
-              // transformations (for rolling upgrades)
-              this.remoteVersion = Version.readVersion(dis, true);
-              int dominoNumber = 0;
-              if (this.remoteVersion == null
-                  || (this.remoteVersion.compareTo(Version.GFE_80) >= 0)) {
-                dominoNumber = dis.readInt();
-                if (this.sharedResource) {
-                  dominoNumber = 0;
-                }
-                dominoCount.set(dominoNumber);
-                // this.senderName = dis.readUTF();
-                setThreadName(dominoNumber);
-              }
-
-              if (!this.sharedResource) {
-                if (tipDomino()) {
-                  logger.info(LocalizedMessage.create(
-                      LocalizedStrings.Connection_THREAD_OWNED_RECEIVER_FORCING_ITSELF_TO_SEND_ON_THREAD_OWNED_SOCKETS));
-                  // bug #49565 - if domino count is >= 2 use shared resources.
-                  // Also see DistributedCacheOperation#supportsDirectAck
-                } else { // if (dominoNumber < 2){
-                  ConnectionTable.threadWantsOwnResources();
-                  if (logger.isDebugEnabled()) {
-                    logger.debug(
-                        "thread-owned receiver with domino count of {} will prefer sending on thread-owned sockets",
-                        dominoNumber);
-                  }
-                  // } else {
-                  // ConnectionTable.threadWantsSharedResources();
-                  // logger.fine("thread-owned receiver with domino count of " + dominoNumber + "
-                  // will prefer shared sockets");
-                }
-                this.conduit.getStats().incThreadOwnedReceivers(1L, dominoNumber);
-              }
-
-              if (logger.isDebugEnabled()) {
-                logger.debug("{} remoteAddr is {} {}", p2pReaderName(), this.remoteAddr,
-                    (this.remoteVersion != null ? " (" + this.remoteVersion + ')' : ""));
-              }
-
-              String authInit = System.getProperty(
-                  DistributionConfigImpl.SECURITY_SYSTEM_PREFIX + SECURITY_PEER_AUTH_INIT);
-              boolean isSecure = authInit != null && authInit.length() != 0;
-
-              if (isSecure) {
-                // ARB: wait till member authentication has been confirmed?
-                if (owner.getConduit().waitForMembershipCheck(this.remoteAddr)) {
-                  sendOKHandshakeReply(); // fix for bug 33224
-                  notifyHandshakeWaiter(true);
-                } else {
-                  // ARB: throw exception??
-                  notifyHandshakeWaiter(false);
-                  logger.warn(LocalizedMessage.create(
-                      LocalizedStrings.Connection_0_TIMED_OUT_DURING_A_MEMBERSHIP_CHECK,
-                      p2pReaderName()));
-                }
-              } else {
-                sendOKHandshakeReply(); // fix for bug 33224
-                notifyHandshakeWaiter(true);
-              }
-            }
-            if (!this.isReceiver && (this.handshakeRead || this.handshakeCancelled)) {
-              if (logger.isDebugEnabled()) {
-                if (this.handshakeRead) {
-                  logger.debug("{} handshake has been read {}", p2pReaderName(), this);
-                } else {
-                  logger.debug("{} handshake has been cancelled {}", p2pReaderName(), this);
-                }
-              }
-              // Once we have read the handshake the reader can go away
-              break;
-            }
-            continue;
-          }
-        } catch (InterruptedException e) {
-          interrupted = true;
-          this.owner.getConduit().getCancelCriterion().checkCancelInProgress(e);
-          logger.fatal(LocalizedMessage.create(
-              LocalizedStrings.Connection_0_STRAY_INTERRUPT_READING_MESSAGE, p2pReaderName()), e);
-          continue;
-        } catch (Exception ioe) {
-          this.owner.getConduit().getCancelCriterion().checkCancelInProgress(ioe); // bug 37101
-          if (!stopped) {
-            logger.fatal(LocalizedMessage
-                .create(LocalizedStrings.Connection_0_ERROR_READING_MESSAGE, p2pReaderName()), ioe);
-          }
-          continue;
-        } finally {
-          if (interrupted) {
-            Thread.currentThread().interrupt();
-          }
-        }
-      } catch (CancelException e) {
-        if (logger.isDebugEnabled()) {
-          String ccMsg = p2pReaderName() + " Cancelled: " + this;
-          if (e.getMessage() != null) {
-            ccMsg += ": " + e.getMessage();
-          }
-          logger.debug(ccMsg);
-        }
-        this.readerShuttingDown = true;
-        try {
-          requestClose(
-              LocalizedStrings.Connection_CACHECLOSED_IN_CHANNEL_READ_0.toLocalizedString(e));
-        } catch (Exception ex) {
-        }
-        this.stopped = true;
-      } catch (IOException io) {
-        boolean closed = isSocketClosed() || "Socket closed".equalsIgnoreCase(io.getMessage()); // needed
-                                                                                                // for
-                                                                                                // Solaris
-                                                                                                // jdk
-                                                                                                // 1.4.2_08
-        if (!closed) {
-          if (logger.isDebugEnabled() && !isIgnorableIOException(io)) {
-            logger.debug("{} io exception for {}", p2pReaderName(), this, io);
-          }
-        }
-        this.readerShuttingDown = true;
-        try {
-          requestClose(LocalizedStrings.Connection_IOEXCEPTION_RECEIVED_0.toLocalizedString(io));
-        } catch (Exception ex) {
-        }
-
-        if (closed) {
-          stopped = true;
-        } else {
-          // sleep a bit to avoid a hot error loop
-          try {
-            Thread.sleep(1000);
-          } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-            if (this.owner.getConduit().getCancelCriterion().isCancelInProgress()) {
-              return;
-            }
-            break;
-          }
-        }
-      } // IOException
-      catch (Exception e) {
-        if (this.owner.getConduit().getCancelCriterion().isCancelInProgress()) {
-          return; // bug 37101
-        }
-        if (!stopped && !(e instanceof InterruptedException)) {
-          logger.fatal(LocalizedMessage.create(LocalizedStrings.Connection_0_EXCEPTION_RECEIVED,
-              p2pReaderName()), e);
-        }
-        if (isSocketClosed()) {
-          stopped = true;
-        } else {
-          this.readerShuttingDown = true;
-          try {
-            requestClose(LocalizedStrings.Connection_0_EXCEPTION_RECEIVED.toLocalizedString(e));
-          } catch (Exception ex) {
-          }
-
-          // sleep a bit to avoid a hot error loop
-          try {
-            Thread.sleep(1000);
-          } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-            break;
-          }
-        }
-      }
+      DistributionManager dm = this.owner.getDM();
+      dm.getExecutors().getWaitingThreadPool()
+          .execute(() -> ReplyMessage.send(getRemoteAddress(), rpId, exception, dm));
     }
   }
 
-  @edu.umd.cs.findbugs.annotations.SuppressWarnings(value = "DE_MIGHT_IGNORE")
-  int readFully(InputStream input, byte[] buffer, int len) throws IOException {
-    int bytesSoFar = 0;
-    while (bytesSoFar < len) {
-      this.owner.getConduit().getCancelCriterion().checkCancelInProgress(null);
-      try {
-        synchronized (stateLock) {
-          connectionState = STATE_READING;
-        }
-        int bytesThisTime = input.read(buffer, bytesSoFar, len - bytesSoFar);
-        if (bytesThisTime < 0) {
-          this.readerShuttingDown = true;
-          try {
-            requestClose(LocalizedStrings.Connection_STREAM_READ_RETURNED_NONPOSITIVE_LENGTH
-                .toLocalizedString());
-          } catch (Exception ex) {
-          }
-          return -1;
-        }
-        bytesSoFar += bytesThisTime;
-      } catch (InterruptedIOException io) {
-        // Current thread has been interrupted. Regard it similar to an EOF
-        this.readerShuttingDown = true;
-        try {
-          requestClose(LocalizedStrings.Connection_CURRENT_THREAD_INTERRUPTED.toLocalizedString());
-        } catch (Exception ex) {
-        }
-        Thread.currentThread().interrupt();
-        this.owner.getConduit().getCancelCriterion().checkCancelInProgress(null);
-      } finally {
-        synchronized (stateLock) {
-          connectionState = STATE_IDLE;
-        }
-      }
-    } // while
-    return len;
-  }
 
   /**
    * sends a serialized message to the other end of this connection. This is used by the
@@ -2528,39 +1969,26 @@ public class Connection implements Runnable {
    *
    * @throws ConnectionException if the conduit has stopped
    */
-  public void sendPreserialized(ByteBuffer buffer, boolean cacheContentChanges,
+  void sendPreserialized(ByteBuffer buffer, boolean cacheContentChanges,
       DistributionMessage msg) throws IOException, ConnectionException {
     if (!connected) {
       throw new ConnectionException(
-          LocalizedStrings.Connection_NOT_CONNECTED_TO_0.toLocalizedString(this.remoteAddr));
+          String.format("Not connected to %s", this.remoteAddr));
     }
     if (this.batchFlusher != null) {
       batchSend(buffer);
       return;
     }
     final boolean origSocketInUse = this.socketInUse;
-    byte originalState = -1;
+    byte originalState;
     synchronized (stateLock) {
       originalState = this.connectionState;
       this.connectionState = STATE_SENDING;
     }
     this.socketInUse = true;
     try {
-      if (useNIO()) {
-        SocketChannel channel = getSocket().getChannel();
-        nioWriteFully(channel, buffer, false, msg);
-      } else {
-        if (buffer.hasArray()) {
-          this.output.write(buffer.array(), buffer.arrayOffset(),
-              buffer.limit() - buffer.position());
-        } else {
-          byte[] bytesToWrite = getBytesToWrite(buffer);
-          synchronized (outLock) {
-            this.output.write(bytesToWrite);
-            this.output.flush();
-          }
-        }
-      }
+      SocketChannel channel = getSocket().getChannel();
+      writeFully(channel, buffer, false, msg);
       if (cacheContentChanges) {
         messagesSent++;
       }
@@ -2611,7 +2039,7 @@ public class Connection implements Runnable {
   /**
    * For testing we want to configure the connection without having to read a handshake
    */
-  protected void setSharedUnorderedForTest() {
+  void setSharedUnorderedForTest() {
     this.preserveOrder = false;
     this.sharedResource = true;
     this.handshakeRead = true;
@@ -2619,10 +2047,10 @@ public class Connection implements Runnable {
 
 
   /** ensure that a task is running to monitor transmission and reading of acks */
-  public synchronized void scheduleAckTimeouts() {
+  synchronized void scheduleAckTimeouts() {
     if (ackTimeoutTask == null) {
-      final long msAW = this.owner.getDM().getConfig().getAckWaitThreshold() * 1000;
-      final long msSA = this.owner.getDM().getConfig().getAckSevereAlertThreshold() * 1000;
+      final long msAW = this.owner.getDM().getConfig().getAckWaitThreshold() * 1000L;
+      final long msSA = this.owner.getDM().getConfig().getAckSevereAlertThreshold() * 1000L;
       ackTimeoutTask = new SystemTimer.SystemTimerTask() {
         @Override
         public void run2() {
@@ -2683,38 +2111,31 @@ public class Connection implements Runnable {
   }
 
   /** ack-wait-threshold and ack-severe-alert-threshold processing */
-  protected boolean doSevereAlertProcessing() {
+  private boolean doSevereAlertProcessing() {
     long now = System.currentTimeMillis();
     if (ackSATimeout > 0 && (transmissionStartTime + ackWaitTimeout + ackSATimeout) <= now) {
-      logger.fatal(LocalizedMessage.create(
-          LocalizedStrings.Connection_0_SECONDS_HAVE_ELAPSED_WAITING_FOR_A_RESPONSE_FROM_1_FOR_THREAD_2,
-          new Object[] {Long.valueOf((ackWaitTimeout + ackSATimeout) / 1000), getRemoteAddress(),
-              ackThreadName}));
+      logger.fatal("{} seconds have elapsed waiting for a response from {} for thread {}",
+          (ackWaitTimeout + ackSATimeout) / 1000L,
+          getRemoteAddress(),
+          ackThreadName);
       // turn off subsequent checks by setting the timeout to zero, then boot the member
       ackSATimeout = 0;
       return true;
     } else if (!ackTimedOut && (0 < ackWaitTimeout)
         && (transmissionStartTime + ackWaitTimeout) <= now) {
-      logger.warn(LocalizedMessage.create(
-          LocalizedStrings.Connection_0_SECONDS_HAVE_ELAPSED_WAITING_FOR_A_RESPONSE_FROM_1_FOR_THREAD_2,
-          new Object[] {Long.valueOf(ackWaitTimeout / 1000), getRemoteAddress(), ackThreadName}));
+      logger.warn("{} seconds have elapsed waiting for a response from {} for thread {}",
+          ackWaitTimeout / 1000L, getRemoteAddress(), ackThreadName);
       ackTimedOut = true;
 
-      final StringId state = (connectionState == Connection.STATE_SENDING)
-          ? LocalizedStrings.Connection_TRANSMIT_ACKWAITTHRESHOLD
-          : LocalizedStrings.Connection_RECEIVE_ACKWAITTHRESHOLD;
+      final String state = (connectionState == Connection.STATE_SENDING)
+          ? "Sender has been unable to transmit a message within ack-wait-threshold seconds"
+          : "Sender has been unable to receive a response to a message within ack-wait-threshold seconds";
       if (ackSATimeout > 0) {
         this.owner.getDM().getMembershipManager()
-            .suspectMembers(Collections.singleton(getRemoteAddress()), state.toLocalizedString());
+            .suspectMembers(Collections.singleton(getRemoteAddress()), state);
       }
     }
     return false;
-  }
-
-  private static byte[] getBytesToWrite(ByteBuffer buffer) {
-    byte[] bytesToWrite = new byte[buffer.limit()];
-    buffer.get(bytesToWrite);
-    return bytesToWrite;
   }
 
   private boolean addToQueue(ByteBuffer buffer, DistributionMessage msg, boolean force)
@@ -2742,8 +2163,8 @@ public class Connection implements Runnable {
         if (this.disconnectRequested) {
           buffer.position(origBufferPos);
           // we have given up so just drop this message.
-          throw new ConnectionException(LocalizedStrings.Connection_FORCED_DISCONNECT_SENT_TO_0
-              .toLocalizedString(this.remoteAddr));
+          throw new ConnectionException(String.format("Forced disconnect sent to %s",
+              this.remoteAddr));
         }
         if (!force && !this.asyncQueuingInProgress) {
           // reset buffer since we will be sending it. This fixes bug 34832
@@ -2785,7 +2206,6 @@ public class Connection implements Runnable {
                 ck.setBuffer(oldBuffer);
               } else {
                 // old buffer was not large enough
-                oldBuffer = null;
                 ByteBuffer newbb = ByteBuffer.allocate(newBytes);
                 newbb.put(buffer);
                 newbb.flip();
@@ -2806,9 +2226,8 @@ public class Connection implements Runnable {
         {
           long newQueueSize = newBytes + this.queuedBytes;
           if (newQueueSize > this.asyncMaxQueueSize) {
-            logger.warn(LocalizedMessage.create(
-                LocalizedStrings.Connection_QUEUED_BYTES_0_EXCEEDS_MAX_OF_1_ASKING_SLOW_RECEIVER_2_TO_DISCONNECT,
-                new Object[] {newQueueSize, this.asyncMaxQueueSize, this.remoteAddr}));
+            logger.warn("Queued bytes {} exceeds max of {}, asking slow receiver {} to disconnect.",
+                newQueueSize, this.asyncMaxQueueSize, this.remoteAddr);
             stats.incAsyncQueueSizeExceeded(1);
             disconnectSlowReceiver();
             // reset buffer since we will be sending it
@@ -2842,20 +2261,20 @@ public class Connection implements Runnable {
     if (!addToQueue(buffer, msg, true)) {
       return false;
     } else {
-      startNioPusher();
+      startMessagePusher();
       return true;
     }
   }
 
-  private final Object nioPusherSync = new Object();
+  private final Object pusherSync = new Object();
 
-  private void startNioPusher() {
-    synchronized (this.nioPusherSync) {
+  private void startMessagePusher() {
+    synchronized (this.pusherSync) {
       while (this.pusherThread != null) {
         // wait for previous pusher thread to exit
         boolean interrupted = Thread.interrupted();
         try {
-          this.nioPusherSync.wait(); // spurious wakeup ok
+          this.pusherSync.wait(); // spurious wakeup ok
         } catch (InterruptedException ex) {
           interrupted = true;
           this.owner.getConduit().getCancelCriterion().checkCancelInProgress(ex);
@@ -2866,13 +2285,8 @@ public class Connection implements Runnable {
         }
       }
       this.asyncQueuingInProgress = true;
-      ThreadGroup group = LoggingThreadGroup.createThreadGroup("P2P Writer Threads", logger);
-      this.pusherThread = new Thread(group, new Runnable() {
-        public void run() {
-          Connection.this.runNioPusher();
-        }
-      }, "P2P async pusher to " + this.remoteAddr);
-      this.pusherThread.setDaemon(true);
+      this.pusherThread =
+          new LoggingThread("P2P async pusher to " + this.remoteAddr, this::runMessagePusher);
     } // synchronized
     this.pusherThread.start();
   }
@@ -2942,14 +2356,14 @@ public class Connection implements Runnable {
       }
       this.disconnectRequested = true;
     }
-    DM dm = this.owner.getDM();
+    DistributionManager dm = this.owner.getDM();
     if (dm == null) {
       this.owner.removeEndpoint(this.remoteAddr,
-          LocalizedStrings.Connection_NO_DISTRIBUTION_MANAGER.toLocalizedString());
+          "no distribution manager");
       return;
     }
     dm.getMembershipManager().requestMemberRemoval(this.remoteAddr,
-        LocalizedStrings.Connection_DISCONNECTED_AS_A_SLOWRECEIVER.toLocalizedString());
+        "Disconnected as a slow-receiver");
     // Ok, we sent the message, the coordinator should kick the member out
     // immediately and inform this process with a new view.
     // Let's wait
@@ -2966,7 +2380,7 @@ public class Connection implements Runnable {
       }
     }
     this.owner.removeEndpoint(this.remoteAddr,
-        LocalizedStrings.Connection_FORCE_DISCONNECT_TIMED_OUT.toLocalizedString());
+        "Force disconnect timed out");
     if (dm.getOtherDistributionManagerIds().contains(this.remoteAddr)) {
       if (logger.isDebugEnabled()) {
         logger.debug("Force disconnect timed out after waiting {} seconds", (FORCE_TIMEOUT / 1000));
@@ -2978,7 +2392,7 @@ public class Connection implements Runnable {
   /**
    * have the pusher thread check for queue overflow and for idle time exceeded
    */
-  protected void runNioPusher() {
+  private void runMessagePusher() {
     try {
       final DMStats stats = this.owner.getConduit().getStats();
       final long threadStart = stats.startAsyncThread();
@@ -2994,6 +2408,8 @@ public class Connection implements Runnable {
               Socket s = this.socket;
               if (s != null) {
                 try {
+                  logger.debug("closing socket", new Exception("closing socket"));
+                  ioFilter.close(s.getChannel());
                   s.close();
                 } catch (IOException e) {
                   // don't care
@@ -3009,9 +2425,9 @@ public class Connection implements Runnable {
             try {
               long curQueuedBytes = this.queuedBytes;
               if (curQueuedBytes > this.asyncMaxQueueSize) {
-                logger.warn(LocalizedMessage.create(
-                    LocalizedStrings.Connection_QUEUED_BYTES_0_EXCEEDS_MAX_OF_1_ASKING_SLOW_RECEIVER_2_TO_DISCONNECT,
-                    new Object[] {curQueuedBytes, this.asyncMaxQueueSize, this.remoteAddr}));
+                logger.warn(
+                    "Queued bytes {} exceeds max of {}, asking slow receiver {} to disconnect.",
+                    curQueuedBytes, this.asyncMaxQueueSize, this.remoteAddr);
                 stats.incAsyncQueueSizeExceeded(1);
                 disconnectSlowReceiver();
                 return;
@@ -3024,7 +2440,7 @@ public class Connection implements Runnable {
                 }
                 return;
               }
-              nioWriteFully(channel, bb, true, null);
+              writeFully(channel, bb, true, null);
               // We should not add messagesSent here according to Bruce.
               // The counts are increased elsewhere.
               // messagesSent++;
@@ -3046,7 +2462,7 @@ public class Connection implements Runnable {
         // No need to throw an error, we're quitting.
       } catch (IOException ex) {
         final String err =
-            LocalizedStrings.Connection_P2P_PUSHER_IO_EXCEPTION_FOR_0.toLocalizedString(this);
+            String.format("P2P pusher io exception for %s", this);
         if (!isSocketClosed()) {
           if (logger.isDebugEnabled() && !isIgnorableIOException(ex)) {
             logger.debug(err, ex);
@@ -3057,8 +2473,8 @@ public class Connection implements Runnable {
         } catch (Exception ignore) {
         }
       } catch (CancelException ex) { // bug 37367
-        final String err = LocalizedStrings.Connection_P2P_PUSHER_0_CAUGHT_CACHECLOSEDEXCEPTION_1
-            .toLocalizedString(new Object[] {this, ex});
+        final String err = String.format("P2P pusher %s caught CacheClosedException: %s",
+            this, ex);
         logger.debug(err);
         try {
           requestClose(err);
@@ -3068,11 +2484,10 @@ public class Connection implements Runnable {
       } catch (Exception ex) {
         this.owner.getConduit().getCancelCriterion().checkCancelInProgress(ex); // bug 37101
         if (!isSocketClosed()) {
-          logger.fatal(
-              LocalizedMessage.create(LocalizedStrings.Connection_P2P_PUSHER_EXCEPTION_0, ex), ex);
+          logger.fatal(String.format("P2P pusher exception: %s", ex), ex);
         }
         try {
-          requestClose(LocalizedStrings.Connection_P2P_PUSHER_EXCEPTION_0.toLocalizedString(ex));
+          requestClose(String.format("P2P pusher exception: %s", ex));
         } catch (Exception ignore) {
         }
       } finally {
@@ -3082,14 +2497,14 @@ public class Connection implements Runnable {
         stats.incAsyncThreads(-1);
         stats.incAsyncQueues(-1);
         if (logger.isDebugEnabled()) {
-          logger.debug("runNioPusher terminated id={} from {}/{}", conduitIdStr, remoteAddr,
+          logger.debug("runMessagePusher terminated id={} from {}/{}", conduitIdStr, remoteAddr,
               remoteAddr);
         }
       }
     } finally {
-      synchronized (this.nioPusherSync) {
+      synchronized (this.pusherSync) {
         this.pusherThread = null;
-        this.nioPusherSync.notify();
+        this.pusherSync.notify();
       }
     }
   }
@@ -3127,6 +2542,7 @@ public class Connection implements Runnable {
   /**
    * If true then act as if the socket buffer is full and start async queuing
    */
+  @MutableForTesting
   public static volatile boolean FORCE_ASYNC_QUEUE = false;
 
   private static final int MAX_WAIT_TIME = (1 << 5); // ms (must be a power of 2)
@@ -3163,6 +2579,7 @@ public class Connection implements Runnable {
         long queueTimeoutTarget = now + this.asyncQueueTimeout;
         channel.configureBlocking(false);
         try {
+          ByteBuffer wrappedBuffer = ioFilter.wrap(buffer);
           do {
             this.owner.getConduit().getCancelCriterion().checkCancelInProgress(null);
             retries++;
@@ -3170,7 +2587,7 @@ public class Connection implements Runnable {
             if (FORCE_ASYNC_QUEUE) {
               amtWritten = 0;
             } else {
-              amtWritten = channel.write(buffer);
+              amtWritten = channel.write(wrappedBuffer);
             }
             if (amtWritten == 0) {
               now = System.currentTimeMillis();
@@ -3197,7 +2614,7 @@ public class Connection implements Runnable {
                     // the partial msg a candidate for conflation.
                     msg = null;
                   }
-                  if (handleBlockedWrite(buffer, msg)) {
+                  if (handleBlockedWrite(wrappedBuffer, msg)) {
                     return;
                   }
                 }
@@ -3206,10 +2623,10 @@ public class Connection implements Runnable {
                 boolean disconnectNeeded = false;
                 long curQueuedBytes = this.queuedBytes;
                 if (curQueuedBytes > this.asyncMaxQueueSize) {
-                  logger.warn(LocalizedMessage.create(
-                      LocalizedStrings.Connection_QUEUED_BYTES_0_EXCEEDS_MAX_OF_1_ASKING_SLOW_RECEIVER_2_TO_DISCONNECT,
-                      new Object[] {Long.valueOf(curQueuedBytes),
-                          Long.valueOf(this.asyncMaxQueueSize), this.remoteAddr}));
+                  logger.warn(
+                      "Queued bytes {} exceeds max of {}, asking slow receiver {} to disconnect.",
+                      curQueuedBytes,
+                      this.asyncMaxQueueSize, this.remoteAddr);
                   stats.incAsyncQueueSizeExceeded(1);
                   disconnectNeeded = true;
                 }
@@ -3218,10 +2635,10 @@ public class Connection implements Runnable {
                   // the pusher has been idle too long!
                   long blockedMs = now - queueTimeoutTarget;
                   blockedMs += this.asyncQueueTimeout;
-                  logger.warn(LocalizedMessage.create(
-                      LocalizedStrings.Connection_BLOCKED_FOR_0_MS_WHICH_IS_LONGER_THAN_THE_MAX_OF_1_MS_ASKING_SLOW_RECEIVER_2_TO_DISCONNECT,
-                      new Object[] {Long.valueOf(blockedMs),
-                          Integer.valueOf(this.asyncQueueTimeout), this.remoteAddr}));
+                  logger.warn(
+                      "Blocked for {}ms which is longer than the max of {}ms, asking slow receiver {} to disconnect.",
+                      blockedMs,
+                      this.asyncQueueTimeout, this.remoteAddr);
                   stats.incAsyncQueueTimeouts(1);
                   disconnectNeeded = true;
                 }
@@ -3271,7 +2688,7 @@ public class Connection implements Runnable {
               queueTimeoutTarget = System.currentTimeMillis() + this.asyncQueueTimeout;
               waitTime = 1;
             }
-          } while (buffer.remaining() > 0);
+          } while (wrappedBuffer.remaining() > 0);
         } finally {
           channel.configureBlocking(true);
         }
@@ -3287,12 +2704,12 @@ public class Connection implements Runnable {
   }
 
   /**
-   * nioWriteFully implements a blocking write on a channel that is in non-blocking mode.
+   * writeFully implements a blocking write on a channel that is in non-blocking mode.
    *
    * @param forceAsync true if we need to force a blocking async write.
    * @throws ConnectionException if the conduit has stopped
    */
-  protected void nioWriteFully(SocketChannel channel, ByteBuffer buffer, boolean forceAsync,
+  void writeFully(SocketChannel channel, ByteBuffer buffer, boolean forceAsync,
       DistributionMessage msg) throws IOException, ConnectionException {
     final DMStats stats = this.owner.getConduit().getStats();
     if (!this.sharedResource) {
@@ -3314,17 +2731,17 @@ public class Connection implements Runnable {
           }
           // fall through
         }
-        do {
+        ByteBuffer wrappedBuffer = ioFilter.wrap(buffer);
+        while (wrappedBuffer.remaining() > 0) {
           int amtWritten = 0;
           long start = stats.startSocketWrite(true);
           try {
-            // this.writerThread = Thread.currentThread();
-            amtWritten = channel.write(buffer);
+            amtWritten = channel.write(wrappedBuffer);
           } finally {
             stats.endSocketWrite(true, start, amtWritten, 0);
-            // this.writerThread = null;
           }
-        } while (buffer.remaining() > 0);
+        }
+
       } // synchronized
     } else {
       writeAsync(channel, buffer, forceAsync, msg, stats);
@@ -3332,16 +2749,15 @@ public class Connection implements Runnable {
   }
 
   /** gets the buffer for receiving message length bytes */
-  protected ByteBuffer getNIOBuffer() {
-    final DMStats stats = this.owner.getConduit().getStats();
-    if (nioInputBuffer == null) {
+  private ByteBuffer getInputBuffer() {
+    if (inputBuffer == null) {
       int allocSize = this.recvBufferSize;
       if (allocSize == -1) {
         allocSize = this.owner.getConduit().tcpBufferSize;
       }
-      nioInputBuffer = Buffers.acquireReceiveBuffer(allocSize, stats);
+      inputBuffer = getBufferPool().acquireDirectReceiveBuffer(allocSize);
     }
-    return nioInputBuffer;
+    return inputBuffer;
   }
 
   /**
@@ -3354,33 +2770,31 @@ public class Connection implements Runnable {
 
   /* ~~~~~~~~~~~~~ connection states ~~~~~~~~~~~~~~~ */
   /** the connection is idle, but may be in use */
-  protected static final byte STATE_IDLE = 0;
+  private static final byte STATE_IDLE = 0;
   /** the connection is in use and is transmitting data */
-  protected static final byte STATE_SENDING = 1;
+  private static final byte STATE_SENDING = 1;
   /** the connection is in use and is done transmitting */
-  protected static final byte STATE_POST_SENDING = 2;
+  private static final byte STATE_POST_SENDING = 2;
   /** the connection is in use and is reading a direct-ack */
-  protected static final byte STATE_READING_ACK = 3;
+  private static final byte STATE_READING_ACK = 3;
   /** the connection is in use and has finished reading a direct-ack */
-  protected static final byte STATE_RECEIVED_ACK = 4;
+  private static final byte STATE_RECEIVED_ACK = 4;
   /** the connection is in use and is reading a message */
-  protected static final byte STATE_READING = 5;
+  private static final byte STATE_READING = 5;
   /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
   /** set to true if we exceeded the ack-wait-threshold waiting for a response */
-  protected volatile boolean ackTimedOut;
+  private volatile boolean ackTimedOut;
 
   /**
-   * @param msToWait number of milliseconds to wait for an ack. If 0 then wait forever.
-   * @param msInterval interval between checks
-   * @throws SocketTimeoutException if msToWait expires.
-   * @throws ConnectionException if ack is not received (fixes bug 34312)
+   * @throws SocketTimeoutException if wait expires.
+   * @throws ConnectionException if ack is not received
    */
-  public void readAck(final int msToWait, final long msInterval,
-      final DirectReplyProcessor processor) throws SocketTimeoutException, ConnectionException {
+  public void readAck(final DirectReplyProcessor processor)
+      throws SocketTimeoutException, ConnectionException {
     if (isSocketClosed()) {
       throw new ConnectionException(
-          LocalizedStrings.Connection_CONNECTION_IS_CLOSED.toLocalizedString());
+          "connection is closed");
     }
     synchronized (this.stateLock) {
       this.connectionState = STATE_READING_ACK;
@@ -3392,28 +2806,24 @@ public class Connection implements Runnable {
     DMStats stats = owner.getConduit().getStats();
     final Version version = getRemoteVersion();
     try {
-      if (useNIO()) {
-        msgReader = new NIOMsgReader(this, version);
-      } else {
-        msgReader = new OioMsgReader(this, version);
-      }
+      msgReader = new MsgReader(this, ioFilter, version);
 
       Header header = msgReader.readHeader();
 
-      ReplyMessage msg;
+      ReplyMessage msg = null;
       int len;
-      if (header.getNioMessageType() == NORMAL_MSG_TYPE) {
+      if (header.getMessageType() == NORMAL_MSG_TYPE) {
         msg = (ReplyMessage) msgReader.readMessage(header);
-        len = header.getNioMessageLength();
+        len = header.getMessageLength();
       } else {
-        MsgDestreamer destreamer = obtainMsgDestreamer(header.getNioMessageId(), version);
-        while (header.getNioMessageType() == CHUNKED_MSG_TYPE) {
+        MsgDestreamer destreamer = obtainMsgDestreamer(header.getMessageId(), version);
+        while (header.getMessageType() == CHUNKED_MSG_TYPE) {
           msgReader.readChunk(header, destreamer);
           header = msgReader.readHeader();
         }
         msgReader.readChunk(header, destreamer);
         msg = (ReplyMessage) destreamer.getMessage();
-        releaseMsgDestreamer(header.getNioMessageId(), destreamer);
+        releaseMsgDestreamer(header.getMessageId(), destreamer);
         len = destreamer.size();
       }
       // I'd really just like to call dispatchMessage here. However,
@@ -3422,7 +2832,7 @@ public class Connection implements Runnable {
       // about performance, we'll skip those checks. Skipping them
       // should be legit, because we just sent a message so we know
       // the member is already in our view, etc.
-      DistributionManager dm = (DistributionManager) owner.getDM();
+      ClusterDistributionManager dm = (ClusterDistributionManager) owner.getDM();
       msg.setBytesRead(len);
       msg.setSender(remoteAddr);
       stats.incReceivedMessages(1L);
@@ -3436,7 +2846,7 @@ public class Connection implements Runnable {
       throw timeout;
     } catch (IOException e) {
       final String err =
-          LocalizedStrings.Connection_ACK_READ_IO_EXCEPTION_FOR_0.toLocalizedString(this);
+          String.format("ack read io exception for %s", this);
       if (!isSocketClosed()) {
         if (logger.isDebugEnabled() && !isIgnorableIOException(e)) {
           logger.debug(err, e);
@@ -3447,29 +2857,28 @@ public class Connection implements Runnable {
       } catch (Exception ex) {
       }
       throw new ConnectionException(
-          LocalizedStrings.Connection_UNABLE_TO_READ_DIRECT_ACK_BECAUSE_0.toLocalizedString(e));
+          String.format("Unable to read direct ack because: %s", e));
     } catch (ConnectionException e) {
       this.owner.getConduit().getCancelCriterion().checkCancelInProgress(e);
       throw e;
     } catch (Exception e) {
       this.owner.getConduit().getCancelCriterion().checkCancelInProgress(e);
       if (!isSocketClosed()) {
-        logger.fatal(LocalizedMessage.create(LocalizedStrings.Connection_ACK_READ_EXCEPTION), e);
+        logger.fatal("ack read exception", e);
       }
       try {
-        requestClose(LocalizedStrings.Connection_ACK_READ_EXCEPTION_0.toLocalizedString(e));
+        requestClose(String.format("ack read exception: %s", e));
       } catch (Exception ex) {
       }
       throw new ConnectionException(
-          LocalizedStrings.Connection_UNABLE_TO_READ_DIRECT_ACK_BECAUSE_0.toLocalizedString(e));
+          String.format("Unable to read direct ack because: %s", e));
     } finally {
       stats.incProcessedMessages(1L);
       accessed();
       this.socketInUse = origSocketInUse;
       if (this.ackTimedOut) {
-        logger.info(
-            LocalizedMessage.create(LocalizedStrings.Connection_FINISHED_WAITING_FOR_REPLY_FROM_0,
-                new Object[] {getRemoteAddress()}));
+        logger.info("Finished waiting for reply from {}",
+            getRemoteAddress());
         this.ackTimedOut = false;
       }
       if (msgReader != null) {
@@ -3485,416 +2894,52 @@ public class Connection implements Runnable {
    * processes the current NIO buffer. If there are complete messages in the buffer, they are
    * deserialized and passed to TCPConduit for further processing
    */
-  private void processNIOBuffer() throws ConnectionException, IOException {
-    if (nioInputBuffer != null) {
-      nioInputBuffer.flip();
-    }
+  private void processInputBuffer() throws ConnectionException, IOException {
+
+    inputBuffer.flip();
+
+    ByteBuffer peerDataBuffer = ioFilter.unwrap(inputBuffer);
+    peerDataBuffer.flip();
+
     boolean done = false;
 
     while (!done && connected) {
       this.owner.getConduit().getCancelCriterion().checkCancelInProgress(null);
-      // long startTime = DistributionStats.getStatTime();
-      int remaining = nioInputBuffer.remaining();
-      if (nioLengthSet || remaining >= MSG_HEADER_BYTES) {
-        if (!nioLengthSet) {
-          int headerStartPos = nioInputBuffer.position();
-          nioMessageLength = nioInputBuffer.getInt();
-          /* nioMessageVersion = */ calcHdrVersion(nioMessageLength);
-          nioMessageLength = calcMsgByteSize(nioMessageLength);
-          nioMessageType = nioInputBuffer.get();
-          nioMsgId = nioInputBuffer.getShort();
-          directAck = (nioMessageType & DIRECT_ACK_BIT) != 0;
-          if (directAck) {
-            nioMessageType &= ~DIRECT_ACK_BIT; // clear the ack bit
-          }
-          // Following validation fixes bug 31145
-          if (!validMsgType(nioMessageType)) {
-            Integer nioMessageTypeInteger = Integer.valueOf(nioMessageType);
-            logger.fatal(LocalizedMessage.create(
-                LocalizedStrings.Connection_UNKNOWN_P2P_MESSAGE_TYPE_0, nioMessageTypeInteger));
-            this.readerShuttingDown = true;
-            requestClose(LocalizedStrings.Connection_UNKNOWN_P2P_MESSAGE_TYPE_0
-                .toLocalizedString(nioMessageTypeInteger));
+      int remaining = peerDataBuffer.remaining();
+      if (lengthSet || remaining >= MSG_HEADER_BYTES) {
+        if (!lengthSet) {
+          if (readMessageHeader(peerDataBuffer)) {
             break;
           }
-          nioLengthSet = true;
-          // keep the header "in" the buffer until we have read the entire msg.
-          // Trust me: this will reduce copying on large messages.
-          nioInputBuffer.position(headerStartPos);
         }
-        if (remaining >= nioMessageLength + MSG_HEADER_BYTES) {
-          nioLengthSet = false;
-          nioInputBuffer.position(nioInputBuffer.position() + MSG_HEADER_BYTES);
+        if (remaining >= messageLength + MSG_HEADER_BYTES) {
+          lengthSet = false;
+          peerDataBuffer.position(peerDataBuffer.position() + MSG_HEADER_BYTES);
           // don't trust the message deserialization to leave the position in
           // the correct spot. Some of the serialization uses buffered
           // streams that can leave the position at the wrong spot
-          int startPos = nioInputBuffer.position();
-          int oldLimit = nioInputBuffer.limit();
-          nioInputBuffer.limit(startPos + nioMessageLength);
+          int startPos = peerDataBuffer.position();
+          int oldLimit = peerDataBuffer.limit();
+          peerDataBuffer.limit(startPos + messageLength);
+
           if (this.handshakeRead) {
-            if (nioMessageType == NORMAL_MSG_TYPE) {
-              this.owner.getConduit().getStats().incMessagesBeingReceived(true, nioMessageLength);
-              ByteBufferInputStream bbis =
-                  remoteVersion == null ? new ByteBufferInputStream(nioInputBuffer)
-                      : new VersionedByteBufferInputStream(nioInputBuffer, remoteVersion);
-              DistributionMessage msg = null;
-              try {
-                ReplyProcessor21.initMessageRPId();
-                // add serialization stats
-                long startSer = this.owner.getConduit().getStats().startMsgDeserialization();
-                msg = (DistributionMessage) InternalDataSerializer.readDSFID(bbis);
-                this.owner.getConduit().getStats().endMsgDeserialization(startSer);
-                if (bbis.available() != 0) {
-                  logger.warn(LocalizedMessage.create(
-                      LocalizedStrings.Connection_MESSAGE_DESERIALIZATION_OF_0_DID_NOT_READ_1_BYTES,
-                      new Object[] {msg, Integer.valueOf(bbis.available())}));
-                }
-                try {
-                  if (!dispatchMessage(msg, nioMessageLength, directAck)) {
-                    directAck = false;
-                  }
-                } catch (MemberShunnedException e) {
-                  directAck = false; // don't respond (bug39117)
-                } catch (Exception de) {
-                  this.owner.getConduit().getCancelCriterion().checkCancelInProgress(de);
-                  logger.fatal(LocalizedMessage
-                      .create(LocalizedStrings.Connection_ERROR_DISPATCHING_MESSAGE), de);
-                } catch (ThreadDeath td) {
-                  throw td;
-                } catch (VirtualMachineError err) {
-                  SystemFailure.initiateFailure(err);
-                  // If this ever returns, rethrow the error. We're poisoned
-                  // now, so don't let this thread continue.
-                  throw err;
-                } catch (Throwable t) {
-                  // Whenever you catch Error or Throwable, you must also
-                  // catch VirtualMachineError (see above). However, there is
-                  // _still_ a possibility that you are dealing with a cascading
-                  // error condition, so you also need to check to see if the JVM
-                  // is still usable:
-                  SystemFailure.checkFailure();
-                  logger.fatal(LocalizedMessage
-                      .create(LocalizedStrings.Connection_THROWABLE_DISPATCHING_MESSAGE), t);
-                }
-              } catch (VirtualMachineError err) {
-                SystemFailure.initiateFailure(err);
-                // If this ever returns, rethrow the error. We're poisoned
-                // now, so don't let this thread continue.
-                throw err;
-              } catch (Throwable t) {
-                // Whenever you catch Error or Throwable, you must also
-                // catch VirtualMachineError (see above). However, there is
-                // _still_ a possibility that you are dealing with a cascading
-                // error condition, so you also need to check to see if the JVM
-                // is still usable:
-                SystemFailure.checkFailure();
-                sendFailureReply(ReplyProcessor21.getMessageRPId(),
-                    LocalizedStrings.Connection_ERROR_DESERIALIZING_MESSAGE.toLocalizedString(), t,
-                    directAck);
-                if (t instanceof ThreadDeath) {
-                  throw (ThreadDeath) t;
-                }
-                if (t instanceof CancelException) {
-                  if (!(t instanceof CacheClosedException)) {
-                    // Just log a message if we had trouble deserializing due to
-                    // CacheClosedException; see bug 43543
-                    throw (CancelException) t;
-                  }
-                }
-                logger.fatal(LocalizedMessage
-                    .create(LocalizedStrings.Connection_ERROR_DESERIALIZING_MESSAGE), t);
-              } finally {
-                ReplyProcessor21.clearMessageRPId();
-              }
-            } else if (nioMessageType == CHUNKED_MSG_TYPE) {
-              MsgDestreamer md = obtainMsgDestreamer(nioMsgId, remoteVersion);
-              this.owner.getConduit().getStats().incMessagesBeingReceived(md.size() == 0,
-                  nioMessageLength);
-              try {
-                md.addChunk(nioInputBuffer, nioMessageLength);
-              } catch (IOException ex) {
-                logger.fatal(LocalizedMessage
-                    .create(LocalizedStrings.Connection_FAILED_HANDLING_CHUNK_MESSAGE), ex);
-              }
-            } else /* (nioMessageType == END_CHUNKED_MSG_TYPE) */ {
-              // logger.info("END_CHUNK msgId="+nioMsgId);
-              MsgDestreamer md = obtainMsgDestreamer(nioMsgId, remoteVersion);
-              this.owner.getConduit().getStats().incMessagesBeingReceived(md.size() == 0,
-                  nioMessageLength);
-              try {
-                md.addChunk(nioInputBuffer, nioMessageLength);
-              } catch (IOException ex) {
-                logger.fatal(LocalizedMessage
-                    .create(LocalizedStrings.Connection_FAILED_HANDLING_END_CHUNK_MESSAGE), ex);
-              }
-              DistributionMessage msg = null;
-              int msgLength = 0;
-              String failureMsg = null;
-              Throwable failureEx = null;
-              int rpId = 0;
-              boolean interrupted = false;
-              try {
-                msg = md.getMessage();
-              } catch (ClassNotFoundException ex) {
-                this.owner.getConduit().getStats().decMessagesBeingReceived(md.size());
-                failureMsg = LocalizedStrings.Connection_CLASSNOTFOUND_DESERIALIZING_MESSAGE
-                    .toLocalizedString();
-                failureEx = ex;
-                rpId = md.getRPid();
-                logger.fatal(LocalizedMessage
-                    .create(LocalizedStrings.Connection_CLASSNOTFOUND_DESERIALIZING_MESSAGE_0, ex));
-              } catch (IOException ex) {
-                this.owner.getConduit().getStats().decMessagesBeingReceived(md.size());
-                failureMsg = LocalizedStrings.Connection_IOEXCEPTION_DESERIALIZING_MESSAGE
-                    .toLocalizedString();
-                failureEx = ex;
-                rpId = md.getRPid();
-                logger.fatal(LocalizedMessage.create(
-                    LocalizedStrings.Connection_IOEXCEPTION_DESERIALIZING_MESSAGE), failureEx);
-              } catch (InterruptedException ex) {
-                interrupted = true;
-                this.owner.getConduit().getCancelCriterion().checkCancelInProgress(ex);
-              } catch (VirtualMachineError err) {
-                SystemFailure.initiateFailure(err);
-                // If this ever returns, rethrow the error. We're poisoned
-                // now, so don't let this thread continue.
-                throw err;
-              } catch (Throwable ex) {
-                // Whenever you catch Error or Throwable, you must also
-                // catch VirtualMachineError (see above). However, there is
-                // _still_ a possibility that you are dealing with a cascading
-                // error condition, so you also need to check to see if the JVM
-                // is still usable:
-                SystemFailure.checkFailure();
-                this.owner.getConduit().getCancelCriterion().checkCancelInProgress(ex);
-                this.owner.getConduit().getStats().decMessagesBeingReceived(md.size());
-                failureMsg = LocalizedStrings.Connection_UNEXPECTED_FAILURE_DESERIALIZING_MESSAGE
-                    .toLocalizedString();
-                failureEx = ex;
-                rpId = md.getRPid();
-                logger.fatal(
-                    LocalizedMessage.create(
-                        LocalizedStrings.Connection_UNEXPECTED_FAILURE_DESERIALIZING_MESSAGE),
-                    failureEx);
-              } finally {
-                msgLength = md.size();
-                releaseMsgDestreamer(nioMsgId, md);
-                if (interrupted) {
-                  Thread.currentThread().interrupt();
-                }
-              }
-              if (msg != null) {
-                try {
-                  if (!dispatchMessage(msg, msgLength, directAck)) {
-                    directAck = false;
-                  }
-                } catch (MemberShunnedException e) {
-                  // not a member anymore - don't reply
-                  directAck = false;
-                } catch (Exception de) {
-                  this.owner.getConduit().getCancelCriterion().checkCancelInProgress(de);
-                  logger.fatal(LocalizedMessage
-                      .create(LocalizedStrings.Connection_ERROR_DISPATCHING_MESSAGE), de);
-                } catch (ThreadDeath td) {
-                  throw td;
-                } catch (VirtualMachineError err) {
-                  SystemFailure.initiateFailure(err);
-                  // If this ever returns, rethrow the error. We're poisoned
-                  // now, so don't let this thread continue.
-                  throw err;
-                } catch (Throwable t) {
-                  // Whenever you catch Error or Throwable, you must also
-                  // catch VirtualMachineError (see above). However, there is
-                  // _still_ a possibility that you are dealing with a cascading
-                  // error condition, so you also need to check to see if the JVM
-                  // is still usable:
-                  SystemFailure.checkFailure();
-                  logger.fatal(LocalizedMessage
-                      .create(LocalizedStrings.Connection_THROWABLE_DISPATCHING_MESSAGE), t);
-                }
-              } else if (failureEx != null) {
-                sendFailureReply(rpId, failureMsg, failureEx, directAck);
-              }
+            try {
+              readMessage(peerDataBuffer);
+            } catch (SerializationException e) {
+              logger.info("input buffer startPos {} oldLimit {}", startPos, oldLimit);
+              throw e;
             }
           } else {
-            // read HANDSHAKE
-            ByteBufferInputStream bbis = new ByteBufferInputStream(nioInputBuffer);
+            ByteBufferInputStream bbis = new ByteBufferInputStream(peerDataBuffer);
             DataInputStream dis = new DataInputStream(bbis);
             if (!this.isReceiver) {
-              try {
-                this.replyCode = dis.readUnsignedByte();
-                if (this.replyCode == REPLY_CODE_OK_WITH_ASYNC_INFO) {
-                  this.asyncDistributionTimeout = dis.readInt();
-                  this.asyncQueueTimeout = dis.readInt();
-                  this.asyncMaxQueueSize = (long) dis.readInt() * (1024 * 1024);
-                  if (this.asyncDistributionTimeout != 0) {
-                    logger.info(LocalizedMessage.create(
-                        LocalizedStrings.Connection_0_ASYNC_CONFIGURATION_RECEIVED_1,
-                        new Object[] {p2pReaderName(),
-                            " asyncDistributionTimeout=" + this.asyncDistributionTimeout
-                                + " asyncQueueTimeout=" + this.asyncQueueTimeout
-                                + " asyncMaxQueueSize="
-                                + (this.asyncMaxQueueSize / (1024 * 1024))}));
-                  }
-                  // read the product version ordinal for on-the-fly serialization
-                  // transformations (for rolling upgrades)
-                  this.remoteVersion = Version.readVersion(dis, true);
-                }
-              } catch (Exception e) {
-                this.owner.getConduit().getCancelCriterion().checkCancelInProgress(e);
-                logger.fatal(LocalizedMessage.create(
-                    LocalizedStrings.Connection_ERROR_DESERIALIZING_P2P_HANDSHAKE_REPLY), e);
-                this.readerShuttingDown = true;
-                requestClose(LocalizedStrings.Connection_ERROR_DESERIALIZING_P2P_HANDSHAKE_REPLY
-                    .toLocalizedString());
-                return;
-              } catch (ThreadDeath td) {
-                throw td;
-              } catch (VirtualMachineError err) {
-                SystemFailure.initiateFailure(err);
-                // If this ever returns, rethrow the error. We're poisoned
-                // now, so don't let this thread continue.
-                throw err;
-              } catch (Throwable t) {
-                // Whenever you catch Error or Throwable, you must also
-                // catch VirtualMachineError (see above). However, there is
-                // _still_ a possibility that you are dealing with a cascading
-                // error condition, so you also need to check to see if the JVM
-                // is still usable:
-                SystemFailure.checkFailure();
-                logger.fatal(
-                    LocalizedMessage.create(
-                        LocalizedStrings.Connection_THROWABLE_DESERIALIZING_P2P_HANDSHAKE_REPLY),
-                    t);
-                this.readerShuttingDown = true;
-                requestClose(LocalizedStrings.Connection_THROWABLE_DESERIALIZING_P2P_HANDSHAKE_REPLY
-                    .toLocalizedString());
-                return;
-              }
-              if (this.replyCode != REPLY_CODE_OK
-                  && this.replyCode != REPLY_CODE_OK_WITH_ASYNC_INFO) {
-                StringId err =
-                    LocalizedStrings.Connection_UNKNOWN_HANDSHAKE_REPLY_CODE_0_NIOMESSAGELENGTH_1_PROCESSORTYPE_2;
-                Object[] errArgs = new Object[] {Integer.valueOf(this.replyCode),
-                    Integer.valueOf(nioMessageLength)};
-                if (replyCode == 0 && logger.isDebugEnabled()) { // bug 37113
-                  logger.debug(
-                      err.toLocalizedString(errArgs) + " (peer probably departed ungracefully)");
-                } else {
-                  logger.fatal(LocalizedMessage.create(err, errArgs));
-                }
-                this.readerShuttingDown = true;
-                requestClose(err.toLocalizedString(errArgs));
-                return;
-              }
-              notifyHandshakeWaiter(true);
+              // we read the handshake and then stop processing since we don't want
+              // to process the input buffer anymore in a handshake thread
+              readHandshakeForSender(dis, peerDataBuffer);
+              return;
             } else {
-              try {
-                byte b = dis.readByte();
-                if (b != 0) {
-                  throw new IllegalStateException(
-                      LocalizedStrings.Connection_DETECTED_OLD_VERSION_PRE_501_OF_GEMFIRE_OR_NONGEMFIRE_DURING_HANDSHAKE_DUE_TO_INITIAL_BYTE_BEING_0
-                          .toLocalizedString(new Byte(b)));
-                }
-                byte handShakeByte = dis.readByte();
-                if (handShakeByte != HANDSHAKE_VERSION) {
-                  throw new IllegalStateException(
-                      LocalizedStrings.Connection_DETECTED_WRONG_VERSION_OF_GEMFIRE_PRODUCT_DURING_HANDSHAKE_EXPECTED_0_BUT_FOUND_1
-                          .toLocalizedString(
-                              new Object[] {new Byte(HANDSHAKE_VERSION), new Byte(handShakeByte)}));
-                }
-                InternalDistributedMember remote = DSFIDFactory.readInternalDistributedMember(dis);
-                setRemoteAddr(remote);
-                this.sharedResource = dis.readBoolean();
-                this.preserveOrder = dis.readBoolean();
-                this.uniqueId = dis.readLong();
-                // read the product version ordinal for on-the-fly serialization
-                // transformations (for rolling upgrades)
-                this.remoteVersion = Version.readVersion(dis, true);
-                int dominoNumber = 0;
-                if (this.remoteVersion == null
-                    || (this.remoteVersion.compareTo(Version.GFE_80) >= 0)) {
-                  dominoNumber = dis.readInt();
-                  if (this.sharedResource) {
-                    dominoNumber = 0;
-                  }
-                  dominoCount.set(dominoNumber);
-                  // this.senderName = dis.readUTF();
-                }
-                if (!this.sharedResource) {
-                  if (tipDomino()) {
-                    logger.info(LocalizedMessage.create(
-                        LocalizedStrings.Connection_THREAD_OWNED_RECEIVER_FORCING_ITSELF_TO_SEND_ON_THREAD_OWNED_SOCKETS));
-                    // bug #49565 - if domino count is >= 2 use shared resources.
-                    // Also see DistributedCacheOperation#supportsDirectAck
-                  } else { // if (dominoNumber < 2) {
-                    ConnectionTable.threadWantsOwnResources();
-                    if (logger.isDebugEnabled()) {
-                      logger.debug(
-                          "thread-owned receiver with domino count of {} will prefer sending on thread-owned sockets",
-                          dominoNumber);
-                    }
-                    // } else {
-                    // ConnectionTable.threadWantsSharedResources();
-                  }
-                  this.conduit.getStats().incThreadOwnedReceivers(1L, dominoNumber);
-                  // Because this thread is not shared resource, it will be used for direct
-                  // ack. Direct ack messages can be large. This call will resize the send
-                  // buffer.
-                  setSendBufferSize(this.socket);
-                }
-                // String name = owner.getDM().getConfig().getName();
-                // if (name == null) {
-                // name = "pid="+OSProcess.getId();
-                // }
-                setThreadName(dominoNumber);
-              } catch (Exception e) {
-                this.owner.getConduit().getCancelCriterion().checkCancelInProgress(e); // bug 37101
-                logger.fatal(LocalizedMessage.create(
-                    LocalizedStrings.Connection_ERROR_DESERIALIZING_P2P_HANDSHAKE_MESSAGE), e);
-                this.readerShuttingDown = true;
-                requestClose(LocalizedStrings.Connection_ERROR_DESERIALIZING_P2P_HANDSHAKE_MESSAGE
-                    .toLocalizedString());
-                return;
-              }
-              if (logger.isDebugEnabled()) {
-                logger.debug("P2P handshake remoteAddr is {}{}", this.remoteAddr,
-                    (this.remoteVersion != null ? " (" + this.remoteVersion + ')' : ""));
-              }
-              try {
-                String authInit = System.getProperty(
-                    DistributionConfigImpl.SECURITY_SYSTEM_PREFIX + SECURITY_PEER_AUTH_INIT);
-                boolean isSecure = authInit != null && authInit.length() != 0;
-
-                if (isSecure) {
-                  if (owner.getConduit().waitForMembershipCheck(this.remoteAddr)) {
-                    sendOKHandshakeReply(); // fix for bug 33224
-                    notifyHandshakeWaiter(true);
-                  } else {
-                    // ARB: check if we need notifyHandshakeWaiter() call.
-                    notifyHandshakeWaiter(false);
-                    logger.warn(LocalizedMessage.create(
-                        LocalizedStrings.Connection_0_TIMED_OUT_DURING_A_MEMBERSHIP_CHECK,
-                        p2pReaderName()));
-                    return;
-                  }
-                } else {
-                  sendOKHandshakeReply(); // fix for bug 33224
-                  try {
-                    notifyHandshakeWaiter(true);
-                  } catch (Exception e) {
-                    logger.fatal(LocalizedMessage
-                        .create(LocalizedStrings.Connection_UNCAUGHT_EXCEPTION_FROM_LISTENER), e);
-                  }
-                }
-              } catch (IOException ex) {
-                final String err =
-                    LocalizedStrings.Connection_FAILED_SENDING_HANDSHAKE_REPLY.toLocalizedString();
-                if (logger.isDebugEnabled()) {
-                  logger.debug(err, ex);
-                }
-                this.readerShuttingDown = true;
-                requestClose(err + ": " + ex);
+              if (readHandshakeForReceiver(dis)) {
+                ioFilter.doneReading(peerDataBuffer);
                 return;
               }
             }
@@ -3903,55 +2948,436 @@ public class Connection implements Runnable {
             continue;
           }
           accessed();
-          nioInputBuffer.limit(oldLimit);
-          nioInputBuffer.position(startPos + nioMessageLength);
+          peerDataBuffer.limit(oldLimit);
+          peerDataBuffer.position(startPos + messageLength);
         } else {
           done = true;
-          compactOrResizeBuffer(nioMessageLength);
+          if (getConduit().useSSL()) {
+            ioFilter.doneReading(peerDataBuffer);
+          } else {
+            compactOrResizeBuffer(messageLength);
+          }
         }
       } else {
+        ioFilter.doneReading(peerDataBuffer);
         done = true;
-        if (nioInputBuffer.position() != 0) {
-          nioInputBuffer.compact();
-        } else {
-          nioInputBuffer.position(nioInputBuffer.limit());
-          nioInputBuffer.limit(nioInputBuffer.capacity());
-        }
       }
     }
   }
 
+  private boolean readHandshakeForReceiver(DataInputStream dis) {
+    try {
+      byte b = dis.readByte();
+      if (b != 0) {
+        throw new IllegalStateException(
+            String.format(
+                "Detected old version (pre 5.0.1) of GemFire or non-GemFire during handshake due to initial byte being %s",
+                b));
+      }
+      byte handshakeByte = dis.readByte();
+      if (handshakeByte != HANDSHAKE_VERSION) {
+        throw new IllegalStateException(
+            String.format(
+                "Detected wrong version of GemFire product during handshake. Expected %s but found %s",
+                HANDSHAKE_VERSION, handshakeByte));
+      }
+      InternalDistributedMember remote = DSFIDFactory.readInternalDistributedMember(dis);
+      setRemoteAddr(remote);
+      this.sharedResource = dis.readBoolean();
+      this.preserveOrder = dis.readBoolean();
+      this.uniqueId = dis.readLong();
+      // read the product version ordinal for on-the-fly serialization
+      // transformations (for rolling upgrades)
+      this.remoteVersion = Version.readVersion(dis, true);
+      int dominoNumber = 0;
+      if (this.remoteVersion == null
+          || (this.remoteVersion.compareTo(Version.GFE_80) >= 0)) {
+        dominoNumber = dis.readInt();
+        if (this.sharedResource) {
+          dominoNumber = 0;
+        }
+        dominoCount.set(dominoNumber);
+        // this.senderName = dis.readUTF();
+      }
+      if (!this.sharedResource) {
+        if (tipDomino()) {
+          logger.info(
+              "thread owned receiver forcing itself to send on thread owned sockets");
+          // bug #49565 - if domino count is >= 2 use shared resources.
+          // Also see DistributedCacheOperation#supportsDirectAck
+        } else { // if (dominoNumber < 2) {
+          ConnectionTable.threadWantsOwnResources();
+          if (logger.isDebugEnabled()) {
+            logger.debug(
+                "thread-owned receiver with domino count of {} will prefer sending on thread-owned sockets",
+                dominoNumber);
+          }
+          // } else {
+          // ConnectionTable.threadWantsSharedResources();
+        }
+        this.conduit.getStats().incThreadOwnedReceivers(1L, dominoNumber);
+        // Because this thread is not shared resource, it will be used for direct
+        // ack. Direct ack messages can be large. This call will resize the send
+        // buffer.
+        setSendBufferSize(this.socket);
+      }
+      // String name = owner.getDM().getConfig().getName();
+      // if (name == null) {
+      // name = "pid="+OSProcess.getId();
+      // }
+      setThreadName(dominoNumber);
+    } catch (Exception e) {
+      this.owner.getConduit().getCancelCriterion().checkCancelInProgress(e); // bug 37101
+      logger.fatal("Error deserializing P2P handshake message", e);
+      this.readerShuttingDown = true;
+      requestClose("Error deserializing P2P handshake message");
+      return true;
+    }
+    if (logger.isDebugEnabled()) {
+      logger.debug("P2P handshake remoteAddr is {}{}", this.remoteAddr,
+          (this.remoteVersion != null ? " (" + this.remoteVersion + ')' : ""));
+    }
+    try {
+      String authInit = System.getProperty(
+          DistributionConfigImpl.SECURITY_SYSTEM_PREFIX + SECURITY_PEER_AUTH_INIT);
+      boolean isSecure = authInit != null && authInit.length() != 0;
+
+      if (isSecure) {
+        if (owner.getConduit().waitForMembershipCheck(this.remoteAddr)) {
+          sendOKHandshakeReply(); // fix for bug 33224
+          notifyHandshakeWaiter(true);
+        } else {
+          // ARB: check if we need notifyHandshakeWaiter() call.
+          notifyHandshakeWaiter(false);
+          logger.warn("{} timed out during a membership check.",
+              p2pReaderName());
+          return true;
+        }
+      } else {
+        sendOKHandshakeReply(); // fix for bug 33224
+        try {
+          notifyHandshakeWaiter(true);
+        } catch (Exception e) {
+          logger.fatal("Uncaught exception from listener", e);
+        }
+      }
+      this.finishedConnecting = true;
+    } catch (IOException ex) {
+      final String err = "Failed sending handshake reply";
+      if (logger.isDebugEnabled()) {
+        logger.debug(err, ex);
+      }
+      this.readerShuttingDown = true;
+      requestClose(err + ": " + ex);
+      return true;
+    }
+    return false;
+  }
+
+  private boolean readMessageHeader(ByteBuffer peerDataBuffer) throws IOException {
+    int headerStartPos = peerDataBuffer.position();
+    messageLength = peerDataBuffer.getInt();
+    /* nioMessageVersion = */
+    calcHdrVersion(messageLength);
+    messageLength = calcMsgByteSize(messageLength);
+    messageType = peerDataBuffer.get();
+    messageId = peerDataBuffer.getShort();
+    directAck = (messageType & DIRECT_ACK_BIT) != 0;
+    if (directAck) {
+      messageType &= ~DIRECT_ACK_BIT; // clear the ack bit
+    }
+    // Following validation fixes bug 31145
+    if (!validMsgType(messageType)) {
+      Integer nioMessageTypeInteger = (int) messageType;
+      logger.fatal("Unknown P2P message type: {}", nioMessageTypeInteger);
+      this.readerShuttingDown = true;
+      requestClose(String.format("Unknown P2P message type: %s",
+          nioMessageTypeInteger));
+      return true;
+    }
+    lengthSet = true;
+    // keep the header "in" the buffer until we have read the entire msg.
+    // Trust me: this will reduce copying on large messages.
+    peerDataBuffer.position(headerStartPos);
+    return false;
+  }
+
+  private void readMessage(ByteBuffer peerDataBuffer) {
+    if (messageType == NORMAL_MSG_TYPE) {
+      this.owner.getConduit().getStats().incMessagesBeingReceived(true, messageLength);
+      ByteBufferInputStream bbis =
+          remoteVersion == null ? new ByteBufferInputStream(peerDataBuffer)
+              : new VersionedByteBufferInputStream(peerDataBuffer, remoteVersion);
+      DistributionMessage msg;
+      try {
+        ReplyProcessor21.initMessageRPId();
+        // add serialization stats
+        long startSer = this.owner.getConduit().getStats().startMsgDeserialization();
+        int startingPosition = peerDataBuffer.position();
+        try {
+          msg = (DistributionMessage) InternalDataSerializer.readDSFID(bbis);
+        } catch (SerializationException e) {
+          logger.info("input buffer starting position {} "
+              + " current position {} limit {} capacity {} message length {}",
+              startingPosition, peerDataBuffer.position(), peerDataBuffer.limit(),
+              peerDataBuffer.capacity(), messageLength);
+          throw e;
+        }
+        this.owner.getConduit().getStats().endMsgDeserialization(startSer);
+        if (bbis.available() != 0) {
+          logger.warn("Message deserialization of {} did not read {} bytes.",
+              msg, bbis.available());
+        }
+        try {
+          if (!dispatchMessage(msg, messageLength, directAck)) {
+            directAck = false;
+          }
+        } catch (MemberShunnedException e) {
+          directAck = false; // don't respond (bug39117)
+        } catch (Exception de) {
+          this.owner.getConduit().getCancelCriterion().checkCancelInProgress(de);
+          logger.fatal("Error dispatching message", de);
+        } catch (ThreadDeath td) {
+          throw td;
+        } catch (VirtualMachineError err) {
+          SystemFailure.initiateFailure(err);
+          // If this ever returns, rethrow the error. We're poisoned
+          // now, so don't let this thread continue.
+          throw err;
+        } catch (Throwable t) {
+          // Whenever you catch Error or Throwable, you must also
+          // catch VirtualMachineError (see above). However, there is
+          // _still_ a possibility that you are dealing with a cascading
+          // error condition, so you also need to check to see if the JVM
+          // is still usable:
+          SystemFailure.checkFailure();
+          logger.fatal("Throwable dispatching message", t);
+        }
+      } catch (VirtualMachineError err) {
+        SystemFailure.initiateFailure(err);
+        // If this ever returns, rethrow the error. We're poisoned
+        // now, so don't let this thread continue.
+        throw err;
+      } catch (Throwable t) {
+        logger.fatal("Error deserializing message", t);
+        // Whenever you catch Error or Throwable, you must also
+        // catch VirtualMachineError (see above). However, there is
+        // _still_ a possibility that you are dealing with a cascading
+        // error condition, so you also need to check to see if the JVM
+        // is still usable:
+        SystemFailure.checkFailure();
+        sendFailureReply(ReplyProcessor21.getMessageRPId(),
+            "Error deserializing message", t,
+            directAck);
+        if (t instanceof ThreadDeath) {
+          throw (ThreadDeath) t;
+        }
+        if (t instanceof CancelException) {
+          if (!(t instanceof CacheClosedException)) {
+            // Just log a message if we had trouble deserializing due to
+            // CacheClosedException; see bug 43543
+            throw (CancelException) t;
+          }
+        }
+      } finally {
+        ReplyProcessor21.clearMessageRPId();
+      }
+    } else if (messageType == CHUNKED_MSG_TYPE) {
+      MsgDestreamer md = obtainMsgDestreamer(messageId, remoteVersion);
+      this.owner.getConduit().getStats().incMessagesBeingReceived(md.size() == 0,
+          messageLength);
+      try {
+        md.addChunk(peerDataBuffer, messageLength);
+      } catch (IOException ex) {
+      }
+    } else /* (nioMessageType == END_CHUNKED_MSG_TYPE) */ {
+      MsgDestreamer md = obtainMsgDestreamer(messageId, remoteVersion);
+      this.owner.getConduit().getStats().incMessagesBeingReceived(md.size() == 0,
+          messageLength);
+      try {
+        md.addChunk(peerDataBuffer, messageLength);
+      } catch (IOException ex) {
+        logger.fatal("Failed handling end chunk message", ex);
+      }
+      DistributionMessage msg = null;
+      int msgLength;
+      String failureMsg = null;
+      Throwable failureEx = null;
+      int rpId = 0;
+      boolean interrupted = false;
+      try {
+        msg = md.getMessage();
+      } catch (ClassNotFoundException ex) {
+        this.owner.getConduit().getStats().decMessagesBeingReceived(md.size());
+        failureMsg = "ClassNotFound deserializing message";
+        failureEx = ex;
+        rpId = md.getRPid();
+        logger.fatal("ClassNotFound deserializing message: {}", ex.toString());
+      } catch (IOException ex) {
+        this.owner.getConduit().getStats().decMessagesBeingReceived(md.size());
+        failureMsg = "IOException deserializing message";
+        failureEx = ex;
+        rpId = md.getRPid();
+        logger.fatal("IOException deserializing message", failureEx);
+      } catch (InterruptedException ex) {
+        interrupted = true;
+        this.owner.getConduit().getCancelCriterion().checkCancelInProgress(ex);
+      } catch (VirtualMachineError err) {
+        SystemFailure.initiateFailure(err);
+        // If this ever returns, rethrow the error. We're poisoned
+        // now, so don't let this thread continue.
+        throw err;
+      } catch (Throwable ex) {
+        // Whenever you catch Error or Throwable, you must also
+        // catch VirtualMachineError (see above). However, there is
+        // _still_ a possibility that you are dealing with a cascading
+        // error condition, so you also need to check to see if the JVM
+        // is still usable:
+        SystemFailure.checkFailure();
+        this.owner.getConduit().getCancelCriterion().checkCancelInProgress(ex);
+        this.owner.getConduit().getStats().decMessagesBeingReceived(md.size());
+        failureMsg = "Unexpected failure deserializing message";
+        failureEx = ex;
+        rpId = md.getRPid();
+        logger.fatal("Unexpected failure deserializing message",
+            failureEx);
+      } finally {
+        msgLength = md.size();
+        releaseMsgDestreamer(messageId, md);
+        if (interrupted) {
+          Thread.currentThread().interrupt();
+        }
+      }
+      if (msg != null) {
+        try {
+          if (!dispatchMessage(msg, msgLength, directAck)) {
+            directAck = false;
+          }
+        } catch (MemberShunnedException e) {
+          // not a member anymore - don't reply
+          directAck = false;
+        } catch (Exception de) {
+          this.owner.getConduit().getCancelCriterion().checkCancelInProgress(de);
+          logger.fatal("Error dispatching message", de);
+        } catch (ThreadDeath td) {
+          throw td;
+        } catch (VirtualMachineError err) {
+          SystemFailure.initiateFailure(err);
+          // If this ever returns, rethrow the error. We're poisoned
+          // now, so don't let this thread continue.
+          throw err;
+        } catch (Throwable t) {
+          // Whenever you catch Error or Throwable, you must also
+          // catch VirtualMachineError (see above). However, there is
+          // _still_ a possibility that you are dealing with a cascading
+          // error condition, so you also need to check to see if the JVM
+          // is still usable:
+          SystemFailure.checkFailure();
+          logger.fatal("Throwable dispatching message", t);
+        }
+      } else if (failureEx != null) {
+        sendFailureReply(rpId, failureMsg, failureEx, directAck);
+      }
+    }
+  }
+
+  void readHandshakeForSender(DataInputStream dis, ByteBuffer peerDataBuffer) {
+    try {
+      this.replyCode = dis.readUnsignedByte();
+      switch (replyCode) {
+        case REPLY_CODE_OK:
+          ioFilter.doneReading(peerDataBuffer);
+          notifyHandshakeWaiter(true);
+          return;
+        case REPLY_CODE_OK_WITH_ASYNC_INFO:
+          this.asyncDistributionTimeout = dis.readInt();
+          this.asyncQueueTimeout = dis.readInt();
+          this.asyncMaxQueueSize = (long) dis.readInt() * (1024 * 1024);
+          if (this.asyncDistributionTimeout != 0) {
+            logger.info("{} async configuration received {}.",
+                p2pReaderName(),
+                " asyncDistributionTimeout=" + this.asyncDistributionTimeout
+                    + " asyncQueueTimeout=" + this.asyncQueueTimeout
+                    + " asyncMaxQueueSize="
+                    + (this.asyncMaxQueueSize / (1024 * 1024)));
+          }
+          // read the product version ordinal for on-the-fly serialization
+          // transformations (for rolling upgrades)
+          this.remoteVersion = Version.readVersion(dis, true);
+          ioFilter.doneReading(peerDataBuffer);
+          notifyHandshakeWaiter(true);
+          return;
+        default:
+          String err =
+              String.format("Unknown handshake reply code: %s messageLength: %s", this.replyCode,
+                  this.messageLength);
+          if (replyCode == 0 && logger.isDebugEnabled()) { // bug 37113
+            logger.debug(err + " (peer probably departed ungracefully)");
+          } else {
+            logger.fatal(err);
+          }
+          this.readerShuttingDown = true;
+          requestClose(err);
+          return;
+      }
+    } catch (Exception e) {
+      this.owner.getConduit().getCancelCriterion().checkCancelInProgress(e);
+      logger.fatal("Error deserializing P2P handshake reply", e);
+      this.readerShuttingDown = true;
+      requestClose("Error deserializing P2P handshake reply");
+      return;
+    } catch (ThreadDeath td) {
+      throw td;
+    } catch (VirtualMachineError err) {
+      SystemFailure.initiateFailure(err);
+      // If this ever returns, rethrow the error. We're poisoned
+      // now, so don't let this thread continue.
+      throw err;
+    } catch (Throwable t) {
+      // Whenever you catch Error or Throwable, you must also
+      // catch VirtualMachineError (see above). However, there is
+      // _still_ a possibility that you are dealing with a cascading
+      // error condition, so you also need to check to see if the JVM
+      // is still usable:
+      SystemFailure.checkFailure();
+      logger.fatal("Throwable deserializing P2P handshake reply",
+          t);
+      this.readerShuttingDown = true;
+      requestClose("Throwable deserializing P2P handshake reply");
+      return;
+    }
+  }
+
   private void setThreadName(int dominoNumber) {
-    Thread.currentThread().setName("P2P message reader for " + this.remoteAddr + " "
+    Thread.currentThread().setName(THREAD_KIND_IDENTIFIER + " for " + this.remoteAddr + " "
         + (this.sharedResource ? "" : "un") + "shared" + " " + (this.preserveOrder ? "" : "un")
         + "ordered" + " uid=" + this.uniqueId + (dominoNumber > 0 ? (" dom #" + dominoNumber) : "")
         + " port=" + this.socket.getPort());
   }
 
   private void compactOrResizeBuffer(int messageLength) {
-    final int oldBufferSize = nioInputBuffer.capacity();
-    final DMStats stats = this.owner.getConduit().getStats();
+    final int oldBufferSize = inputBuffer.capacity();
+    final MembershipStatistics stats = this.owner.getConduit().getStats();
     int allocSize = messageLength + MSG_HEADER_BYTES;
     if (oldBufferSize < allocSize) {
       // need a bigger buffer
-      logger.info(LocalizedMessage.create(
-          LocalizedStrings.Connection_ALLOCATING_LARGER_NETWORK_READ_BUFFER_NEW_SIZE_IS_0_OLD_SIZE_WAS_1,
-          new Object[] {Integer.valueOf(allocSize), Integer.valueOf(oldBufferSize)}));
-      ByteBuffer oldBuffer = nioInputBuffer;
-      nioInputBuffer = Buffers.acquireReceiveBuffer(allocSize, stats);
+      logger.info("Allocating larger network read buffer, new size is {} old size was {}.",
+          allocSize, oldBufferSize);
+      ByteBuffer oldBuffer = inputBuffer;
+      inputBuffer = getBufferPool().acquireDirectReceiveBuffer(allocSize);
 
       if (oldBuffer != null) {
         int oldByteCount = oldBuffer.remaining();
-        nioInputBuffer.put(oldBuffer);
-        nioInputBuffer.position(oldByteCount);
-        Buffers.releaseReceiveBuffer(oldBuffer, stats);
+        inputBuffer.put(oldBuffer);
+        inputBuffer.position(oldByteCount);
+        getBufferPool().releaseReceiveBuffer(oldBuffer);
       }
     } else {
-      if (nioInputBuffer.position() != 0) {
-        nioInputBuffer.compact();
+      if (inputBuffer.position() != 0) {
+        inputBuffer.compact();
       } else {
-        nioInputBuffer.position(nioInputBuffer.limit());
-        nioInputBuffer.limit(nioInputBuffer.capacity());
+        inputBuffer.position(inputBuffer.limit());
+        inputBuffer.limit(inputBuffer.capacity());
       }
     }
   }
@@ -3982,16 +3408,16 @@ public class Connection implements Runnable {
     Socket result = this.socket;
     if (result == null) {
       throw new SocketException(
-          LocalizedStrings.Connection_SOCKET_HAS_BEEN_CLOSED.toLocalizedString());
+          "socket has been closed");
     }
     return result;
   }
 
-  public boolean isSocketClosed() {
+  boolean isSocketClosed() {
     return this.socket.isClosed() || !this.socket.isConnected();
   }
 
-  public boolean isReceiverStopped() {
+  boolean isReceiverStopped() {
     return this.stopped;
   }
 
@@ -4005,16 +3431,16 @@ public class Connection implements Runnable {
   }
 
   /**
-   * return the DM id of the guy on the other side of this connection.
+   * return the DM id of the member on the other side of this connection.
    */
   public InternalDistributedMember getRemoteAddress() {
     return this.remoteAddr;
   }
 
   /**
-   * Return the version of the guy on the other side of this connection.
+   * Return the version of the member on the other side of this connection.
    */
-  public Version getRemoteVersion() {
+  Version getRemoteVersion() {
     return this.remoteVersion;
   }
 
@@ -4035,14 +3461,14 @@ public class Connection implements Runnable {
    * @return true if the connection was initiated here
    * @since GemFire 5.1
    */
-  protected boolean getOriginatedHere() {
+  boolean getOriginatedHere() {
     return !this.isReceiver;
   }
 
   /**
    * answers whether this connection is used for ordered message delivery
    */
-  protected boolean getPreserveOrder() {
+  boolean getPreserveOrder() {
     return preserveOrder;
   }
 
@@ -4056,21 +3482,21 @@ public class Connection implements Runnable {
   /**
    * answers the number of messages received by this connection
    */
-  protected long getMessagesReceived() {
+  long getMessagesReceived() {
     return messagesReceived;
   }
 
   /**
    * answers the number of messages sent on this connection
    */
-  protected long getMessagesSent() {
+  long getMessagesSent() {
     return messagesSent;
   }
 
   public void acquireSendPermission() throws ConnectionException {
     if (!this.connected) {
       throw new ConnectionException(
-          LocalizedStrings.Connection_CONNECTION_IS_CLOSED.toLocalizedString());
+          "connection is closed");
     }
     if (isReaderThread()) {
       // reader threads send replies and we always want to permit those without waiting
@@ -4096,7 +3522,7 @@ public class Connection implements Runnable {
       this.senderSem.release();
       this.owner.getConduit().getCancelCriterion().checkCancelInProgress(null); // bug 37101
       throw new ConnectionException(
-          LocalizedStrings.Connection_CONNECTION_IS_CLOSED.toLocalizedString());
+          "connection is closed");
     }
   }
 
@@ -4109,37 +3535,11 @@ public class Connection implements Runnable {
 
   private void closeSenderSem() {
     // All we need to do is increase the number of permits by one
-    // just in case 1 or more guys are currently waiting to acquire.
-    // One of them will get it and then find out the connection is closed
-    // and then he will release it until all guys currently waiting to acquire
+    // just in case 1 or more connections are currently waiting to acquire.
+    // One of them will get the permit, then find out the connection is closed
+    // and release the permit until all the connections currently waiting to acquire
     // will complete by throwing a ConnectionException.
     releaseSendPermission();
   }
 
-  boolean nioChecked;
-  boolean useNIO;
-
-  private boolean useNIO() {
-    if (TCPConduit.useSSL) {
-      return false;
-    }
-    if (this.nioChecked) {
-      return this.useNIO;
-    }
-    this.nioChecked = true;
-    this.useNIO = this.owner.getConduit().useNIO();
-    if (!this.useNIO) {
-      return false;
-    }
-    // JDK bug 6230761 - NIO can't be used with IPv6 on Windows
-    if (this.socket != null && (this.socket.getInetAddress() instanceof Inet6Address)) {
-      String os = System.getProperty("os.name");
-      if (os != null) {
-        if (os.contains("Windows")) {
-          this.useNIO = false;
-        }
-      }
-    }
-    return this.useNIO;
-  }
 }

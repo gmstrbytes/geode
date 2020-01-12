@@ -18,50 +18,42 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyZeroInteractions;
 import static org.mockito.Mockito.when;
 
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 import org.junit.rules.ExpectedException;
 
-import org.apache.geode.cache.Region;
 import org.apache.geode.internal.cache.BucketRegion;
 import org.apache.geode.internal.cache.versions.RegionVersionVector;
-import org.apache.geode.test.junit.categories.UnitTest;
 
-@Category(UnitTest.class)
 public class AbstractEvictionListTest {
 
   @Rule
   public ExpectedException thrown = ExpectedException.none();
 
   private BucketRegion bucketRegion;
-  private InternalEvictionStatistics stats;
+  private EvictionCounters stats;
+  private EvictionController controller;
 
   @Before
   public void setup() {
     bucketRegion = mock(BucketRegion.class);
-    stats = mock(InternalEvictionStatistics.class);
-  }
-
-  @Test
-  public void cannotInstantiateWithoutStats() {
-    thrown.expect(IllegalArgumentException.class);
-    new TestEvictionList(null, bucketRegion);
+    stats = mock(EvictionCounters.class);
+    controller = mock(EvictionController.class);
+    when(controller.getCounters()).thenReturn(stats);
   }
 
   @Test
   public void sizeIsZeroByDefault() throws Exception {
-    TestEvictionList evictionList = new TestEvictionList(stats, bucketRegion);
+    TestEvictionList evictionList = new TestEvictionList(controller);
     assertThat(evictionList.size()).isZero();
   }
 
   @Test
   public void sizeIncreasesWithAppendEntry() throws Exception {
-    TestEvictionList evictionList = new TestEvictionList(stats, bucketRegion);
+    TestEvictionList evictionList = new TestEvictionList(controller);
 
     evictionList.appendEntry(new LinkableEvictionNode());
     assertThat(evictionList.size()).isEqualTo(1);
@@ -72,7 +64,7 @@ public class AbstractEvictionListTest {
 
   @Test
   public void sizeDecreasedWhenDecremented() throws Exception {
-    TestEvictionList evictionList = new TestEvictionList(stats, bucketRegion);
+    TestEvictionList evictionList = new TestEvictionList(controller);
 
     evictionList.appendEntry(new LinkableEvictionNode());
     evictionList.decrementSize();
@@ -81,34 +73,34 @@ public class AbstractEvictionListTest {
 
   @Test
   public void getStatisticsReturnsRightObject() throws Exception {
-    TestEvictionList evictionList = new TestEvictionList(stats, bucketRegion);
+    TestEvictionList evictionList = new TestEvictionList(controller);
     assertThat(evictionList.getStatistics()).isSameAs(stats);
   }
 
   @Test
   public void closeStats() throws Exception {
-    TestEvictionList evictionList = new TestEvictionList(stats, bucketRegion);
+    TestEvictionList evictionList = new TestEvictionList(controller);
     evictionList.closeStats();
     verify(stats).close();
   }
 
   @Test
   public void clearWithVersionVectorDoesNotChangeStats() throws Exception {
-    TestEvictionList evictionList = new TestEvictionList(stats, bucketRegion);
+    TestEvictionList evictionList = new TestEvictionList(controller);
 
     evictionList.appendEntry(new LinkableEvictionNode());
     assertThat(evictionList.size()).isEqualTo(1);
-    evictionList.clear(mock(RegionVersionVector.class));
+    evictionList.clear(mock(RegionVersionVector.class), bucketRegion);
     assertThat(evictionList.size()).isEqualTo(1);
   }
 
   @Test
   public void clearWithoutBucketRegionResetsStats() throws Exception {
-    TestEvictionList noBucketRegionEvictionList = new TestEvictionList(stats, null);
+    TestEvictionList noBucketRegionEvictionList = new TestEvictionList(controller);
 
     noBucketRegionEvictionList.appendEntry(new LinkableEvictionNode());
     assertThat(noBucketRegionEvictionList.size()).isEqualTo(1);
-    noBucketRegionEvictionList.clear(null);
+    noBucketRegionEvictionList.clear(null, null);
     verify(stats).resetCounter();
     assertThat(noBucketRegionEvictionList.size()).isZero();
   }
@@ -117,37 +109,17 @@ public class AbstractEvictionListTest {
   public void clearWithBucketRegionResetsBucketStats() throws Exception {
     long bucketSize = 10L;
     when(bucketRegion.getCounter()).thenReturn(bucketSize);
-    TestEvictionList evictionList = new TestEvictionList(stats, bucketRegion);
+    TestEvictionList evictionList = new TestEvictionList(controller);
 
-    evictionList.clear(null);
+    evictionList.clear(null, bucketRegion);
     verify(bucketRegion).resetCounter();
     verify(stats).decrementCounter(bucketSize);
     assertThat(evictionList.size()).isZero();
   }
 
   @Test
-  public void setBucketRegionWithWrongTypeDoesNothing() throws Exception {
-    TestEvictionList noBucketRegionEvictionList = new TestEvictionList(stats, null);
-
-    noBucketRegionEvictionList.appendEntry(new LinkableEvictionNode());
-    Region notABucketRegion = mock(Region.class);
-    noBucketRegionEvictionList.setBucketRegion(notABucketRegion);
-    noBucketRegionEvictionList.clear(null);
-    verifyZeroInteractions(notABucketRegion);
-  }
-
-  @Test
-  public void setBucketRegionWithBucketRegionTest() throws Exception {
-    TestEvictionList evictionList = new TestEvictionList(stats, null);
-    evictionList.setBucketRegion(bucketRegion);
-
-    evictionList.clear(null);
-    verify(bucketRegion).resetCounter();
-  }
-
-  @Test
   public void appendEntryAlreadyInListDoesNothing() throws Exception {
-    TestEvictionList evictionList = new TestEvictionList(stats, bucketRegion);
+    TestEvictionList evictionList = new TestEvictionList(controller);
     EvictionNode node = mock(EvictionNode.class);
     when(node.next()).thenReturn(mock(EvictionNode.class));
 
@@ -157,7 +129,7 @@ public class AbstractEvictionListTest {
 
   @Test
   public void appendingNewEntryAddsItToList() throws Exception {
-    TestEvictionList evictionList = new TestEvictionList(stats, bucketRegion);
+    TestEvictionList evictionList = new TestEvictionList(controller);
     EvictionNode node = mock(EvictionNode.class);
     evictionList.appendEntry(node);
 
@@ -170,7 +142,7 @@ public class AbstractEvictionListTest {
 
   @Test
   public void unlinkEntryNotInListTest() throws Exception {
-    TestEvictionList evictionList = new TestEvictionList(stats, bucketRegion);
+    TestEvictionList evictionList = new TestEvictionList(controller);
     EvictionNode node = mock(EvictionNode.class);
 
     evictionList.destroyEntry(node);
@@ -179,7 +151,7 @@ public class AbstractEvictionListTest {
 
   @Test
   public void unlinkEntryInListTest() throws Exception {
-    TestEvictionList evictionList = new TestEvictionList(stats, bucketRegion);
+    TestEvictionList evictionList = new TestEvictionList(controller);
     EvictionNode node = mock(EvictionNode.class);
     when(node.next()).thenReturn(evictionList.tail);
     when(node.previous()).thenReturn(evictionList.head);
@@ -194,19 +166,19 @@ public class AbstractEvictionListTest {
 
   @Test
   public void unlinkHeadOnEmptyListReturnsNull() throws Exception {
-    TestEvictionList evictionList = new TestEvictionList(stats, bucketRegion);
+    TestEvictionList evictionList = new TestEvictionList(controller);
     assertThat(evictionList.unlinkHeadEntry()).isNull();
   }
 
   @Test
   public void unlinkTailOnEmptyListReturnsNull() throws Exception {
-    TestEvictionList evictionList = new TestEvictionList(stats, bucketRegion);
+    TestEvictionList evictionList = new TestEvictionList(controller);
     assertThat(evictionList.unlinkTailEntry()).isNull();
   }
 
   @Test
   public void unlinkHeadInListTest() throws Exception {
-    TestEvictionList evictionList = new TestEvictionList(stats, bucketRegion);
+    TestEvictionList evictionList = new TestEvictionList(controller);
     EvictionNode node = mock(EvictionNode.class);
     when(node.next()).thenReturn(null, evictionList.tail);
     when(node.previous()).thenReturn(evictionList.head);
@@ -218,7 +190,7 @@ public class AbstractEvictionListTest {
 
   @Test
   public void unlinkTailInListTest() throws Exception {
-    TestEvictionList evictionList = new TestEvictionList(stats, bucketRegion);
+    TestEvictionList evictionList = new TestEvictionList(controller);
     EvictionNode node = mock(EvictionNode.class);
     when(node.next()).thenReturn(null, evictionList.tail);
     when(node.previous()).thenReturn(evictionList.head);
@@ -230,7 +202,7 @@ public class AbstractEvictionListTest {
 
   @Test
   public void nodeUsedByTransactionIsNotEvictable() {
-    TestEvictionList evictionList = new TestEvictionList(stats, bucketRegion);
+    TestEvictionList evictionList = new TestEvictionList(controller);
     EvictionNode node = mock(EvictionNode.class);
     when(node.isInUseByTransaction()).thenReturn(true);
 
@@ -239,7 +211,7 @@ public class AbstractEvictionListTest {
 
   @Test
   public void evictedNodeIsNotEvictable() {
-    TestEvictionList evictionList = new TestEvictionList(stats, bucketRegion);
+    TestEvictionList evictionList = new TestEvictionList(controller);
     EvictionNode node = mock(EvictionNode.class);
     when(node.isEvicted()).thenReturn(true);
 
@@ -248,7 +220,7 @@ public class AbstractEvictionListTest {
 
   @Test
   public void defaultNodeIsEvictable() {
-    TestEvictionList evictionList = new TestEvictionList(stats, bucketRegion);
+    TestEvictionList evictionList = new TestEvictionList(controller);
     EvictionNode node = mock(EvictionNode.class);
 
     assertThat(evictionList.isEvictable(node)).isTrue();
@@ -256,8 +228,8 @@ public class AbstractEvictionListTest {
 
   private static class TestEvictionList extends AbstractEvictionList {
 
-    TestEvictionList(InternalEvictionStatistics stats, BucketRegion region) {
-      super(stats, region);
+    TestEvictionList(EvictionController controller) {
+      super(controller);
     }
 
     @Override

@@ -26,11 +26,11 @@ import org.springframework.shell.core.ExitShellRequest;
 
 import org.apache.geode.internal.ExitCode;
 import org.apache.geode.internal.GemFireVersion;
-import org.apache.geode.internal.PureJavaMode;
+import org.apache.geode.internal.lang.StringUtils;
+import org.apache.geode.internal.util.ArgumentRedactor;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
 import org.apache.geode.management.internal.cli.shell.Gfsh;
 import org.apache.geode.management.internal.cli.shell.GfshConfig;
-import org.apache.geode.management.internal.cli.shell.jline.GfshHistory;
 
 /**
  * Launcher class for :
@@ -81,11 +81,6 @@ public class Launcher {
 
   private static final String MSG_INVALID_COMMAND_OR_OPTION = "Invalid command or option : {0}."
       + GfshParser.LINE_SEPARATOR + "Use 'gfsh help' to display additional information.";
-
-  static {
-    // See 47325
-    System.setProperty(PureJavaMode.PURE_MODE_PROPERTY, "true");
-  }
 
   private final Set<String> allowedCommandLineCommands;
   private final OptionParser commandLineParser;
@@ -168,7 +163,7 @@ public class Launcher {
 
         if (!commandIsAllowed) {
           System.err.println(
-              CliStrings.format(MSG_INVALID_COMMAND_OR_OPTION, CliUtil.arrayToString(args)));
+              CliStrings.format(MSG_INVALID_COMMAND_OR_OPTION, StringUtils.arrayToString(args)));
           exitRequest = ExitShellRequest.FATAL_EXIT;
         } else {
           if (!gfsh.executeScriptLine(commandLineCommand)) {
@@ -189,8 +184,8 @@ public class Launcher {
     try {
       parsedOptions = this.commandLineParser.parse(args);
     } catch (OptionException e) {
-      System.err
-          .println(CliStrings.format(MSG_INVALID_COMMAND_OR_OPTION, CliUtil.arrayToString(args)));
+      System.err.println(
+          CliStrings.format(MSG_INVALID_COMMAND_OR_OPTION, StringUtils.arrayToString(args)));
       return ExitShellRequest.FATAL_EXIT.getExitCode();
     }
     boolean launchShell = true;
@@ -227,7 +222,7 @@ public class Launcher {
             String command = commandsToExecute.get(i);
             // sanitize the output string to not show the password
             System.out.println(GfshParser.LINE_SEPARATOR + "(" + (i + 1) + ") Executing - "
-                + GfshHistory.redact(command) + GfshParser.LINE_SEPARATOR);
+                + ArgumentRedactor.redact(command) + GfshParser.LINE_SEPARATOR);
             if (!gfsh.executeScriptLine(command) || gfsh.getLastExecutionStatus() != 0) {
               exitRequest = ExitShellRequest.FATAL_EXIT;
             }
@@ -314,7 +309,8 @@ public class Launcher {
 
     public void logStartupTime() {
       done = System.currentTimeMillis();
-      LogWrapper.getInstance().info("Startup done in " + ((done - start) / 1000.0) + " seconds.");
+      LogWrapper.getInstance(null)
+          .info("Startup done in " + ((done - start) / 1000.0) + " seconds.");
     }
 
     @Override

@@ -25,17 +25,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.logging.log4j.Logger;
 
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.annotations.internal.MakeNotStatic;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.MembershipListener;
+import org.apache.geode.distributed.internal.OperationExecutors;
 import org.apache.geode.distributed.internal.ProcessorKeeper21;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.i18n.StringId;
-import org.apache.geode.internal.DataSerializableFixedID;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
+import org.apache.geode.internal.serialization.DataSerializableFixedID;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * This class keeps track of how many InitialImageMessages are in flight between the initial image
@@ -52,15 +53,17 @@ import org.apache.geode.internal.logging.log4j.LocalizedMessage;
 public class InitialImageFlowControl implements MembershipListener {
   private static final Logger logger = LogService.getLogger();
 
+  @MakeNotStatic
   private static final ProcessorKeeper21 keeper = new ProcessorKeeper21(false);
   private int id;
   private int maxPermits = InitialImageOperation.CHUNK_PERMITS;
   private final Semaphore permits = new Semaphore(maxPermits);
-  private final DM dm;
+  private final DistributionManager dm;
   private final InternalDistributedMember target;
   private final AtomicBoolean aborted = new AtomicBoolean();
 
-  public static InitialImageFlowControl register(DM dm, InternalDistributedMember target) {
+  public static InitialImageFlowControl register(DistributionManager dm,
+      InternalDistributedMember target) {
     InitialImageFlowControl control = new InitialImageFlowControl(dm, target);
     int id = keeper.put(control);
     control.id = id;
@@ -72,7 +75,7 @@ public class InitialImageFlowControl implements MembershipListener {
     return control;
   }
 
-  private InitialImageFlowControl(DM dm, InternalDistributedMember target) {
+  private InitialImageFlowControl(DistributionManager dm, InternalDistributedMember target) {
     this.dm = dm;
     this.target = target;
   }
@@ -123,18 +126,15 @@ public class InitialImageFlowControl implements MembershipListener {
       checkCancellation();
 
       Set activeMembers = dm.getDistributionManagerIds();
-      final Object[] msgArgs =
-          new Object[] {getAckWaitThreshold(), this, dm.getId(), activeMembers};
-      final StringId msg =
-          LocalizedStrings.ReplyProcessor21_0_SEC_HAVE_ELAPSED_WHILE_WAITING_FOR_REPLIES_1_ON_2_WHOSE_CURRENT_MEMBERSHIP_LIST_IS_3;
-      logger.warn(LocalizedMessage.create(msg, msgArgs));
+      logger.warn(
+          "{} seconds have elapsed while waiting for replies: {} on {} whose current membership list is: [{}]",
+          getAckWaitThreshold(), this, dm.getId(), activeMembers);
 
       permits.acquire();
 
       // Give an info message since timeout gave a warning.
-      logger.info(
-          LocalizedMessage.create(LocalizedStrings.ReplyProcessor21_WAIT_FOR_REPLIES_COMPLETED_1,
-              "InitialImageFlowControl"));
+      logger.info("{} wait for replies completed",
+          "InitialImageFlowControl");
     }
   }
 
@@ -160,11 +160,12 @@ public class InitialImageFlowControl implements MembershipListener {
     return id;
   }
 
-  public void memberDeparted(InternalDistributedMember id, boolean crashed) {
+  @Override
+  public void memberDeparted(DistributionManager distributionManager, InternalDistributedMember id,
+      boolean crashed) {
     if (id.equals(target)) {
       abort();
     }
-
   }
 
   private void abort() {
@@ -176,15 +177,18 @@ public class InitialImageFlowControl implements MembershipListener {
     }
   }
 
-  public void memberJoined(InternalDistributedMember id) {
+  @Override
+  public void memberJoined(DistributionManager distributionManager, InternalDistributedMember id) {
     // Do nothing
   }
 
-  public void quorumLost(Set<InternalDistributedMember> failures,
-      List<InternalDistributedMember> remaining) {}
+  @Override
+  public void quorumLost(DistributionManager distributionManager,
+      Set<InternalDistributedMember> failures, List<InternalDistributedMember> remaining) {}
 
-  public void memberSuspect(InternalDistributedMember id, InternalDistributedMember whoSuspected,
-      String reason) {
+  @Override
+  public void memberSuspect(DistributionManager distributionManager, InternalDistributedMember id,
+      InternalDistributedMember whoSuspected, String reason) {
     // Do nothing
   }
 
@@ -205,7 +209,8 @@ public class InitialImageFlowControl implements MembershipListener {
 
     public FlowControlPermitMessage() {}
 
-    public static void send(DM dm, InternalDistributedMember recipient, int keeperId) {
+    public static void send(DistributionManager dm, InternalDistributedMember recipient,
+        int keeperId) {
       FlowControlPermitMessage message = new FlowControlPermitMessage(keeperId);
       message.setRecipient(recipient);
       dm.putOutgoing(message);
@@ -213,7 +218,7 @@ public class InitialImageFlowControl implements MembershipListener {
 
     @Override
     public int getProcessorType() {
-      return DistributionManager.STANDARD_EXECUTOR;
+      return OperationExecutors.STANDARD_EXECUTOR;
     }
 
     @Override
@@ -222,26 +227,29 @@ public class InitialImageFlowControl implements MembershipListener {
     }
 
     @Override
-    protected void process(DistributionManager dm) {
+    protected void process(ClusterDistributionManager dm) {
       InitialImageFlowControl control = (InitialImageFlowControl) keeper.retrieve(keeperId);
       if (control != null) {
         control.releasePermit();
       }
     }
 
+    @Override
     public int getDSFID() {
       return FLOW_CONTROL_PERMIT_MESSAGE;
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       keeperId = in.readInt();
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       out.writeInt(keeperId);
     }
 

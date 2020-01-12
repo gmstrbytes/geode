@@ -21,6 +21,7 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import java.util.ArrayList;
@@ -30,55 +31,83 @@ import java.util.Set;
 import org.junit.Before;
 import org.junit.ClassRule;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 
-import org.apache.geode.distributed.internal.ClusterConfigurationService;
+import org.apache.geode.distributed.internal.InternalConfigurationPersistenceService;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.management.internal.cli.GfshParseResult;
 import org.apache.geode.management.internal.cli.functions.CliFunctionResult;
-import org.apache.geode.management.internal.configuration.domain.XmlEntity;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.management.internal.cli.i18n.CliStrings;
 import org.apache.geode.test.junit.rules.GfshParserRule;
 
 
-@Category(UnitTest.class)
 public class CreateGatewayReceiverCommandTest {
 
   @ClassRule
   public static GfshParserRule gfsh = new GfshParserRule();
 
   private CreateGatewayReceiverCommand command;
-  private InternalCache cache;
   private List<CliFunctionResult> functionResults;
-  private ClusterConfigurationService ccService;
+  private InternalConfigurationPersistenceService ccService;
   private CliFunctionResult result1;
-  private XmlEntity xmlEntity;
 
   @Before
   public void before() {
     command = spy(CreateGatewayReceiverCommand.class);
-    ccService = mock(ClusterConfigurationService.class);
-    xmlEntity = mock(XmlEntity.class);
-    cache = mock(InternalCache.class);
+    ccService = mock(InternalConfigurationPersistenceService.class);
+    InternalCache cache = mock(InternalCache.class);
     doReturn(cache).when(command).getCache();
-    doReturn(ccService).when(command).getSharedConfiguration();
+    doReturn(ccService).when(command).getConfigurationPersistenceService();
     functionResults = new ArrayList<>();
-    doReturn(functionResults).when(command).executeAndGetFunctionResult(any(), any(),
-        any(Set.class));
+    doReturn(functionResults).when(command).executeAndGetFunctionResult(any(), any(), any());
   }
 
   @Test
-  public void testDefaultValues() {
+  public void testUnspecifiedDefaultValues() {
     GfshParseResult parseResult = gfsh.parse("create gateway-receiver");
 
-    assertThat(parseResult.getParamValue("start-port")).isNull();
-    assertThat(parseResult.getParamValue("end-port")).isNull();
-    assertThat(parseResult.getParamValue("socket-buffer-size")).isNull();
+    assertThat(parseResult.getParamValue(CliStrings.MEMBER)).isNull();
+    assertThat(parseResult.getParamValue(CliStrings.GROUP)).isNull();
+    assertThat(parseResult.getParamValue(CliStrings.CREATE_GATEWAYRECEIVER__STARTPORT)).isNull();
+    assertThat(parseResult.getParamValue(CliStrings.CREATE_GATEWAYRECEIVER__ENDPORT)).isNull();
+    assertThat(parseResult.getParamValue(CliStrings.CREATE_GATEWAYRECEIVER__BINDADDRESS)).isNull();
+    assertThat(parseResult.getParamValue(CliStrings.CREATE_GATEWAYRECEIVER__MAXTIMEBETWEENPINGS))
+        .isNull();
+    assertThat(parseResult.getParamValue(CliStrings.CREATE_GATEWAYRECEIVER__SOCKETBUFFERSIZE))
+        .isNull();
+    assertThat(parseResult.getParamValue(CliStrings.CREATE_GATEWAYRECEIVER__GATEWAYTRANSPORTFILTER))
+        .isNull();
+    assertThat(parseResult.getParamValue(CliStrings.CREATE_GATEWAYRECEIVER__HOSTNAMEFORSENDERS))
+        .isNull();
+    assertThat(parseResult.getParamValue(CliStrings.IFNOTEXISTS)).isEqualTo(false);
+    assertThat(parseResult.getParamValue(CliStrings.CREATE_GATEWAYRECEIVER__MANUALSTART))
+        .isEqualTo(false);
   }
 
+  @Test
+  public void testSpecifiedDefaultValues() {
+    GfshParseResult parseResult =
+        gfsh.parse("create gateway-receiver --manual-start --if-not-exists");
+
+    assertThat(parseResult.getParamValue(CliStrings.MEMBER)).isNull();
+    assertThat(parseResult.getParamValue(CliStrings.GROUP)).isNull();
+    assertThat(parseResult.getParamValue(CliStrings.CREATE_GATEWAYRECEIVER__STARTPORT)).isNull();
+    assertThat(parseResult.getParamValue(CliStrings.CREATE_GATEWAYRECEIVER__ENDPORT)).isNull();
+    assertThat(parseResult.getParamValue(CliStrings.CREATE_GATEWAYRECEIVER__BINDADDRESS)).isNull();
+    assertThat(parseResult.getParamValue(CliStrings.CREATE_GATEWAYRECEIVER__MAXTIMEBETWEENPINGS))
+        .isNull();
+    assertThat(parseResult.getParamValue(CliStrings.CREATE_GATEWAYRECEIVER__SOCKETBUFFERSIZE))
+        .isNull();
+    assertThat(parseResult.getParamValue(CliStrings.CREATE_GATEWAYRECEIVER__GATEWAYTRANSPORTFILTER))
+        .isNull();
+    assertThat(parseResult.getParamValue(CliStrings.CREATE_GATEWAYRECEIVER__HOSTNAMEFORSENDERS))
+        .isNull();
+    assertThat(parseResult.getParamValue(CliStrings.IFNOTEXISTS)).isEqualTo(true);
+    assertThat(parseResult.getParamValue(CliStrings.CREATE_GATEWAYRECEIVER__MANUALSTART))
+        .isEqualTo(true);
+  }
 
   @Test
-  public void endMustBeLargerThanStart() {
+  public void endPortMustBeLargerThanStartPort() {
     gfsh.executeAndAssertThat(command, "create gateway-receiver --end-port=1").statusIsError()
         .containsOutput("start-port must be smaller than end-port");
 
@@ -90,38 +119,56 @@ public class CreateGatewayReceiverCommandTest {
   }
 
   @Test
-  public void whenNoCCService() {
+  public void gatewayReceiverCanBeCreatedButIsNotPersistedWithoutConfigurationService() {
     doReturn(mock(Set.class)).when(command).getMembers(any(), any());
-    doReturn(null).when(command).getSharedConfiguration();
-    result1 = new CliFunctionResult("member", xmlEntity, "result1");
+    doReturn(null).when(command).getConfigurationPersistenceService();
+    result1 = new CliFunctionResult("member", CliFunctionResult.StatusState.OK, "result1");
     functionResults.add(result1);
+
     gfsh.executeAndAssertThat(command, "create gateway-receiver").statusIsSuccess()
-        .hasFailToPersistError();
-    verify(ccService, never()).deleteXmlEntity(any(), any());
+        .containsOutput(
+            "Cluster configuration service is not running. Configuration change is not persisted");
+    verify(ccService, never()).addXmlEntity(any(), any());
+    verify(ccService, never()).updateCacheConfig(any(), any());
   }
 
   @Test
-  public void whenCommandOnMember() {
+  public void gatewayReceiverIsCreatedButNotPersistedWithMemberOption() {
     doReturn(mock(Set.class)).when(command).getMembers(any(), any());
-    doReturn(ccService).when(command).getSharedConfiguration();
-    result1 = new CliFunctionResult("member", xmlEntity, "result1");
+    doReturn(ccService).when(command).getConfigurationPersistenceService();
+    result1 = new CliFunctionResult("member", CliFunctionResult.StatusState.OK, "result1");
     functionResults.add(result1);
     gfsh.executeAndAssertThat(command, "create gateway-receiver --member=xyz").statusIsSuccess()
-        .hasFailToPersistError();
-    verify(ccService, never()).deleteXmlEntity(any(), any());
+        .containsOutput(
+            "Configuration change is not persisted because the command is executed on specific member");
+    verify(ccService, never()).addXmlEntity(any(), any());
+    verify(ccService, never()).updateCacheConfig(any(), any());
   }
 
   @Test
-  public void whenNoXml() {
+  public void configurationIsNotPersistedWhenCreationOnOnlyMemberFails() {
     doReturn(mock(Set.class)).when(command).getMembers(any(), any());
-    doReturn(ccService).when(command).getSharedConfiguration();
-    result1 = new CliFunctionResult("member", false, "result1");
+    doReturn(ccService).when(command).getConfigurationPersistenceService();
+    result1 = new CliFunctionResult("member", CliFunctionResult.StatusState.ERROR, "result1");
     functionResults.add(result1);
 
     // does not delete because command failed, so hasNoFailToPersistError should still be true
-    gfsh.executeAndAssertThat(command, "create gateway-receiver").statusIsError()
-        .hasNoFailToPersistError();
-    verify(ccService, never()).deleteXmlEntity(any(), any());
+    gfsh.executeAndAssertThat(command, "create gateway-receiver").statusIsError();
+    verify(ccService, never()).updateCacheConfig(any(), any());
   }
 
+  @Test
+  public void configurationIsPersistedWhenCreationOnAnyMemberFails() {
+    doReturn(mock(Set.class)).when(command).getMembers(any(), any());
+    doReturn(ccService).when(command).getConfigurationPersistenceService();
+    result1 = new CliFunctionResult("member", CliFunctionResult.StatusState.ERROR, "result1");
+    functionResults.add(result1);
+    CliFunctionResult result2 =
+        new CliFunctionResult("member", CliFunctionResult.StatusState.OK, "result2");
+    functionResults.add(result2);
+
+    // does not delete because command failed, so hasNoFailToPersistError should still be true
+    gfsh.executeAndAssertThat(command, "create gateway-receiver").statusIsSuccess();
+    verify(ccService, times(1)).updateCacheConfig(any(), any());
+  }
 }

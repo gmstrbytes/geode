@@ -26,7 +26,7 @@ import java.util.Set;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.DataSerializer;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.MessageWithReply;
@@ -37,11 +37,13 @@ import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.ServerLocation;
 import org.apache.geode.distributed.internal.ServerLocator;
 import org.apache.geode.internal.cache.tier.sockets.ClientProxyMembershipID;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * A processor for helping a locator find the durable queues for a given durable client id. Asks
- * each bridge server if they have the durable id and builds a list of matching servers.
+ * each cache server if they have the durable id and builds a list of matching servers.
  *
  * @since GemFire 5.7
  */
@@ -51,7 +53,7 @@ public class FindDurableQueueProcessor extends ReplyProcessor21 {
   final ArrayList durableLocations = new ArrayList();
 
   public static ArrayList sendAndFind(ServerLocator locator, ClientProxyMembershipID proxyId,
-      DM dm) {
+      DistributionManager dm) {
     Set members = ((GridAdvisor) locator.getDistributionAdvisor()).adviseBridgeServers();
     if (members.contains(dm.getId())) {
       // Don't send message to local server, see #50534.
@@ -65,7 +67,7 @@ public class FindDurableQueueProcessor extends ReplyProcessor21 {
     try {
       processor.waitForRepliesUninterruptibly();
     } catch (ReplyException e) {
-      e.handleAsUnexpected();
+      e.handleCause();
     }
     ArrayList locations = processor.durableLocations;
     // This will add any local queues to the list
@@ -107,7 +109,7 @@ public class FindDurableQueueProcessor extends ReplyProcessor21 {
   /**
    * Creates a new instance of FindDurableQueueProcessor
    */
-  private FindDurableQueueProcessor(DM dm, Set members) {
+  private FindDurableQueueProcessor(DistributionManager dm, Set members) {
     super(dm, members);
   }
 
@@ -116,7 +118,7 @@ public class FindDurableQueueProcessor extends ReplyProcessor21 {
     private int processorId;
     private ClientProxyMembershipID proxyId;
 
-    protected static void send(ClientProxyMembershipID proxyId, DM dm, Set members,
+    protected static void send(ClientProxyMembershipID proxyId, DistributionManager dm, Set members,
         ReplyProcessor21 proc) {
       FindDurableQueueMessage msg = new FindDurableQueueMessage();
       msg.processorId = proc.getProcessorId();
@@ -138,7 +140,7 @@ public class FindDurableQueueProcessor extends ReplyProcessor21 {
     }
 
     @Override
-    protected void process(final DistributionManager dm) {
+    protected void process(final ClusterDistributionManager dm) {
       ArrayList<ServerLocation> matches = new ArrayList<ServerLocation>();
       try {
         findLocalDurableQueues(proxyId, matches);
@@ -157,6 +159,7 @@ public class FindDurableQueueProcessor extends ReplyProcessor21 {
       }
     }
 
+    @Override
     public int getDSFID() {
       return FIND_DURABLE_QUEUE;
     }
@@ -168,15 +171,17 @@ public class FindDurableQueueProcessor extends ReplyProcessor21 {
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.processorId = in.readInt();
       this.proxyId = ClientProxyMembershipID.readCanonicalized(in);
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       out.writeInt(this.processorId);
       DataSerializer.writeObject(this.proxyId, out);
     }
@@ -203,14 +208,16 @@ public class FindDurableQueueProcessor extends ReplyProcessor21 {
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.matches = DataSerializer.readArrayList(in);
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       DataSerializer.writeArrayList(matches, out);
     }
 

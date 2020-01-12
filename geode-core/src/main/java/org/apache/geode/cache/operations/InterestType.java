@@ -15,54 +15,43 @@
 
 package org.apache.geode.cache.operations;
 
+import org.apache.geode.annotations.Immutable;
+
 /**
  * Enumeration for various interest types supported by GemFire.
  *
  * @since GemFire 5.5
  */
+@Immutable
 public final class InterestType {
 
   public static final byte TP_KEY = 0;
 
   public static final byte TP_REGEX = 1;
 
-  // public static final byte TP_FILTER_CLASS = 2;
-
-  // public static final byte TP_OQL = 3;
-
   public static final byte TP_LIST = 4;
 
-  private static byte nextOrdinal = 0;
-
+  @Immutable
   private static final InterestType[] VALUES = new InterestType[10];
 
   /**
    * For registering interest in a specific key.
    */
-  public static final InterestType KEY = new InterestType("KEY", TP_KEY);
+  @Immutable
+  public static final InterestType KEY = new InterestType("KEY", TP_KEY, 0);
 
   /**
    * For registering interest in a list of keys.
    */
-  public static final InterestType LIST = new InterestType("LIST", TP_LIST);
+  @Immutable
+  public static final InterestType LIST = new InterestType("LIST", TP_LIST, 1);
 
   /**
    * For registering interest in all keys matching a regular expression.
    */
+  @Immutable
   public static final InterestType REGULAR_EXPRESSION =
-      new InterestType("REGULAR_EXPRESSION", TP_REGEX);
-
-  /**
-   * For registering interest in all key/value pairs that satisfy a provided filtering class.
-   */
-  // public static final InterestType FILTER_CLASS = new InterestType(
-  // "FILTER_CLASS", TP_FILTER_CLASS);
-
-  /**
-   * For registering interest in all key/value pairs that satisfy an OQL query.
-   */
-  // public static final InterestType OQL_QUERY = new InterestType("OQL_QUERY",
-  // TP_OQL);
+      new InterestType("REGULAR_EXPRESSION", TP_REGEX, 3);
 
   /** The name of this interest type. */
   private final String name;
@@ -77,10 +66,10 @@ public final class InterestType {
   private final byte interestType;
 
   /** Creates a new instance of <code>InterestType</code>. */
-  private InterestType(String name, byte interestType) {
+  private InterestType(String name, byte interestType, int ordinal) {
     this.name = name;
     this.interestType = interestType;
-    this.ordinal = nextOrdinal++;
+    this.ordinal = (byte) ordinal;
     VALUES[this.ordinal] = this;
   }
 
@@ -104,20 +93,6 @@ public final class InterestType {
   public boolean isRegularExpression() {
     return (this.interestType == TP_REGEX);
   }
-
-  /**
-   * Returns true if this is a filter class interest type.
-   */
-  // public boolean isFilterClass() {
-  // return (this.interestType == TP_FILTER_CLASS);
-  // }
-
-  /**
-   * Returns true if this is an OQL query interest type.
-   */
-  // public boolean isOQLQuery() {
-  // return (this.interestType == TP_OQL);
-  // }
 
   /**
    * Returns the <code>InterestType</code> represented by specified ordinal.

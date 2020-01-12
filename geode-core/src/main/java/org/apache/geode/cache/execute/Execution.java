@@ -15,6 +15,7 @@
 package org.apache.geode.cache.execute;
 
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.geode.cache.DataPolicy;
 import org.apache.geode.cache.LowMemoryException;
@@ -51,7 +52,7 @@ public interface Execution<IN, OUT, AGG> {
    *         {@link FunctionService#onRegion(org.apache.geode.cache.Region)}
    * @since GemFire 6.0
    */
-  public Execution<IN, OUT, AGG> withFilter(Set<?> filter);
+  Execution<IN, OUT, AGG> withFilter(Set<?> filter);
 
   /**
    * Specifies the user data passed to the function when it is executed. The function can retrieve
@@ -63,7 +64,7 @@ public interface Execution<IN, OUT, AGG> {
    * @since Geode 1.2
    *
    */
-  public Execution<IN, OUT, AGG> setArguments(IN args);
+  Execution<IN, OUT, AGG> setArguments(IN args);
 
   /**
    * Specifies the user data passed to the function when it is executed. The function can retrieve
@@ -76,7 +77,7 @@ public interface Execution<IN, OUT, AGG> {
    * @deprecated use {@link #setArguments(Object)} instead
    *
    */
-  public Execution<IN, OUT, AGG> withArgs(IN args);
+  Execution<IN, OUT, AGG> withArgs(IN args);
 
   /**
    * Specifies the {@link ResultCollector} that will receive the results after the function has been
@@ -88,14 +89,17 @@ public interface Execution<IN, OUT, AGG> {
    * @see ResultCollector
    * @since GemFire 6.0
    */
-  public Execution<IN, OUT, AGG> withCollector(ResultCollector<OUT, AGG> rc);
+  Execution<IN, OUT, AGG> withCollector(ResultCollector<OUT, AGG> rc);
 
   /**
-   * Executes the function using its {@linkplain Function#getId() id}
+   * Executes the function using its {@linkplain Function#getId() id}.
+   * When executed from a client, it blocks until all results have been received
+   * or the global timeout (gemfire.CLIENT_FUNCTION_TIMEOUT Java property), if set, has expired.
    * <p>
    * {@link Function#execute(FunctionContext)} is called on the instance retrieved using
    * {@link FunctionService#getFunction(String)} on the executing member.
    *
+   * @param functionId id of the function to execute
    * @throws LowMemoryException if the {@link Function#optimizeForWrite()} returns true and there is
    *         a low memory condition
    * @return ResultCollector to retrieve the results received. This is different object than the
@@ -104,10 +108,31 @@ public interface Execution<IN, OUT, AGG> {
    *
    * @since GemFire 6.0
    */
-  public ResultCollector<OUT, AGG> execute(String functionId) throws FunctionException;
+  ResultCollector<OUT, AGG> execute(String functionId) throws FunctionException;
+
+  /**
+   * Executes the function using its {@linkplain Function#getId() id} with the specified timeout.
+   * It blocks until all results have been received or the timeout has expired.
+   * <p>
+   * {@link Function#execute(FunctionContext)} is called on the instance retrieved using
+   * {@link FunctionService#getFunction(String)} on the executing member.
+   *
+   * @param functionId id of the function to execute
+   * @param timeout time to wait for the operation to finish before timing out
+   * @param unit timeout unit
+   * @return ResultCollector to retrieve the results received. This is different object than the
+   *         ResultCollector provided in {@link Execution#withCollector(ResultCollector)}. User has
+   *         to use this reference to retrieve results.
+   *
+   * @since Geode 1.11
+   */
+  ResultCollector<OUT, AGG> execute(String functionId, long timeout, TimeUnit unit)
+      throws FunctionException;
 
   /**
    * Executes the function instance provided.
+   * When executed from a client, it blocks until all results have been received
+   * or the global timeout (gemfire.CLIENT_FUNCTION_TIMEOUT Java property), if set, has expired.
    * <p>
    * {@link Function#execute(FunctionContext)} is called on the de-serialized instance on the
    * executing member.
@@ -121,5 +146,27 @@ public interface Execution<IN, OUT, AGG> {
    *
    * @since GemFire 6.0
    */
-  public ResultCollector<OUT, AGG> execute(Function function) throws FunctionException;
+  ResultCollector<OUT, AGG> execute(Function function) throws FunctionException;
+
+  /**
+   * Executes the function instance provided.
+   * It blocks until all results have been received or the timeout has expired.
+   * <p>
+   * {@link Function#execute(FunctionContext)} is called on the de-serialized instance on the
+   * executing member.
+   *
+   * @param function instance to execute
+   * @param timeout time to wait for the operation to finish before timing out
+   * @param unit timeout unit
+   * @throws LowMemoryException if the {@link Function#optimizeForWrite()} returns true and there is
+   *         a low memory condition
+   * @return ResultCollector to retrieve the results received. This is different object than the
+   *         ResultCollector provided in {@link Execution#withCollector(ResultCollector)}. User has
+   *         to use this reference to retrieve results.
+   *
+   * @since Geode 1.11
+   */
+  ResultCollector<OUT, AGG> execute(Function function, long timeout, TimeUnit unit)
+      throws FunctionException;
+
 }

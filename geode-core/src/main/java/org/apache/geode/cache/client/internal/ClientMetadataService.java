@@ -30,6 +30,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.SystemFailure;
+import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.EntryOperation;
 import org.apache.geode.cache.FixedPartitionResolver;
@@ -40,11 +41,11 @@ import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.ServerLocation;
 import org.apache.geode.internal.cache.BucketServerLocation66;
 import org.apache.geode.internal.cache.EntryOperationImpl;
+import org.apache.geode.internal.cache.InternalRegion;
 import org.apache.geode.internal.cache.LocalRegion;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.PartitionedRegionHelper;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * Maintains {@link ClientPartitionAdvisor} for Partitioned Regions on servers Client operations
@@ -77,7 +78,11 @@ public class ClientMetadataService {
 
   private boolean isMetadataRefreshed_TEST_ONLY = false;
 
+  /** for testing - the current number of metadata refresh tasks running or queued to run */
   private int refreshTaskCount = 0;
+
+  /** for testing - the total number of scheduled metadata refreshes */
+  private long totalRefreshTaskCount = 0;
 
   private Set<String> regionsBeingRefreshed = new HashSet<>();
 
@@ -138,8 +143,7 @@ public class ClientMetadataService {
       resolveKey = resolver.getRoutingObject(entryOp);
       if (resolveKey == null) {
         throw new IllegalStateException(
-            LocalizedStrings.PartitionedRegionHelper_THE_ROUTINGOBJECT_RETURNED_BY_PARTITIONRESOLVER_IS_NULL
-                .toLocalizedString());
+            "The RoutingObject returned by PartitionResolver is null.");
       }
     }
     int bucketId;
@@ -152,12 +156,11 @@ public class ClientMetadataService {
       if (partition == null) {
         Object[] prms = new Object[] {region.getName(), resolver};
         throw new IllegalStateException(
-            LocalizedStrings.PartitionedRegionHelper_FOR_REGION_0_PARTITIONRESOLVER_1_RETURNED_PARTITION_NAME_NULL
-                .toLocalizedString(prms));
+            String.format("For region %s, partition resolver %s returned partition name null",
+                prms));
       } else {
         bucketId = prAdvisor.assignFixedBucketId(region, partition, resolveKey);
         if (bucketId == -1) {
-          // scheduleGetPRMetaData((LocalRegion)region);
           return null;
         }
 
@@ -204,7 +207,7 @@ public class ClientMetadataService {
     final String regionFullPath = region.getFullPath();
     ClientPartitionAdvisor prAdvisor = this.getClientPartitionAdvisor(regionFullPath);
     if (prAdvisor == null || prAdvisor.adviseRandomServerLocation() == null) {
-      scheduleGetPRMetaData((LocalRegion) region, false);
+      scheduleGetPRMetaData((InternalRegion) region, false);
       return null;
     }
     HashMap<Integer, HashSet> bucketToKeysMap =
@@ -212,9 +215,14 @@ public class ClientMetadataService {
 
     HashMap<ServerLocation, HashSet> serverToKeysMap = new HashMap<ServerLocation, HashSet>();
     HashMap<ServerLocation, HashSet<Integer>> serverToBuckets =
-        groupByServerToBuckets(prAdvisor, bucketToKeysMap.keySet(), primaryMembersNeeded);
+        groupByServerToBuckets(prAdvisor, bucketToKeysMap.keySet(), primaryMembersNeeded, region);
 
     if (serverToBuckets == null) {
+      if (logger.isDebugEnabled()) {
+        logger.debug("One or more primary bucket locations are unknown "
+            + "- scheduling metadata refresh for region {}", region.getFullPath());
+      }
+      scheduleGetPRMetaData((LocalRegion) region, false);
       return null;
     }
 
@@ -244,7 +252,7 @@ public class ClientMetadataService {
     final String regionFullPath = region.getFullPath();
     ClientPartitionAdvisor prAdvisor = this.getClientPartitionAdvisor(regionFullPath);
     if (prAdvisor == null || prAdvisor.adviseRandomServerLocation() == null) {
-      scheduleGetPRMetaData((LocalRegion) region, false);
+      scheduleGetPRMetaData((InternalRegion) region, false);
       return null;
     }
     int totalNumberOfBuckets = prAdvisor.getTotalNumBuckets();
@@ -252,7 +260,7 @@ public class ClientMetadataService {
     for (int i = 0; i < totalNumberOfBuckets; i++) {
       allBucketIds.add(i);
     }
-    return groupByServerToBuckets(prAdvisor, allBucketIds, primaryOnly);
+    return groupByServerToBuckets(prAdvisor, allBucketIds, primaryOnly, region);
   }
 
   /**
@@ -260,7 +268,8 @@ public class ClientMetadataService {
    * are not available due to mismatch in metadata it should fill up a random server for it.
    */
   private HashMap<ServerLocation, HashSet<Integer>> groupByServerToBuckets(
-      ClientPartitionAdvisor prAdvisor, Set<Integer> bucketSet, boolean primaryOnly) {
+      ClientPartitionAdvisor prAdvisor, Set<Integer> bucketSet, boolean primaryOnly,
+      Region region) {
     if (primaryOnly) {
       HashMap<ServerLocation, HashSet<Integer>> serverToBucketsMap =
           new HashMap<ServerLocation, HashSet<Integer>>();
@@ -270,6 +279,9 @@ public class ClientMetadataService {
           // If we don't have the metadata for some buckets, return
           // null, indicating that we don't have any metadata. This
           // will cause us to use the non-single hop path.
+          logger.info("Primary for bucket {} is not known for Region {}.  "
+              + "Known server locations: {}", bucketId, region.getFullPath(),
+              prAdvisor.adviseServerLocations(bucketId));
           return null;
         }
         HashSet<Integer> buckets = serverToBucketsMap.get(server);
@@ -337,9 +349,6 @@ public class ClientMetadataService {
       logger.debug("ClientMetadataService: The server to buckets map is : {}", serverToBucketsMap);
     }
 
-    HashSet<Integer> currentBucketSet = new HashSet<Integer>();
-    // ServerLocation randomFirstServer =
-    // prAdvisor.adviseRandomServerLocation(); // get a random server here
     ServerLocation randomFirstServer = null;
     if (serverToBucketsMap.isEmpty()) {
       return null;
@@ -354,19 +363,13 @@ public class ClientMetadataService {
           "ClientMetadataService: Adding the server : {} which is random and buckets {} to prunedMap",
           randomFirstServer, bucketSet);
     }
-    currentBucketSet.addAll(bucketSet);
+    HashSet<Integer> currentBucketSet = new HashSet<Integer>(bucketSet);
     prunedServerToBucketsMap.put(randomFirstServer, bucketSet);
     serverToBucketsMap.remove(randomFirstServer);
 
     while (!currentBucketSet.equals(buckets)) {
       ServerLocation server = findNextServer(serverToBucketsMap.entrySet(), currentBucketSet);
       if (server == null) {
-        // HashSet<Integer> rBuckets = prunedServerToBucketsMap
-        // .get(randomFirstServer);
-        // HashSet<Integer> remainingBuckets = new HashSet<Integer>(buckets);
-        // remainingBuckets.removeAll(currentBucketSet);
-        // rBuckets.addAll(remainingBuckets);
-        // prunedServerToBucketsMap.put(randomFirstServer, rBuckets);
         break;
       }
 
@@ -402,8 +405,7 @@ public class ClientMetadataService {
     int max = -1;
     ArrayList<ServerLocation> nodesOfEqualSize = new ArrayList<ServerLocation>();
     for (Map.Entry<ServerLocation, HashSet<Integer>> entry : entrySet) {
-      HashSet<Integer> buckets = new HashSet<Integer>();
-      buckets.addAll(entry.getValue());
+      HashSet<Integer> buckets = new HashSet<Integer>(entry.getValue());
       buckets.removeAll(currentBucketSet);
 
       if (max < buckets.size()) {
@@ -416,7 +418,6 @@ public class ClientMetadataService {
       }
     }
 
-    // return node;
     Random r = new Random();
     if (nodesOfEqualSize.size() > 0) {
       return nodesOfEqualSize.get(r.nextInt(nodesOfEqualSize.size()));
@@ -463,8 +464,7 @@ public class ClientMetadataService {
       resolveKey = resolver.getRoutingObject(entryOp);
       if (resolveKey == null) {
         throw new IllegalStateException(
-            LocalizedStrings.PartitionedRegionHelper_THE_ROUTINGOBJECT_RETURNED_BY_PARTITIONRESOLVER_IS_NULL
-                .toLocalizedString());
+            "The RoutingObject returned by PartitionResolver is null.");
       }
     }
 
@@ -477,15 +477,15 @@ public class ClientMetadataService {
       if (partition == null) {
         Object[] prms = new Object[] {region.getName(), resolver};
         throw new IllegalStateException(
-            LocalizedStrings.PartitionedRegionHelper_FOR_REGION_0_PARTITIONRESOLVER_1_RETURNED_PARTITION_NAME_NULL
-                .toLocalizedString(prms));
+            String.format("For region %s, partition resolver %s returned partition name null",
+                prms));
       } else {
         bucketId = prAdvisor.assignFixedBucketId(region, partition, resolveKey);
         // This bucketid can be -1 in some circumstances where we don't have information about
         // all the partition on the server.
         // Do proactive scheduling of metadata fetch
         if (bucketId == -1) {
-          scheduleGetPRMetaData((LocalRegion) region, true);
+          scheduleGetPRMetaData((InternalRegion) region, true);
         }
       }
     } else {
@@ -494,8 +494,12 @@ public class ClientMetadataService {
     return bucketId;
   }
 
-
+  @VisibleForTesting
   public void scheduleGetPRMetaData(final LocalRegion region, final boolean isRecursive) {
+    scheduleGetPRMetaData((InternalRegion) region, isRecursive);
+  }
+
+  public void scheduleGetPRMetaData(final InternalRegion region, final boolean isRecursive) {
     if (this.nonPRs.contains(region.getFullPath())) {
       return;
     }
@@ -515,8 +519,10 @@ public class ClientMetadataService {
     } else {
       synchronized (fetchTaskCountLock) {
         refreshTaskCount++;
+        totalRefreshTaskCount++;
       }
       Runnable fetchTask = new Runnable() {
+        @Override
         @SuppressWarnings("synthetic-access")
         public void run() {
           try {
@@ -540,13 +546,13 @@ public class ClientMetadataService {
     }
   }
 
-  public void getClientPRMetadata(LocalRegion region) {
+  public void getClientPRMetadata(InternalRegion region) {
     final String regionFullPath = region.getFullPath();
     ClientPartitionAdvisor advisor = null;
     InternalPool pool = region.getServerProxy().getPool();
     // Acquires lock only if it is free, else a request to fetch meta data is in
     // progress, so just return
-    if (region.clientMetaDataLock.tryLock()) {
+    if (region.getClientMetaDataLock().tryLock()) {
       try {
         advisor = this.getClientPartitionAdvisor(regionFullPath);
         if (advisor == null) {
@@ -570,7 +576,7 @@ public class ClientMetadataService {
           region.getCachePerfStats().incMetaDataRefreshCount();
         } else {
           ClientPartitionAdvisor colocatedAdvisor = this.getClientPartitionAdvisor(colocatedWith);
-          LocalRegion leaderRegion = (LocalRegion) region.getCache().getRegion(colocatedWith);
+          InternalRegion leaderRegion = (InternalRegion) region.getCache().getRegion(colocatedWith);
           if (colocatedAdvisor == null) {
             scheduleGetPRMetaData(leaderRegion, true);
             return;
@@ -581,12 +587,12 @@ public class ClientMetadataService {
           }
         }
       } finally {
-        region.clientMetaDataLock.unlock();
+        region.getClientMetaDataLock().unlock();
       }
     }
   }
 
-  public void scheduleGetPRMetaData(final LocalRegion region, final boolean isRecursive,
+  public void scheduleGetPRMetaData(final InternalRegion region, final boolean isRecursive,
       byte nwHopType) {
     if (this.nonPRs.contains(region.getFullPath())) {
       return;
@@ -625,8 +631,10 @@ public class ClientMetadataService {
         }
         regionsBeingRefreshed.add(region.getFullPath());
         refreshTaskCount++;
+        totalRefreshTaskCount++;
       }
       Runnable fetchTask = new Runnable() {
+        @Override
         @SuppressWarnings("synthetic-access")
         public void run() {
           try {
@@ -691,8 +699,7 @@ public class ClientMetadataService {
       resolveKey = resolver.getRoutingObject(entryOp);
       if (resolveKey == null) {
         throw new IllegalStateException(
-            LocalizedStrings.PartitionedRegionHelper_THE_ROUTINGOBJECT_RETURNED_BY_PARTITIONRESOLVER_IS_NULL
-                .toLocalizedString());
+            "The RoutingObject returned by PartitionResolver is null.");
       }
     }
 
@@ -706,8 +713,8 @@ public class ClientMetadataService {
       if (partition == null) {
         Object[] prms = new Object[] {region.getName(), resolver};
         throw new IllegalStateException(
-            LocalizedStrings.PartitionedRegionHelper_FOR_REGION_0_PARTITIONRESOLVER_1_RETURNED_PARTITION_NAME_NULL
-                .toLocalizedString(prms));
+            String.format("For region %s, partition resolver %s returned partition name null",
+                prms));
       } else {
         bucketId = prAdvisor.assignFixedBucketId(region, partition, resolveKey);
       }
@@ -838,9 +845,17 @@ public class ClientMetadataService {
     this.isMetadataStable = isMetadataStable;
   }
 
-  public int getRefreshTaskCount() {
+  /** For Testing */
+  public int getRefreshTaskCount_TEST_ONLY() {
     synchronized (fetchTaskCountLock) {
       return refreshTaskCount;
+    }
+  }
+
+  /** for testing */
+  public long getTotalRefreshTaskCount_TEST_ONLY() {
+    synchronized (fetchTaskCountLock) {
+      return totalRefreshTaskCount;
     }
   }
 }

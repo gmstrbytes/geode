@@ -18,24 +18,27 @@ import static org.apache.geode.management.internal.cli.i18n.CliStrings.IFEXISTS;
 import static org.apache.geode.management.internal.cli.i18n.CliStrings.IFEXISTS_HELP;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 import org.springframework.shell.core.annotation.CliCommand;
 import org.springframework.shell.core.annotation.CliOption;
 
 import org.apache.geode.distributed.DistributedMember;
+import org.apache.geode.distributed.internal.InternalConfigurationPersistenceService;
 import org.apache.geode.management.cli.ConverterHint;
-import org.apache.geode.management.cli.Result;
+import org.apache.geode.management.cli.GfshCommand;
 import org.apache.geode.management.internal.cli.functions.CliFunctionResult;
 import org.apache.geode.management.internal.cli.functions.DestroyAsyncEventQueueFunction;
 import org.apache.geode.management.internal.cli.functions.DestroyAsyncEventQueueFunctionArgs;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
+import org.apache.geode.management.internal.cli.remote.CommandExecutor;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.management.internal.configuration.domain.XmlEntity;
 import org.apache.geode.management.internal.security.ResourceOperation;
 import org.apache.geode.security.ResourcePermission;
 
-public class DestroyAsyncEventQueueCommand implements GfshCommand {
+public class DestroyAsyncEventQueueCommand extends GfshCommand {
   public static final String DESTROY_ASYNC_EVENT_QUEUE = "destroy async-event-queue";
   public static final String DESTROY_ASYNC_EVENT_QUEUE__HELP = "destroy an Async Event Queue";
   public static final String DESTROY_ASYNC_EVENT_QUEUE__ID = "id";
@@ -52,7 +55,7 @@ public class DestroyAsyncEventQueueCommand implements GfshCommand {
   @CliCommand(value = DESTROY_ASYNC_EVENT_QUEUE, help = DESTROY_ASYNC_EVENT_QUEUE__HELP)
   @ResourceOperation(resource = ResourcePermission.Resource.CLUSTER,
       operation = ResourcePermission.Operation.MANAGE)
-  public Result destroyAsyncEventQueue(
+  public ResultModel destroyAsyncEventQueue(
       @CliOption(key = DESTROY_ASYNC_EVENT_QUEUE__ID, mandatory = true,
           help = DESTROY_ASYNC_EVENT_QUEUE__ID__HELP) String aeqId,
       @CliOption(key = {CliStrings.GROUP, CliStrings.GROUPS},
@@ -68,12 +71,17 @@ public class DestroyAsyncEventQueueCommand implements GfshCommand {
     List<CliFunctionResult> functionResults = executeAndGetFunctionResult(
         new DestroyAsyncEventQueueFunction(), asyncEventQueueDestoryFunctionArgs, members);
 
-    Result commandResult = ResultBuilder.buildResult(functionResults);
-    XmlEntity xmlEntity = findXmlEntity(functionResults);
+    ResultModel result = ResultModel.createMemberStatusResult(functionResults);
+    XmlEntity xmlEntity = functionResults.stream().filter(CliFunctionResult::isSuccessful)
+        .map(CliFunctionResult::getXmlEntity).filter(Objects::nonNull).findFirst().orElse(null);
+    InternalConfigurationPersistenceService cps = getConfigurationPersistenceService();
     if (xmlEntity != null) {
-      persistClusterConfiguration(commandResult,
-          () -> getSharedConfiguration().deleteXmlEntity(xmlEntity, onGroups));
+      if (cps == null) {
+        result.addInfo().addLine(CommandExecutor.SERVICE_NOT_RUNNING_CHANGE_NOT_PERSISTED);
+      } else {
+        cps.deleteXmlEntity(xmlEntity, onGroups);
+      }
     }
-    return commandResult;
+    return result;
   }
 }

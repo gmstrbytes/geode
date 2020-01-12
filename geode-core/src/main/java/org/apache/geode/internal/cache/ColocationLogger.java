@@ -22,10 +22,10 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.CancelCriterion;
 import org.apache.geode.SystemFailure;
+import org.apache.geode.annotations.internal.MutableForTesting;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
+import org.apache.geode.logging.internal.executors.LoggingThread;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * Provides logging when regions are missing from a colocation hierarchy. This logger runs in it's
@@ -44,6 +44,7 @@ public class ColocationLogger implements Runnable {
    * Sleep period (milliseconds) between posting log entries.
    */
   private static final int DEFAULT_LOG_INTERVAL = 30000;
+  @MutableForTesting
   private static int LOG_INTERVAL = DEFAULT_LOG_INTERVAL;
 
   /**
@@ -51,10 +52,11 @@ public class ColocationLogger implements Runnable {
    */
   public ColocationLogger(PartitionedRegion region) {
     this.region = region;
-    loggerThread = new Thread(this, "ColocationLogger for " + region.getName());
+    loggerThread = new LoggingThread("ColocationLogger for " + region.getName(), false, this);
     loggerThread.start();
   }
 
+  @Override
   public void run() {
     CancelCriterion stopper = region.getGemFireCache().getDistributedSystem().getCancelCriterion();
     DistributedSystem.setThreadsSocketPolicy(true /* conserve sockets */);
@@ -86,7 +88,6 @@ public class ColocationLogger implements Runnable {
    * Writes a log entry every SLEEP_PERIOD when there are missing colocated child regions for this
    * region.
    *
-   * @throws InterruptedException
    */
   private void run2() throws InterruptedException {
     boolean firstLogIteration = true;
@@ -144,7 +145,6 @@ public class ColocationLogger implements Runnable {
    * method performs an on-demand update of the list so if called between logging intervals the
    * returned list is current.
    *
-   * @return missingChildren
    */
   public List<String> updateAndGetMissingChildRegions() {
     synchronized (loggerLock) {
@@ -170,9 +170,9 @@ public class ColocationLogger implements Runnable {
     String plural = "s";
     multipleChildren = missingChildren.size() > 1 ? plural : singular;
     namesOfMissing = String.join("\n\t", multipleChildren, namesOfMissing);
-    logger.warn(LocalizedMessage.create(
-        LocalizedStrings.ColocationLogger_PERSISTENT_DATA_RECOVERY_OF_REGION_PREVENTED_BY_OFFLINE_COLOCATED_CHILDREN,
-        new Object[] {region.getFullPath(), namesOfMissing}));
+    logger.warn(
+        "Persistent data recovery for region {} is prevented by offline colocated region {}",
+        region.getFullPath(), namesOfMissing);
   }
 
   public static int getLogInterval() {

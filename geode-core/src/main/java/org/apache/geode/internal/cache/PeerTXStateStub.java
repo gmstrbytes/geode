@@ -14,6 +14,7 @@
  */
 package org.apache.geode.internal.cache;
 
+
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.CancelException;
@@ -28,12 +29,12 @@ import org.apache.geode.distributed.internal.ReliableReplyProcessor21;
 import org.apache.geode.distributed.internal.ReplyException;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.cache.TXRemoteCommitMessage.RemoteCommitResponse;
+import org.apache.geode.internal.cache.tx.BucketTXRegionStub;
 import org.apache.geode.internal.cache.tx.DistributedTXRegionStub;
 import org.apache.geode.internal.cache.tx.PartitionedTXRegionStub;
 import org.apache.geode.internal.cache.tx.TXRegionStub;
 import org.apache.geode.internal.cache.tx.TransactionalOperation.ServerRegionOperation;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 public class PeerTXStateStub extends TXStateStub {
 
@@ -77,12 +78,12 @@ public class PeerTXStateStub extends TXStateStub {
         }
       } else {
         throw new TransactionException(
-            LocalizedStrings.TXStateStub_ROLLBACK_ON_NODE_0_FAILED.toLocalizedString(target), e);
+            String.format("Rollback operation on node %s failed", target), e);
       }
     } catch (Exception e) {
       this.getCache().getCancelCriterion().checkCancelInProgress(e);
       throw new TransactionException(
-          LocalizedStrings.TXStateStub_ROLLBACK_ON_NODE_0_FAILED.toLocalizedString(target), e);
+          String.format("Rollback operation on node %s failed", target), e);
     } finally {
       cleanup();
     }
@@ -130,14 +131,14 @@ public class PeerTXStateStub extends TXStateStub {
       }
     } catch (Exception e) {
       this.getCache().getCancelCriterion().checkCancelInProgress(e);
-      if (e.getCause() != null) {
-        if (e.getCause() instanceof ForceReattemptException) {
-          Throwable e2 = e.getCause();
-          if (e2.getCause() != null && e2.getCause() instanceof PrimaryBucketException) {
+      Throwable eCause = e.getCause();
+      if (eCause != null) {
+        if (eCause instanceof ForceReattemptException) {
+          if (eCause.getCause() instanceof PrimaryBucketException) {
             // data rebalanced
             TransactionDataRebalancedException tdnce =
-                new TransactionDataRebalancedException(e2.getCause().getMessage());
-            tdnce.initCause(e2.getCause());
+                new TransactionDataRebalancedException(eCause.getCause().getMessage());
+            tdnce.initCause(eCause.getCause());
             throw tdnce;
           } else {
             // We cannot be sure that the member departed starting to process commit request,
@@ -145,11 +146,11 @@ public class PeerTXStateStub extends TXStateStub {
             // fixes 44939
             TransactionInDoubtException tdnce =
                 new TransactionInDoubtException(e.getCause().getMessage());
-            tdnce.initCause(e.getCause());
+            tdnce.initCause(eCause);
             throw tdnce;
           }
         }
-        throw new TransactionInDoubtException(e.getCause());
+        throw new TransactionInDoubtException(eCause);
       } else {
         throw new TransactionInDoubtException(e);
       }
@@ -165,7 +166,7 @@ public class PeerTXStateStub extends TXStateStub {
   }
 
   @Override
-  protected TXRegionStub generateRegionStub(LocalRegion region) {
+  protected TXRegionStub generateRegionStub(InternalRegion region) {
     TXRegionStub stub = null;
     if (region.getPartitionAttributes() != null) {
       // a partitioned region
@@ -174,6 +175,8 @@ public class PeerTXStateStub extends TXStateStub {
       // GEODE-3744 Local region should not be involved in a transaction on a PeerTXStateStub
       throw new TransactionException(
           "Local region " + region + " should not participate in a transaction not hosted locally");
+    } else if (region.isUsedForPartitionedRegionBucket()) {
+      stub = new BucketTXRegionStub(this, (BucketRegion) region);
     } else {
       // This is a dist region
       stub = new DistributedTXRegionStub(this, (DistributedRegion) region);
@@ -182,7 +185,8 @@ public class PeerTXStateStub extends TXStateStub {
   }
 
   @Override
-  protected void validateRegionCanJoinTransaction(LocalRegion region) throws TransactionException {
+  protected void validateRegionCanJoinTransaction(InternalRegion region)
+      throws TransactionException {
     /*
      * Ok is this region legit to enter into tx?
      */
@@ -215,6 +219,7 @@ public class PeerTXStateStub extends TXStateStub {
     }
   }
 
+  @Override
   public InternalDistributedMember getOriginatingMember() {
     /*
      * This needs to be set to the clients member id if the client originated the tx

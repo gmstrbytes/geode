@@ -21,6 +21,8 @@ import org.apache.geode.management.cli.CommandService;
 import org.apache.geode.management.cli.CommandServiceException;
 import org.apache.geode.management.cli.CommandStatement;
 import org.apache.geode.management.cli.Result;
+import org.apache.geode.management.internal.cli.result.CommandResult;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 
 /**
  * @deprecated since 1.3 use OnlineCommandProcessor directly
@@ -36,25 +38,30 @@ public class MemberCommandService extends CommandService {
     this.cache = cache;
     try {
       this.onlineCommandProcessor = new OnlineCommandProcessor(
-          cache.getDistributedSystem().getProperties(), cache.getSecurityService());
+          cache.getDistributedSystem().getProperties(), cache.getSecurityService(), cache);
     } catch (Exception e) {
       throw new CommandServiceException("Could not load commands.", e);
     }
   }
 
+  @Override
   public Result processCommand(String commandString) {
     return this.processCommand(commandString, EMPTY_ENV);
   }
 
+  @Override
   public Result processCommand(String commandString, Map<String, String> env) {
-    return onlineCommandProcessor.executeCommand(commandString, env, null);
+    ResultModel resultModel = onlineCommandProcessor.executeCommand(commandString, env, null);
+    return new CommandResult(resultModel);
   }
 
+  @Override
   @Deprecated
   public CommandStatement createCommandStatement(String commandString) {
     return this.createCommandStatement(commandString, EMPTY_ENV);
   }
 
+  @Override
   @Deprecated
   public CommandStatement createCommandStatement(String commandString, Map<String, String> env) {
     if (!isUsable()) {

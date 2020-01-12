@@ -14,6 +14,8 @@
  */
 package org.apache.geode.cache.client.internal;
 
+import io.micrometer.core.instrument.MeterRegistry;
+
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.RegionAttributes;
 import org.apache.geode.cache.RegionExistsException;
@@ -21,6 +23,8 @@ import org.apache.geode.cache.TimeoutException;
 import org.apache.geode.cache.client.ClientCache;
 import org.apache.geode.cache.client.Pool;
 import org.apache.geode.cache.client.PoolFactory;
+import org.apache.geode.distributed.internal.InternalDistributedSystem;
+import org.apache.geode.internal.cache.CachePerfStats;
 
 public interface InternalClientCache extends ClientCache {
 
@@ -28,10 +32,17 @@ public interface InternalClientCache extends ClientCache {
 
   void determineDefaultPool();
 
-  Pool determineDefaultPool(PoolFactory poolFactory);
+  void validatePoolFactory(PoolFactory poolFactory);
 
   <K, V> Region<K, V> basicCreateRegion(String name, RegionAttributes<K, V> attrs)
       throws RegionExistsException, TimeoutException;
 
+  @Override
   Pool getDefaultPool();
+
+  InternalDistributedSystem getInternalDistributedSystem();
+
+  CachePerfStats getCachePerfStats();
+
+  MeterRegistry getMeterRegistry();
 }

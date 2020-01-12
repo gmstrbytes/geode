@@ -32,11 +32,11 @@ import org.apache.geode.cache.asyncqueue.AsyncEvent;
 import org.apache.geode.cache.asyncqueue.AsyncEventListener;
 import org.apache.geode.cache.lucene.internal.repository.IndexRepository;
 import org.apache.geode.cache.lucene.internal.repository.RepositoryManager;
-import org.apache.geode.cache.query.internal.DefaultQuery;
 import org.apache.geode.internal.cache.BucketNotFoundException;
 import org.apache.geode.internal.cache.EntrySnapshot;
+import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.PrimaryBucketException;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * An Async event queue listener that writes all of the events in batches to Lucene
@@ -45,17 +45,23 @@ public class LuceneEventListener implements AsyncEventListener {
 
   private static LuceneExceptionObserver exceptionObserver = exception -> {
   };
+  private InternalCache cache;
 
-  Logger logger = LogService.getLogger();
+  private static final Logger logger = LogService.getLogger();
 
   private final RepositoryManager repositoryManager;
 
-  public LuceneEventListener(RepositoryManager repositoryManager) {
+  public LuceneEventListener(InternalCache cache, RepositoryManager repositoryManager) {
     this.repositoryManager = repositoryManager;
+    this.cache = cache;
   }
 
   @Override
   public void close() {}
+
+  void logDebugMessage(String msg, Exception e) {
+    logger.debug(msg, e);
+  }
 
   @Override
   public boolean processEvents(List<AsyncEvent> events) {
@@ -68,17 +74,18 @@ public class LuceneEventListener implements AsyncEventListener {
       exceptionObserver.onException(e);
       throw e;
     }
-
   }
 
   protected boolean process(final List<AsyncEvent> events) {
     // Try to get a PDX instance if possible, rather than a deserialized object
-    DefaultQuery.setPdxReadSerialized(true);
+    Boolean initialPdxReadSerialized = this.cache.getPdxReadSerializedOverride();
+    cache.setPdxReadSerializedOverride(true);
 
-    Set<IndexRepository> affectedRepos = new HashSet<IndexRepository>();
+    Set<IndexRepository> affectedRepos = new HashSet<>();
 
     try {
       for (AsyncEvent event : events) {
+
         Region region = event.getRegion();
         Object key = event.getKey();
         Object callbackArgument = event.getCallbackArgument();
@@ -100,18 +107,18 @@ public class LuceneEventListener implements AsyncEventListener {
       }
       return true;
     } catch (BucketNotFoundException | RegionDestroyedException | PrimaryBucketException e) {
-      logger.debug("Bucket not found while saving to lucene index: " + e.getMessage(), e);
+      logDebugMessage("Bucket not found while saving to lucene index: " + e.getMessage(), e);
       return false;
     } catch (CacheClosedException e) {
-      logger.debug("Unable to save to lucene index, cache has been closed", e);
+      logDebugMessage("Unable to save to lucene index, cache has been closed", e);
       return false;
     } catch (AlreadyClosedException e) {
-      logger.debug("Unable to commit, the lucene index is already closed", e);
+      logDebugMessage("Unable to commit, the lucene index is already closed", e);
       return false;
     } catch (IOException e) {
       throw new InternalGemFireError("Unable to save to lucene index", e);
     } finally {
-      DefaultQuery.setPdxReadSerialized(false);
+      cache.setPdxReadSerializedOverride(initialPdxReadSerialized);
     }
   }
 

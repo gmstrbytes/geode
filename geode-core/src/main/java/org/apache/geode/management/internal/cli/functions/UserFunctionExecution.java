@@ -14,11 +14,21 @@
  */
 package org.apache.geode.management.internal.cli.functions;
 
+import static org.apache.geode.management.internal.cli.functions.CliFunctionResult.StatusState.ERROR;
+import static org.apache.geode.management.internal.cli.functions.CliFunctionResult.StatusState.OK;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
+import java.util.stream.Collectors;
+
+import org.apache.logging.log4j.Logger;
+import org.apache.shiro.subject.Subject;
 
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.Region;
@@ -27,139 +37,28 @@ import org.apache.geode.cache.execute.Function;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.cache.execute.FunctionService;
 import org.apache.geode.cache.execute.ResultCollector;
+import org.apache.geode.cache.query.RegionNotFoundException;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.internal.ClassPathLoader;
-import org.apache.geode.internal.InternalEntity;
 import org.apache.geode.internal.cache.InternalCache;
+import org.apache.geode.internal.cache.execute.InternalFunction;
 import org.apache.geode.internal.security.SecurityService;
-import org.apache.geode.management.internal.cli.GfshParser;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
+import org.apache.geode.security.AuthenticationRequiredException;
+import org.apache.geode.security.ResourcePermission;
 
 /**
  * @since GemFire 7.0
  */
-public class UserFunctionExecution implements Function, InternalEntity {
+public class UserFunctionExecution implements InternalFunction<Object[]> {
+  private static final long serialVersionUID = 1L;
+  private static final Logger logger = LogService.getLogger();
   public static final String ID = UserFunctionExecution.class.getName();
 
-  private static final long serialVersionUID = 1L;
-
   @Override
-  public void execute(FunctionContext context) {
-    try {
-      Cache cache = context.getCache();
-      DistributedMember member = cache.getDistributedSystem().getDistributedMember();
-      String[] functionArgs = null;
-      Object[] args = (Object[]) context.getArguments();
-      if (args == null) {
-        context.getResultSender()
-            .lastResult(CliStrings.EXECUTE_FUNCTION__MSG__COULD_NOT_RETRIEVE_ARGUMENTS);
-        return;
-      }
-
-      String functionId = ((String) args[0]);
-      String filterString = ((String) args[1]);
-      String resultCollectorName = ((String) args[2]);
-      String argumentsString = ((String) args[3]);
-      String onRegion = ((String) args[4]);
-      Properties credentials = (Properties) args[5];
-
-      SecurityService securityService = ((InternalCache) context.getCache()).getSecurityService();
-
-      try {
-        securityService.login(credentials);
-
-        if (argumentsString != null && argumentsString.length() > 0) {
-          functionArgs = argumentsString.split(",");
-        }
-        Set<String> filters = new HashSet<>();
-        ResultCollector resultCollectorInstance = null;
-        if (resultCollectorName != null && resultCollectorName.length() > 0) {
-          resultCollectorInstance = (ResultCollector) ClassPathLoader.getLatest()
-              .forName(resultCollectorName).newInstance();
-        }
-        if (filterString != null && filterString.length() > 0) {
-          filters.add(filterString);
-        }
-
-        Function<?> function = FunctionService.getFunction(functionId);
-        if (function == null) {
-          context.getResultSender().lastResult(CliStrings.format(
-              CliStrings.EXECUTE_FUNCTION__MSG__DOES_NOT_HAVE_FUNCTION_0_REGISTERED, functionId));
-          return;
-        }
-
-        // security check
-        function.getRequiredPermissions(onRegion).forEach(securityService::authorize);
-
-        Execution execution = null;
-        if (onRegion != null && onRegion.length() > 0) {
-          Region region = cache.getRegion(onRegion);
-          if (region == null) {
-            context.getResultSender().lastResult(onRegion + "does not exist.");
-            return;
-          }
-          execution = FunctionService.onRegion(region);
-        } else {
-          execution = FunctionService.onMember(member);
-        }
-
-        if (execution == null) {
-          context.getResultSender()
-              .lastResult(CliStrings.format(
-                  CliStrings.EXECUTE_FUNCTION__MSG__ERROR_IN_EXECUTING_0_ON_MEMBER_1_ON_REGION_2_DETAILS_3,
-                  functionId, member.getId(), onRegion,
-                  CliStrings.EXECUTE_FUNCTION__MSG__ERROR_IN_RETRIEVING_EXECUTOR));
-          return;
-        }
-
-        if (resultCollectorInstance != null) {
-          execution = execution.withCollector(resultCollectorInstance);
-        }
-
-        if (functionArgs != null && functionArgs.length > 0) {
-          execution = execution.setArguments(functionArgs);
-        }
-        if (filters.size() > 0) {
-          execution = execution.withFilter(filters);
-        }
-
-        List<Object> results = (List<Object>) execution.execute(function).getResult();
-
-        StringBuilder resultMessage = new StringBuilder();
-        if (results != null) {
-          for (Object resultObj : results) {
-            if (resultObj != null) {
-              if (resultObj instanceof String) {
-                resultMessage.append(((String) resultObj));
-                resultMessage.append(GfshParser.LINE_SEPARATOR);
-              } else if (resultObj instanceof Exception) {
-                resultMessage.append(((IllegalArgumentException) resultObj).getMessage());
-              } else {
-                resultMessage.append(resultObj);
-                resultMessage.append(GfshParser.LINE_SEPARATOR);
-              }
-            }
-          }
-        }
-        context.getResultSender().lastResult(resultMessage);
-
-      } catch (ClassNotFoundException | IllegalAccessException | InstantiationException e) {
-        context.getResultSender()
-            .lastResult(CliStrings.format(
-                CliStrings.EXECUTE_FUNCTION__MSG__RESULT_COLLECTOR_0_NOT_FOUND_ERROR_1,
-                resultCollectorName, e.getMessage()));
-      } catch (Exception e) {
-        context.getResultSender()
-            .lastResult(CliStrings.format(
-                CliStrings.EXECUTE_FUNCTION__MSG__ERROR_IN_EXECUTING_ON_MEMBER_1_DETAILS_2,
-                functionId, member.getId(), e.getMessage()));
-      } finally {
-        securityService.logout();
-      }
-
-    } catch (Exception ex) {
-      context.getResultSender().lastResult(ex.getMessage());
-    }
+  public boolean isHA() {
+    return false;
   }
 
   @Override
@@ -168,8 +67,184 @@ public class UserFunctionExecution implements Function, InternalEntity {
   }
 
   @Override
-  public boolean isHA() {
-    return false;
+  public Collection<ResourcePermission> getRequiredPermissions(String regionName) {
+    return Collections.emptySet();
   }
 
+  boolean loginRequired(SecurityService securityService) {
+    try {
+      // if the function is executed on a server with jmx-manager that user is already logged into
+      // then we do not need to do login/logout here.
+      Subject subject = securityService.getSubject();
+      return subject == null || !subject.isAuthenticated();
+    } catch (AuthenticationRequiredException e) {
+      return true;
+    }
+  }
+
+  Function<?> loadFunction(String functionId) {
+    return FunctionService.getFunction(functionId);
+  }
+
+  String[] parseArguments(String argumentsString) {
+    if (argumentsString != null && argumentsString.length() > 0) {
+      return argumentsString.split(",");
+    } else {
+      return null;
+    }
+  }
+
+  Set<String> parseFilters(String filterString) {
+    if (filterString != null && filterString.length() > 0) {
+      return Arrays.stream(filterString.split(",")).collect(Collectors.toSet());
+    } else {
+      return new HashSet<>();
+    }
+  }
+
+  ResultCollector parseResultCollector(String resultCollectorName)
+      throws ClassNotFoundException, IllegalAccessException, InstantiationException {
+    if (resultCollectorName != null && resultCollectorName.length() > 0) {
+      return (ResultCollector) ClassPathLoader.getLatest().forName(resultCollectorName)
+          .newInstance();
+    } else {
+      return null;
+    }
+  }
+
+  Execution buildExecution(Cache cache, String onRegion) throws RegionNotFoundException {
+    Execution execution;
+    DistributedMember member = cache.getDistributedSystem().getDistributedMember();
+
+    if (onRegion != null && onRegion.length() > 0) {
+      Region region = cache.getRegion(onRegion);
+
+      if (region == null) {
+        throw new RegionNotFoundException(onRegion);
+      }
+
+      execution = FunctionService.onRegion(region);
+    } else {
+      execution = FunctionService.onMember(member);
+    }
+
+    return execution;
+  }
+
+  @Override
+  public void execute(FunctionContext<Object[]> context) {
+    Cache cache = ((InternalCache) context.getCache()).getCacheForProcessingClientRequests();
+    DistributedMember member = cache.getDistributedSystem().getDistributedMember();
+
+    Object[] args = context.getArguments();
+    if (args == null) {
+      context.getResultSender().lastResult(new CliFunctionResult(context.getMemberName(), ERROR,
+          CliStrings.EXECUTE_FUNCTION__MSG__COULD_NOT_RETRIEVE_ARGUMENTS));
+      return;
+    }
+
+    String functionId = ((String) args[0]);
+    String filterString = ((String) args[1]);
+    String resultCollectorName = ((String) args[2]);
+    String argumentsString = ((String) args[3]);
+    String onRegion = ((String) args[4]);
+    Properties credentials = (Properties) args[5];
+    SecurityService securityService = ((InternalCache) context.getCache()).getSecurityService();
+
+    boolean loginSuccessful = false;
+    try {
+
+      // Authenticate If Needed
+      if (loginRequired(securityService)) {
+        securityService.login(credentials);
+        loginSuccessful = true;
+      }
+
+      // Load User Function
+      Function<?> function = loadFunction(functionId);
+      if (function == null) {
+        context.getResultSender()
+            .lastResult(new CliFunctionResult(context.getMemberName(), ERROR,
+                (CliStrings.format(
+                    CliStrings.EXECUTE_FUNCTION__MSG__DOES_NOT_HAVE_FUNCTION_0_REGISTERED,
+                    functionId))));
+        return;
+      }
+
+      // Parse Arguments
+      Set<String> filters = parseFilters(filterString);
+      String[] functionArgs = parseArguments(argumentsString);
+      ResultCollector resultCollectorInstance = parseResultCollector(resultCollectorName);
+
+      // Security check
+      function.getRequiredPermissions(onRegion, functionArgs).forEach(securityService::authorize);
+
+      // Build & Configure Execution Context
+      Execution execution = buildExecution(cache, onRegion);
+      if (execution == null) {
+        context.getResultSender()
+            .lastResult(new CliFunctionResult(context.getMemberName(), ERROR,
+                CliStrings.format(
+                    CliStrings.EXECUTE_FUNCTION__MSG__ERROR_IN_EXECUTING_0_ON_MEMBER_1_ON_REGION_2_DETAILS_3,
+                    functionId, member.getId(), onRegion,
+                    CliStrings.EXECUTE_FUNCTION__MSG__ERROR_IN_RETRIEVING_EXECUTOR)));
+        return;
+      }
+
+      if (resultCollectorInstance != null) {
+        execution = execution.withCollector(resultCollectorInstance);
+      }
+
+      if (functionArgs != null && functionArgs.length > 0) {
+        execution = execution.setArguments(functionArgs);
+      }
+
+      if (filters.size() > 0) {
+        execution = execution.withFilter(filters);
+      }
+
+      // Execute Function and gather results
+      List results = null;
+      boolean functionSuccess = true;
+      List<String> resultMessage = new ArrayList<>();
+
+      ResultCollector rc = execution.execute(function.getId());
+      if (function.hasResult()) {
+        results = (List) rc.getResult();
+      }
+
+      if (results != null) {
+        for (Object resultObj : results) {
+          if (resultObj != null) {
+            if (resultObj instanceof Exception) {
+              resultMessage.add(((Exception) resultObj).getMessage());
+              functionSuccess = false;
+            } else {
+              resultMessage.add(resultObj.toString());
+            }
+          }
+        }
+      }
+
+      context.getResultSender().lastResult(new CliFunctionResult(context.getMemberName(),
+          functionSuccess ? OK : ERROR, resultMessage.toString()));
+    } catch (RegionNotFoundException regionNotFoundException) {
+      context.getResultSender().lastResult(
+          new CliFunctionResult(context.getMemberName(), ERROR, onRegion + " does not exist"));
+    } catch (ClassNotFoundException | IllegalAccessException | InstantiationException e) {
+      context.getResultSender()
+          .lastResult(new CliFunctionResult(context.getMemberName(), ERROR,
+              CliStrings.format(
+                  CliStrings.EXECUTE_FUNCTION__MSG__RESULT_COLLECTOR_0_NOT_FOUND_ERROR_1,
+                  resultCollectorName, e.getMessage())));
+    } catch (Exception e) {
+      logger.error("error executing function " + functionId, e);
+      context.getResultSender().lastResult(
+          new CliFunctionResult(context.getMemberName(), ERROR, "Exception: " + e.getMessage()));
+    } finally {
+      if (loginSuccessful) {
+        securityService.logout();
+      }
+    }
+  }
 }

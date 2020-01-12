@@ -22,32 +22,32 @@ import static org.mockito.Mockito.when;
 
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 
 import org.apache.geode.internal.cache.BucketRegion;
-import org.apache.geode.test.junit.categories.UnitTest;
 
-@Category(UnitTest.class)
 public class LIFOListTest {
   private BucketRegion bucketRegion;
-  private InternalEvictionStatistics stats;
+  private EvictionCounters stats;
+  private EvictionController controller;
 
   @Before
   public void setup() {
     bucketRegion = mock(BucketRegion.class);
-    stats = mock(InternalEvictionStatistics.class);
+    stats = mock(EvictionCounters.class);
+    controller = mock(EvictionController.class);
+    when(controller.getCounters()).thenReturn(stats);
   }
 
   @Test
   public void evictingFromEmptyListTest() throws Exception {
-    LIFOList list = new LIFOList(stats, bucketRegion);
+    LIFOList list = new LIFOList(controller);
     assertThat(list.getEvictableEntry()).isNull();
     assertThat(list.size()).isZero();
   }
 
   @Test
   public void evictingFromNonEmptyListTest() throws Exception {
-    LIFOList list = new LIFOList(stats, bucketRegion);
+    LIFOList list = new LIFOList(controller);
     EvictionNode node = mock(EvictableEntry.class);
     list.appendEntry(node);
     assertThat(list.size()).isEqualTo(1);
@@ -61,7 +61,7 @@ public class LIFOListTest {
 
   @Test
   public void doesNotEvictNodeInTransaction() throws Exception {
-    LIFOList list = new LIFOList(stats, bucketRegion);
+    LIFOList list = new LIFOList(controller);
     EvictionNode nodeInTransaction = mock(EvictableEntry.class);
     when(nodeInTransaction.isInUseByTransaction()).thenReturn(true);
     EvictionNode nodeNotInTransaction = mock(EvictableEntry.class);
@@ -80,7 +80,7 @@ public class LIFOListTest {
 
   @Test
   public void doesNotEvictNodeThatIsEvicted() throws Exception {
-    LIFOList list = new LIFOList(stats, bucketRegion);
+    LIFOList list = new LIFOList(controller);
     EvictionNode evictedNode = mock(EvictableEntry.class);
     when(evictedNode.isEvicted()).thenReturn(true);
     EvictionNode node = mock(EvictableEntry.class);

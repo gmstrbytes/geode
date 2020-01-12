@@ -22,8 +22,9 @@ import org.apache.logging.log4j.Logger;
 import org.apache.geode.SystemFailure;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.internal.concurrent.ConcurrentHashSet;
-import org.apache.geode.internal.logging.LogService;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.logging.internal.executors.LoggingThread;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * @since GemFire 7.0
@@ -113,10 +114,10 @@ public class StatMonitorHandler implements SampleHandler {
         throw e;
       } catch (Error e) {
         SystemFailure.checkFailure();
-        logger.warn(LogMarker.STATISTICS, "StatisticsMonitor {} threw {}", monitor,
+        logger.warn(LogMarker.STATISTICS_MARKER, "StatisticsMonitor {} threw {}", monitor,
             e.getClass().getSimpleName(), e);
       } catch (RuntimeException e) {
-        logger.warn(LogMarker.STATISTICS, "StatisticsMonitor {} threw {}", monitor,
+        logger.warn(LogMarker.STATISTICS_MARKER, "StatisticsMonitor {} threw {}", monitor,
             e.getClass().getSimpleName(), e);
       }
     }
@@ -179,9 +180,9 @@ public class StatMonitorHandler implements SampleHandler {
 
     @Override
     public void run() {
-      final boolean isDebugEnabled_STATISTICS = logger.isTraceEnabled(LogMarker.STATISTICS);
+      final boolean isDebugEnabled_STATISTICS = logger.isTraceEnabled(LogMarker.STATISTICS_VERBOSE);
       if (isDebugEnabled_STATISTICS) {
-        logger.trace(LogMarker.STATISTICS, "StatMonitorNotifier is starting {}", this);
+        logger.trace(LogMarker.STATISTICS_VERBOSE, "StatMonitorNotifier is starting {}", this);
       }
       try {
         work();
@@ -194,7 +195,7 @@ public class StatMonitorHandler implements SampleHandler {
         }
       }
       if (isDebugEnabled_STATISTICS) {
-        logger.trace(LogMarker.STATISTICS, "StatMonitorNotifier is stopping {}", this);
+        logger.trace(LogMarker.STATISTICS_VERBOSE, "StatMonitorNotifier is stopping {}", this);
       }
     }
 
@@ -229,10 +230,10 @@ public class StatMonitorHandler implements SampleHandler {
                 throw e;
               } catch (Error e) {
                 SystemFailure.checkFailure();
-                logger.warn(LogMarker.STATISTICS, "StatisticsMonitor {} threw {}", monitor,
+                logger.warn(LogMarker.STATISTICS_MARKER, "StatisticsMonitor {} threw {}", monitor,
                     e.getClass().getSimpleName(), e);
               } catch (RuntimeException e) {
-                logger.warn(LogMarker.STATISTICS, "StatisticsMonitor {} threw {}", monitor,
+                logger.warn(LogMarker.STATISTICS_MARKER, "StatisticsMonitor {} threw {}", monitor,
                     e.getClass().getSimpleName(), e);
               }
             }
@@ -248,8 +249,7 @@ public class StatMonitorHandler implements SampleHandler {
     void start() {
       synchronized (this) {
         if (this.consumer == null) {
-          this.consumer = new Thread(this, toString());
-          this.consumer.setDaemon(true);
+          this.consumer = new LoggingThread(toString(), this);
           this.alive = true;
           this.consumer.start();
         }

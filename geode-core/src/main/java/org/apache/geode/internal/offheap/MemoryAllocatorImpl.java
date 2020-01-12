@@ -26,19 +26,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.logging.log4j.Logger;
 
+import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.cache.CacheClosedException;
 import org.apache.geode.cache.Region;
-import org.apache.geode.cache.RegionService;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.internal.cache.BucketRegion;
-import org.apache.geode.internal.cache.GemFireCacheImpl;
-import org.apache.geode.internal.cache.LocalRegion;
+import org.apache.geode.internal.cache.InternalCache;
+import org.apache.geode.internal.cache.InternalRegion;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.PartitionedRegionDataStore;
 import org.apache.geode.internal.cache.RegionEntry;
-import org.apache.geode.internal.logging.LogService;
 import org.apache.geode.internal.offheap.annotations.OffHeapIdentifier;
 import org.apache.geode.internal.offheap.annotations.Unretained;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * This allocator is somewhat like an Arena allocator. We start out with an array of multiple large
@@ -71,6 +71,7 @@ public class MemoryAllocatorImpl implements MemoryAllocator {
 
   private volatile MemoryUsageListener[] memoryUsageListeners = new MemoryUsageListener[0];
 
+  @MakeNotStatic
   private static MemoryAllocatorImpl singleton = null;
 
   public static MemoryAllocatorImpl getAllocator() {
@@ -224,9 +225,9 @@ public class MemoryAllocatorImpl implements MemoryAllocator {
     this.stats.incFreeMemory(this.freeList.getTotalMemory());
   }
 
-  public List<OffHeapStoredObject> getLostChunks() {
+  public List<OffHeapStoredObject> getLostChunks(InternalCache cache) {
     List<OffHeapStoredObject> liveChunks = this.freeList.getLiveChunks();
-    List<OffHeapStoredObject> regionChunks = getRegionLiveChunks();
+    List<OffHeapStoredObject> regionChunks = getRegionLiveChunks(cache);
     Set<OffHeapStoredObject> liveChunksSet = new HashSet<>(liveChunks);
     Set<OffHeapStoredObject> regionChunksSet = new HashSet<>(regionChunks);
     liveChunksSet.removeAll(regionChunksSet);
@@ -236,11 +237,10 @@ public class MemoryAllocatorImpl implements MemoryAllocator {
   /**
    * Returns a possibly empty list that contains all the Chunks used by regions.
    */
-  private List<OffHeapStoredObject> getRegionLiveChunks() {
+  private List<OffHeapStoredObject> getRegionLiveChunks(InternalCache cache) {
     ArrayList<OffHeapStoredObject> result = new ArrayList<OffHeapStoredObject>();
-    RegionService gfc = GemFireCacheImpl.getInstance();
-    if (gfc != null) {
-      Iterator<Region<?, ?>> rootIt = gfc.rootRegions().iterator();
+    if (cache != null) {
+      Iterator<Region<?, ?>> rootIt = cache.rootRegions().iterator();
       while (rootIt.hasNext()) {
         Region<?, ?> rr = rootIt.next();
         getRegionLiveChunks(rr, result);
@@ -270,16 +270,16 @@ public class MemoryAllocatorImpl implements MemoryAllocator {
           }
         }
       } else {
-        this.basicGetRegionLiveChunks((LocalRegion) r, result);
+        this.basicGetRegionLiveChunks((InternalRegion) r, result);
       }
 
     }
 
   }
 
-  private void basicGetRegionLiveChunks(LocalRegion r, List<OffHeapStoredObject> result) {
+  private void basicGetRegionLiveChunks(InternalRegion r, List<OffHeapStoredObject> result) {
     for (Object key : r.keySet()) {
-      RegionEntry re = ((LocalRegion) r).getRegionEntry(key);
+      RegionEntry re = r.getRegionEntry(key);
       if (re != null) {
         /**
          * value could be GATEWAY_SENDER_EVENT_IMPL_VALUE or region entry value.
@@ -419,6 +419,7 @@ public class MemoryAllocatorImpl implements MemoryAllocator {
     return this.freeList.findSlab(addr);
   }
 
+  @Override
   public OffHeapMemoryStats getStats() {
     return this.stats;
   }
@@ -502,9 +503,9 @@ public class MemoryAllocatorImpl implements MemoryAllocator {
     }
   }
 
-  public synchronized List<MemoryBlock> getOrphans() {
+  public synchronized List<MemoryBlock> getOrphans(InternalCache cache) {
     List<OffHeapStoredObject> liveChunks = this.freeList.getLiveChunks();
-    List<OffHeapStoredObject> regionChunks = getRegionLiveChunks();
+    List<OffHeapStoredObject> regionChunks = getRegionLiveChunks(cache);
     liveChunks.removeAll(regionChunks);
     List<MemoryBlock> orphans = new ArrayList<MemoryBlock>();
     for (OffHeapStoredObject chunk : liveChunks) {
@@ -513,7 +514,7 @@ public class MemoryAllocatorImpl implements MemoryAllocator {
     Collections.sort(orphans, new Comparator<MemoryBlock>() {
       @Override
       public int compare(MemoryBlock o1, MemoryBlock o2) {
-        return Long.valueOf(o1.getAddress()).compareTo(o2.getAddress());
+        return Long.compare(o1.getAddress(), o2.getAddress());
       }
     });
     // this.memoryBlocks = new WeakReference<List<MemoryBlock>>(orphans);

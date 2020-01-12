@@ -20,15 +20,16 @@ import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
 
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.PooledDistributionMessage;
 import org.apache.geode.distributed.internal.ReplyMessage;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.Version;
-import org.apache.geode.internal.i18n.LocalizedStrings;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.internal.serialization.Version;
 
 /**
  * Ping to check if a server is alive. It waits for a specified time before returning false.
@@ -59,7 +60,7 @@ public class ServerPingMessage extends PooledDistributionMessage {
   public static boolean send(InternalCache cache, Set<InternalDistributedMember> recipients) {
 
     InternalDistributedSystem ids = cache.getInternalDistributedSystem();
-    DM dm = ids.getDistributionManager();
+    DistributionManager dm = ids.getDistributionManager();
     Set<InternalDistributedMember> filteredRecipients = new HashSet<InternalDistributedMember>();
 
     // filtered recipients
@@ -68,7 +69,7 @@ public class ServerPingMessage extends PooledDistributionMessage {
         filteredRecipients.add(recipient);
       }
     }
-    if (filteredRecipients == null || filteredRecipients.size() == 0)
+    if (filteredRecipients.size() == 0)
       return true;
 
     ReplyProcessor21 replyProcessor = new ReplyProcessor21(dm, filteredRecipients);
@@ -77,8 +78,8 @@ public class ServerPingMessage extends PooledDistributionMessage {
     spm.setRecipients(filteredRecipients);
     Set failedServers = null;
     try {
-      if (cache.getLoggerI18n().fineEnabled())
-        cache.getLoggerI18n().fine("Pinging following servers " + filteredRecipients);
+      if (cache.getLogger().fineEnabled())
+        cache.getLogger().fine("Pinging following servers " + filteredRecipients);
       failedServers = dm.putOutgoing(spm);
 
       // wait for the replies for timeout msecs
@@ -88,38 +89,43 @@ public class ServerPingMessage extends PooledDistributionMessage {
 
       // If the reply is not received in the stipulated time, throw an exception
       if (!receivedReplies) {
-        cache.getLoggerI18n().error(LocalizedStrings.Server_Ping_Failure, filteredRecipients);
+        cache.getLogger().error(
+            String.format("Could not ping one of the following servers: %s", filteredRecipients));
         return false;
       }
     } catch (Throwable e) {
-      cache.getLoggerI18n().error(LocalizedStrings.Server_Ping_Failure, filteredRecipients, e);
+      cache.getLogger().error(
+          String.format("Could not ping one of the following servers: %s", filteredRecipients), e);
       return false;
     }
 
     if (failedServers == null || failedServers.size() == 0)
       return true;
 
-    cache.getLoggerI18n().info(LocalizedStrings.Server_Ping_Failure, failedServers);
+    cache.getLogger()
+        .info(String.format("Could not ping one of the following servers: %s", failedServers));
 
     return false;
   }
 
   @Override
-  protected void process(DistributionManager dm) {
+  protected void process(ClusterDistributionManager dm) {
     // do nothing. We are just pinging the server. send the reply back.
     ReplyMessage.send(getSender(), this.processorId, null, dm);
   }
 
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     out.writeInt(this.processorId);
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     this.processorId = in.readInt();
   }
 

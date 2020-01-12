@@ -24,23 +24,26 @@ import org.apache.logging.log4j.Logger;
 import org.apache.geode.CancelException;
 import org.apache.geode.DataSerializer;
 import org.apache.geode.cache.persistence.PartitionOfflineException;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.DistributionStats;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
+import org.apache.geode.distributed.internal.OperationExecutors;
 import org.apache.geode.distributed.internal.ReplyException;
 import org.apache.geode.distributed.internal.ReplyMessage;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.Assert;
+import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.cache.ForceReattemptException;
 import org.apache.geode.internal.cache.Node;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.PartitionedRegionDataStore;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * A request to manage a particular bucket
@@ -76,12 +79,12 @@ public class ManageBucketMessage extends PartitionMessage {
   }
 
   public ManageBucketMessage(DataInput in) throws IOException, ClassNotFoundException {
-    fromData(in);
+    fromData(in, InternalDataSerializer.createDeserializationContext(in));
   }
 
   @Override
   public int getProcessorType() {
-    return DistributionManager.WAITING_POOL_EXECUTOR;
+    return OperationExecutors.WAITING_POOL_EXECUTOR;
   }
 
   /**
@@ -101,13 +104,14 @@ public class ManageBucketMessage extends PartitionMessage {
     NodeResponse p = new NodeResponse(r.getSystem(), recipient);
     ManageBucketMessage m =
         new ManageBucketMessage(recipient, r.getPRId(), p, bucketId, bucketSize, forceCreation);
+    m.setTransactionDistributed(r.getCache().getTxManager().isDistributed());
 
     p.enableSevereAlertProcessing();
 
     Set failures = r.getDistributionManager().putOutgoing(m);
     if (failures != null && failures.size() > 0) {
       throw new ForceReattemptException(
-          LocalizedStrings.ManageBucketMessage_FAILED_SENDING_0.toLocalizedString(m));
+          String.format("Failed sending < %s >", m));
     }
 
     return p;
@@ -124,10 +128,11 @@ public class ManageBucketMessage extends PartitionMessage {
    * indefinitely for the acknowledgement
    */
   @Override
-  protected boolean operateOnPartitionedRegion(DistributionManager dm, PartitionedRegion r,
+  protected boolean operateOnPartitionedRegion(ClusterDistributionManager dm, PartitionedRegion r,
       long startTime) {
-    if (logger.isTraceEnabled(LogMarker.DM)) {
-      logger.trace(LogMarker.DM, "ManageBucketMessage operateOnRegion: {}", r.getFullPath());
+    if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+      logger.trace(LogMarker.DM_VERBOSE, "ManageBucketMessage operateOnRegion: {}",
+          r.getFullPath());
     }
 
     // This is to ensure that initialization is complete before bucket creation request is
@@ -164,21 +169,24 @@ public class ManageBucketMessage extends PartitionMessage {
     }
   }
 
+  @Override
   public int getDSFID() {
     return PR_MANAGE_BUCKET_MESSAGE;
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     this.bucketId = in.readInt();
     this.bucketSize = in.readInt();
     this.forceCreation = in.readBoolean();
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     out.writeInt(this.bucketId);
     out.writeInt(this.bucketSize);
     out.writeBoolean(this.forceCreation);
@@ -189,7 +197,6 @@ public class ManageBucketMessage extends PartitionMessage {
    * Assists the toString method in reporting the contents of this message
    *
    * @see PartitionMessage#toString()
-   * @param buff
    */
   @Override
   protected void appendFields(StringBuilder buff) {
@@ -224,7 +231,7 @@ public class ManageBucketMessage extends PartitionMessage {
     public ManageBucketReplyMessage() {}
 
     public ManageBucketReplyMessage(DataInput in) throws IOException, ClassNotFoundException {
-      fromData(in);
+      fromData(in, InternalDataSerializer.createDeserializationContext(in));
     }
 
     private ManageBucketReplyMessage(int processorId, boolean accept, boolean initializing) {
@@ -240,7 +247,8 @@ public class ManageBucketMessage extends PartitionMessage {
      * @param processorId the identity of the processor the requesting node is waiting on
      * @param dm the distribution manager used to send the refusal
      */
-    public static void sendRefusal(InternalDistributedMember recipient, int processorId, DM dm) {
+    public static void sendRefusal(InternalDistributedMember recipient, int processorId,
+        DistributionManager dm) {
       Assert.assertTrue(recipient != null, "ManageBucketReplyMessage NULL reply message");
       ManageBucketReplyMessage m = new ManageBucketReplyMessage(processorId, false, false);
       m.setRecipient(recipient);
@@ -255,7 +263,7 @@ public class ManageBucketMessage extends PartitionMessage {
      * @param dm the distribution manager used to send the acceptance message
      */
     public static void sendStillInitializing(InternalDistributedMember recipient, int processorId,
-        DM dm) {
+        DistributionManager dm) {
       ManageBucketReplyMessage m = new ManageBucketReplyMessage(processorId, false, true);
       m.setRecipient(recipient);
       dm.putOutgoing(m);
@@ -268,7 +276,8 @@ public class ManageBucketMessage extends PartitionMessage {
      * @param processorId the identity of the processor the requesting node is waiting on
      * @param dm the distribution manager used to send the acceptance message
      */
-    public static void sendAcceptance(InternalDistributedMember recipient, int processorId, DM dm) {
+    public static void sendAcceptance(InternalDistributedMember recipient, int processorId,
+        DistributionManager dm) {
       Assert.assertTrue(recipient != null, "ManageBucketReplyMessage NULL reply message");
       ManageBucketReplyMessage m = new ManageBucketReplyMessage(processorId, true, false);
       m.setRecipient(recipient);
@@ -281,31 +290,32 @@ public class ManageBucketMessage extends PartitionMessage {
      * @param dm the distribution manager that is processing the message.
      */
     @Override
-    public void process(final DM dm, final ReplyProcessor21 processor) {
+    public void process(final DistributionManager dm, final ReplyProcessor21 processor) {
       final long startTime = getTimestamp();
-      if (logger.isTraceEnabled(LogMarker.DM)) {
-        logger.trace(LogMarker.DM,
+      if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+        logger.trace(LogMarker.DM_VERBOSE,
             "ManageBucketReplyMessage process invoking reply processor with processorId: {}",
             this.processorId);
       }
 
       if (processor == null) {
-        if (logger.isTraceEnabled(LogMarker.DM)) {
-          logger.trace(LogMarker.DM, "ManageBucketReplyMessage processor not found");
+        if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+          logger.trace(LogMarker.DM_VERBOSE, "ManageBucketReplyMessage processor not found");
         }
         return;
       }
       processor.process(this);
 
-      if (logger.isTraceEnabled(LogMarker.DM)) {
-        logger.trace(LogMarker.DM, "{} processed {}", processor, this);
+      if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+        logger.trace(LogMarker.DM_VERBOSE, "{} processed {}", processor, this);
       }
       dm.getStats().incReplyMessageTime(DistributionStats.getStatTime() - startTime);
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       out.writeBoolean(this.acceptedBucket);
       out.writeBoolean(this.notYetInitialized);
     }
@@ -316,8 +326,9 @@ public class ManageBucketMessage extends PartitionMessage {
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.acceptedBucket = in.readBoolean();
       this.notYetInitialized = in.readBoolean();
     }
@@ -352,8 +363,8 @@ public class ManageBucketMessage extends PartitionMessage {
         if (msg instanceof ManageBucketReplyMessage) {
           ManageBucketReplyMessage reply = (ManageBucketReplyMessage) msg;
           this.msg = reply;
-          if (logger.isTraceEnabled(LogMarker.DM)) {
-            logger.trace(LogMarker.DM, "NodeResponse return value is {} isInitializing {}",
+          if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+            logger.trace(LogMarker.DM_VERBOSE, "NodeResponse return value is {} isInitializing {}",
                 reply.acceptedBucket, reply.notYetInitialized);
           }
         } else {
@@ -383,8 +394,7 @@ public class ManageBucketMessage extends PartitionMessage {
               "NodeResponse got remote cancellation, throwing PartitionedRegionCommunication Exception. {}",
               t.getMessage(), t);
           throw new ForceReattemptException(
-              LocalizedStrings.ManageBucketMessage_NODERESPONSE_GOT_REMOTE_CANCELLATION_THROWING_PARTITIONEDREGIONCOMMUNICATION_EXCEPTION
-                  .toLocalizedString(),
+              "NodeResponse got remote cancellation, throwing PartitionedRegionCommunication Exception.",
               t);
         }
         if (t instanceof PRLocallyDestroyedException) {
@@ -392,8 +402,7 @@ public class ManageBucketMessage extends PartitionMessage {
               "NodeResponse got local destroy on the PartitionRegion , throwing ForceReattemptException. {}",
               t.getMessage(), t);
           throw new ForceReattemptException(
-              LocalizedStrings.ManageBucketMessage_NODERESPONSE_GOT_LOCAL_DESTROY_ON_THE_PARTITIONREGION_THROWING_FORCEREATTEMPTEXCEPTION
-                  .toLocalizedString(),
+              "NodeResponse got local destroy on the PartitionRegion , throwing ForceReattemptException.",
               t);
         }
         if (t instanceof PartitionOfflineException) {
@@ -405,7 +414,7 @@ public class ManageBucketMessage extends PartitionMessage {
           logger.debug(msg, t);
           throw (ForceReattemptException) t;
         }
-        e.handleAsUnexpected();
+        e.handleCause();
       }
       return (this.msg != null) && this.msg.acceptedBucket;
     }

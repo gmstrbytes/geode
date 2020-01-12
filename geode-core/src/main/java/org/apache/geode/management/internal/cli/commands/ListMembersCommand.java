@@ -24,74 +24,62 @@ import org.springframework.shell.core.annotation.CliOption;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.membership.MembershipManager;
-import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.management.cli.CliMetaData;
 import org.apache.geode.management.cli.ConverterHint;
-import org.apache.geode.management.cli.Result;
-import org.apache.geode.management.internal.cli.CliUtil;
-import org.apache.geode.management.internal.cli.LogWrapper;
+import org.apache.geode.management.cli.GfshCommand;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
-import org.apache.geode.management.internal.cli.result.TabularResultData;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
+import org.apache.geode.management.internal.cli.result.model.TabularResultModel;
 import org.apache.geode.management.internal.security.ResourceOperation;
 import org.apache.geode.security.ResourcePermission;
 
-public class ListMembersCommand implements GfshCommand {
+public class ListMembersCommand extends GfshCommand {
+
+  public static final String MEMBERS_SECTION = "members";
+
   @CliCommand(value = {CliStrings.LIST_MEMBER}, help = CliStrings.LIST_MEMBER__HELP)
   @CliMetaData(relatedTopic = CliStrings.TOPIC_GEODE_SERVER)
   @ResourceOperation(resource = ResourcePermission.Resource.CLUSTER,
       operation = ResourcePermission.Operation.READ)
-  public Result listMember(@CliOption(key = {CliStrings.GROUP}, unspecifiedDefaultValue = "",
+  public ResultModel listMember(@CliOption(key = {CliStrings.GROUP, CliStrings.GROUPS},
       optionContext = ConverterHint.MEMBERGROUP,
-      help = CliStrings.LIST_MEMBER__GROUP__HELP) String group) {
-    Result result;
+      help = CliStrings.LIST_MEMBER__GROUP__HELP) String[] groups) {
 
-    // TODO: Add the code for identifying the system services
-    try {
-      Set<DistributedMember> memberSet = new TreeSet<>();
-      InternalCache cache = getCache();
+    ResultModel crm = new ResultModel();
+    Set<DistributedMember> memberSet = new TreeSet<>(
+        this.findMembersIncludingLocators(groups, null));
 
-      // default get all the members in the DS
-      if (group.isEmpty()) {
-        memberSet.addAll(CliUtil.getAllMembers(cache));
-      } else {
-        memberSet.addAll(cache.getDistributedSystem().getGroupMembers(group));
-      }
-
-      if (memberSet.isEmpty()) {
-        result = ResultBuilder.createInfoResult(CliStrings.LIST_MEMBER__MSG__NO_MEMBER_FOUND);
-      } else {
-
-        TabularResultData resultData = ResultBuilder.createTabularResultData();
-        final String coordinatorMember = getCoordinator();
-        resultData.accumulate("Name", "Coordinator:");
-        resultData.accumulate("Id", coordinatorMember);
-        for (DistributedMember member : memberSet) {
-          resultData.accumulate("Name", member.getName());
-          resultData.accumulate("Id", member.getId());
-        }
-
-        result = ResultBuilder.buildResult(resultData);
-      }
-    } catch (Exception e) {
-      result = ResultBuilder
-          .createGemFireErrorResult("Could not fetch the list of members. " + e.getMessage());
-      LogWrapper.getInstance().warning(e.getMessage(), e);
+    if (memberSet.isEmpty()) {
+      crm.addInfo().addLine(CliStrings.LIST_MEMBER__MSG__NO_MEMBER_FOUND);
+      return crm;
     }
-    return result;
+    crm.addInfo().addLine("Member Count : " + memberSet.size());
+    TabularResultModel resultData = crm.addTable(MEMBERS_SECTION);
+    final String coordinatorMemberId = getCoordinatorId();
+    for (DistributedMember member : memberSet) {
+      resultData.accumulate("Name", member.getName());
+
+      if (member.getUniqueId().equals(coordinatorMemberId)) {
+        resultData.accumulate("Id", member.getId() + " [Coordinator]");
+      } else {
+        resultData.accumulate("Id", member.getId());
+      }
+    }
+
+    return crm;
   }
 
-  private String getCoordinator() {
-    String result = "unknown";
+  String getCoordinatorId() {
     InternalDistributedSystem ids = InternalDistributedSystem.getConnectedInstance();
-    if ((ids != null) && (ids.isConnected())) {
-      MembershipManager mmgr = ids.getDistributionManager().getMembershipManager();
-      DistributedMember coord = mmgr.getCoordinator();
-      if (coord != null) {
-        result = coord.toString();
-      }
+    if (ids == null || !ids.isConnected()) {
+      return null;
     }
 
-    return result;
+    MembershipManager mmgr = ids.getDistributionManager().getMembershipManager();
+    if (mmgr == null) {
+      return null;
+    }
+
+    return mmgr.getCoordinator().getUniqueId();
   }
 }

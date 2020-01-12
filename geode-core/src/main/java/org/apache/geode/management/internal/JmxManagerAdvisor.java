@@ -27,18 +27,16 @@ import org.apache.logging.log4j.Logger;
 import org.apache.geode.CancelException;
 import org.apache.geode.DataSerializer;
 import org.apache.geode.SystemFailure;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionAdvisee;
 import org.apache.geode.distributed.internal.DistributionAdvisor;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.HighPriorityDistributionMessage;
-import org.apache.geode.distributed.internal.ReplyException;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * @since GemFire 7.0
@@ -80,6 +78,7 @@ public class JmxManagerAdvisor extends DistributionAdvisor {
   @SuppressWarnings("unchecked")
   public List<JmxManagerProfile> adviseAlreadyManaging() {
     return fetchProfiles(new Filter() {
+      @Override
       public boolean include(Profile profile) {
         assert profile instanceof JmxManagerProfile;
         JmxManagerProfile jmxProfile = (JmxManagerProfile) profile;
@@ -91,6 +90,7 @@ public class JmxManagerAdvisor extends DistributionAdvisor {
   @SuppressWarnings("unchecked")
   public List<JmxManagerProfile> adviseWillingToManage() {
     return fetchProfiles(new Filter() {
+      @Override
       public boolean include(Profile profile) {
         assert profile instanceof JmxManagerProfile;
         JmxManagerProfile jmxProfile = (JmxManagerProfile) profile;
@@ -159,8 +159,6 @@ public class JmxManagerAdvisor extends DistributionAdvisor {
     /**
      * Constructor used to send
      *
-     * @param recips
-     * @param p
      */
     private JmxManagerProfileMessage(final Set<InternalDistributedMember> recips,
         final JmxManagerProfile p) {
@@ -170,7 +168,7 @@ public class JmxManagerAdvisor extends DistributionAdvisor {
     }
 
     @Override
-    protected void process(DistributionManager dm) {
+    protected void process(ClusterDistributionManager dm) {
       Throwable thr = null;
       JmxManagerProfile p = null;
       try {
@@ -206,27 +204,29 @@ public class JmxManagerAdvisor extends DistributionAdvisor {
       } finally {
         if (thr != null) {
           dm.getCancelCriterion().checkCancelInProgress(null);
-          logger.info(LocalizedMessage.create(
-              LocalizedStrings.ResourceAdvisor_MEMBER_CAUGHT_EXCEPTION_PROCESSING_PROFILE,
-              new Object[] {p, toString()}, thr));
+          logger.info(String.format("This member caught exception processing profile %s %s",
+              p, toString()), thr);
         }
       }
     }
 
+    @Override
     public int getDSFID() {
       return JMX_MANAGER_PROFILE_MESSAGE;
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.processorId = in.readInt();
       this.profile = (JmxManagerProfile) DataSerializer.readObject(in);
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       out.writeInt(this.processorId);
       DataSerializer.writeObject(this.profile, out);
     }
@@ -235,9 +235,8 @@ public class JmxManagerAdvisor extends DistributionAdvisor {
      * Send profile to the provided members
      *
      * @param recips The recipients of the message
-     * @throws ReplyException
      */
-    public static void send(final DM dm, Set<InternalDistributedMember> recips,
+    public static void send(final DistributionManager dm, Set<InternalDistributedMember> recips,
         JmxManagerProfile profile) {
       JmxManagerProfileMessage r = new JmxManagerProfileMessage(recips, profile);
       dm.putOutgoing(r);
@@ -303,6 +302,7 @@ public class JmxManagerAdvisor extends DistributionAdvisor {
       super(memberId, version);
     }
 
+    @Override
     public StringBuilder getToStringHeader() {
       return new StringBuilder("JmxManagerAdvisor.JmxManagerProfile");
     }
@@ -325,8 +325,8 @@ public class JmxManagerAdvisor extends DistributionAdvisor {
     }
 
     @Override
-    public void processIncoming(DistributionManager dm, String adviseePath, boolean removeProfile,
-        boolean exchangeProfiles, final List<Profile> replyProfiles) {
+    public void processIncoming(ClusterDistributionManager dm, String adviseePath,
+        boolean removeProfile, boolean exchangeProfiles, final List<Profile> replyProfiles) {
       final InternalCache cache = dm.getCache();
       if (cache != null && !cache.isClosed()) {
         handleDistributionAdvisee(cache.getJmxManagerAdvisor().getAdvisee(), removeProfile,
@@ -335,8 +335,9 @@ public class JmxManagerAdvisor extends DistributionAdvisor {
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.jmxManager = DataSerializer.readPrimitiveBoolean(in);
       this.host = DataSerializer.readString(in);
       this.port = DataSerializer.readPrimitiveInt(in);
@@ -345,7 +346,8 @@ public class JmxManagerAdvisor extends DistributionAdvisor {
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
       boolean tmpJmxManager;
       String tmpHost;
       int tmpPort;
@@ -358,7 +360,7 @@ public class JmxManagerAdvisor extends DistributionAdvisor {
         tmpSsl = this.ssl;
         tmpStarted = this.started;
       }
-      super.toData(out);
+      super.toData(out, context);
       DataSerializer.writePrimitiveBoolean(tmpJmxManager, out);
       DataSerializer.writeString(tmpHost, out);
       DataSerializer.writePrimitiveInt(tmpPort, out);

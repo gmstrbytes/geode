@@ -14,18 +14,15 @@
  */
 package org.apache.geode.internal.cache.region.entry;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
 
 import junitparams.JUnitParamsRunner;
 import junitparams.Parameters;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 import org.junit.runner.RunWith;
 
-import org.apache.geode.test.junit.categories.UnitTest;
 
-@Category(UnitTest.class)
 @RunWith(JUnitParamsRunner.class)
 public class RegionEntryFactoryBuilderJUnitTest {
 
@@ -75,7 +72,9 @@ public class RegionEntryFactoryBuilderJUnitTest {
       "VersionedStatsDiskLRURegionEntryOffHeapFactory,true,true,true,true,true"})
   public void testRegionEntryFactoryUnitTest(String factoryName, boolean enableStats,
       boolean enableLRU, boolean enableDisk, boolean enableVersioning, boolean enableOffHeap) {
-    assertEquals(factoryName, regionEntryFactoryBuilder.getRegionEntryFactoryOrNull(enableStats,
-        enableLRU, enableDisk, enableVersioning, enableOffHeap).getClass().getSimpleName());
+    assertEquals(factoryName,
+        regionEntryFactoryBuilder
+            .create(enableStats, enableLRU, enableDisk, enableVersioning, enableOffHeap).getClass()
+            .getSimpleName());
   }
 }

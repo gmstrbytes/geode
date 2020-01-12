@@ -14,23 +14,25 @@
  */
 package org.apache.geode.management.internal.cli.functions;
 
+import org.apache.geode.annotations.Immutable;
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.RegionDestroyedException;
-import org.apache.geode.cache.execute.Function;
 import org.apache.geode.cache.execute.FunctionContext;
-import org.apache.geode.internal.InternalEntity;
+import org.apache.geode.internal.cache.InternalCache;
+import org.apache.geode.internal.cache.execute.InternalFunction;
 import org.apache.geode.internal.cache.xmlcache.CacheXml;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.management.internal.configuration.domain.XmlEntity;
 
 /**
  *
  * @since GemFire 7.0
  */
-public class RegionDestroyFunction implements Function, InternalEntity {
+public class RegionDestroyFunction implements InternalFunction {
   private static final long serialVersionUID = 9172773671865750685L;
 
+  @Immutable
   public static final RegionDestroyFunction INSTANCE = new RegionDestroyFunction();
 
   private static final String ID = RegionDestroyFunction.class.getName();
@@ -56,7 +58,7 @@ public class RegionDestroyFunction implements Function, InternalEntity {
       }
 
       regionPath = (String) arguments;
-      Cache cache = context.getCache();
+      Cache cache = ((InternalCache) context.getCache()).getCacheForProcessingClientRequests();
       Region<?, ?> region = cache.getRegion(regionPath);
       // the region is already destroyed by another member
       if (region == null) {

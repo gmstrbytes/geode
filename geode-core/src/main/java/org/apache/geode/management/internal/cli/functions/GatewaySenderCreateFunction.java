@@ -14,10 +14,12 @@
  */
 package org.apache.geode.management.internal.cli.functions;
 
+import java.util.List;
+
 import org.apache.logging.log4j.Logger;
 
+import org.apache.geode.annotations.Immutable;
 import org.apache.geode.cache.Cache;
-import org.apache.geode.cache.execute.Function;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.cache.execute.ResultSender;
 import org.apache.geode.cache.wan.GatewayEventFilter;
@@ -25,14 +27,12 @@ import org.apache.geode.cache.wan.GatewaySender;
 import org.apache.geode.cache.wan.GatewaySender.OrderPolicy;
 import org.apache.geode.cache.wan.GatewaySenderFactory;
 import org.apache.geode.cache.wan.GatewayTransportFilter;
-import org.apache.geode.internal.ClassPathLoader;
-import org.apache.geode.internal.InternalEntity;
-import org.apache.geode.internal.cache.xmlcache.CacheXml;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.cache.execute.InternalFunction;
+import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.management.internal.cli.CliUtil;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.configuration.domain.XmlEntity;
 
-public class GatewaySenderCreateFunction implements Function, InternalEntity {
+public class GatewaySenderCreateFunction implements InternalFunction {
 
   private static final Logger logger = LogService.getLogger();
 
@@ -40,7 +40,8 @@ public class GatewaySenderCreateFunction implements Function, InternalEntity {
 
   private static final String ID = GatewaySenderCreateFunction.class.getName();
 
-  public static GatewaySenderCreateFunction INSTANCE = new GatewaySenderCreateFunction();
+  @Immutable
+  public static final GatewaySenderCreateFunction INSTANCE = new GatewaySenderCreateFunction();
 
 
   @Override
@@ -55,10 +56,9 @@ public class GatewaySenderCreateFunction implements Function, InternalEntity {
 
     try {
       GatewaySender createdGatewaySender = createGatewaySender(cache, gatewaySenderCreateArgs);
-      XmlEntity xmlEntity =
-          new XmlEntity(CacheXml.GATEWAY_SENDER, "id", gatewaySenderCreateArgs.getId());
-      resultSender.lastResult(new CliFunctionResult(memberNameOrId, xmlEntity,
-          CliStrings.format(CliStrings.CREATE_GATEWAYSENDER__MSG__GATEWAYSENDER_0_CREATED_ON_1,
+      resultSender.lastResult(new CliFunctionResult(memberNameOrId,
+          CliFunctionResult.StatusState.OK, CliStrings.format(
+              CliStrings.CREATE_GATEWAYSENDER__MSG__GATEWAYSENDER_0_CREATED_ON_1,
               new Object[] {createdGatewaySender.getId(), memberNameOrId})));
     } catch (Exception e) {
       logger.error(e.getMessage(), e);
@@ -69,9 +69,6 @@ public class GatewaySenderCreateFunction implements Function, InternalEntity {
   /**
    * Creates the GatewaySender with given configuration.
    *
-   * @param cache
-   * @param gatewaySenderCreateArgs
-   * @return GatewaySender
    */
   private GatewaySender createGatewaySender(Cache cache,
       GatewaySenderFunctionArgs gatewaySenderCreateArgs) {
@@ -145,66 +142,29 @@ public class GatewaySenderCreateFunction implements Function, InternalEntity {
       gateway.setDiskSynchronous(isDiskSynchronous);
     }
 
-    String[] gatewayEventFilters = gatewaySenderCreateArgs.getGatewayEventFilter();
+    List<String> gatewayEventFilters = gatewaySenderCreateArgs.getGatewayEventFilter();
     if (gatewayEventFilters != null) {
       for (String gatewayEventFilter : gatewayEventFilters) {
         Class gatewayEventFilterKlass =
-            forName(gatewayEventFilter, CliStrings.CREATE_GATEWAYSENDER__GATEWAYEVENTFILTER);
-        gateway.addGatewayEventFilter((GatewayEventFilter) newInstance(gatewayEventFilterKlass,
-            CliStrings.CREATE_GATEWAYSENDER__GATEWAYEVENTFILTER));
+            CliUtil.forName(gatewayEventFilter,
+                CliStrings.CREATE_GATEWAYSENDER__GATEWAYEVENTFILTER);
+        gateway.addGatewayEventFilter(
+            (GatewayEventFilter) CliUtil.newInstance(gatewayEventFilterKlass,
+                CliStrings.CREATE_GATEWAYSENDER__GATEWAYEVENTFILTER));
       }
     }
 
-    String[] gatewayTransportFilters = gatewaySenderCreateArgs.getGatewayTransportFilter();
+    List<String> gatewayTransportFilters = gatewaySenderCreateArgs.getGatewayTransportFilter();
     if (gatewayTransportFilters != null) {
       for (String gatewayTransportFilter : gatewayTransportFilters) {
-        Class gatewayTransportFilterKlass = forName(gatewayTransportFilter,
+        Class gatewayTransportFilterKlass = CliUtil.forName(gatewayTransportFilter,
             CliStrings.CREATE_GATEWAYSENDER__GATEWAYTRANSPORTFILTER);
-        gateway.addGatewayTransportFilter((GatewayTransportFilter) newInstance(
+        gateway.addGatewayTransportFilter((GatewayTransportFilter) CliUtil.newInstance(
             gatewayTransportFilterKlass, CliStrings.CREATE_GATEWAYSENDER__GATEWAYTRANSPORTFILTER));
       }
     }
     return gateway.create(gatewaySenderCreateArgs.getId(),
         gatewaySenderCreateArgs.getRemoteDistributedSystemId());
-  }
-
-  @SuppressWarnings("unchecked")
-  private static Class forName(String classToLoadName, String neededFor) {
-    Class loadedClass = null;
-    try {
-      // Set Constraints
-      ClassPathLoader classPathLoader = ClassPathLoader.getLatest();
-      if (classToLoadName != null && !classToLoadName.isEmpty()) {
-        loadedClass = classPathLoader.forName(classToLoadName);
-      }
-    } catch (ClassNotFoundException e) {
-      throw new RuntimeException(
-          CliStrings.format(CliStrings.CREATE_REGION__MSG__COULD_NOT_FIND_CLASS_0_SPECIFIED_FOR_1,
-              classToLoadName, neededFor),
-          e);
-    } catch (ClassCastException e) {
-      throw new RuntimeException(CliStrings.format(
-          CliStrings.CREATE_REGION__MSG__CLASS_SPECIFIED_FOR_0_SPECIFIED_FOR_1_IS_NOT_OF_EXPECTED_TYPE,
-          classToLoadName, neededFor), e);
-    }
-
-    return loadedClass;
-  }
-
-  private static Object newInstance(Class klass, String neededFor) {
-    Object instance = null;
-    try {
-      instance = klass.newInstance();
-    } catch (InstantiationException e) {
-      throw new RuntimeException(CliStrings.format(
-          CliStrings.CREATE_GATEWAYSENDER__MSG__COULD_NOT_INSTANTIATE_CLASS_0_SPECIFIED_FOR_1,
-          klass, neededFor), e);
-    } catch (IllegalAccessException e) {
-      throw new RuntimeException(CliStrings.format(
-          CliStrings.CREATE_GATEWAYSENDER__MSG__COULD_NOT_ACCESS_CLASS_0_SPECIFIED_FOR_1, klass,
-          neededFor), e);
-    }
-    return instance;
   }
 
   @Override

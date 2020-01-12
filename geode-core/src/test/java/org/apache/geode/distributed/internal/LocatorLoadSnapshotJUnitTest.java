@@ -14,7 +14,11 @@
  */
 package org.apache.geode.distributed.internal;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -26,13 +30,13 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 
 import org.apache.geode.cache.server.ServerLoad;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.test.junit.categories.MembershipTest;
 
 /**
  * Tests the functionality of the LocatorLoadSnapshot, which is the data structure that is used in
  * the locator to compare the load between multiple servers.
  */
-@Category(UnitTest.class)
+@Category({MembershipTest.class})
 public class LocatorLoadSnapshotJUnitTest {
 
   /**
@@ -287,4 +291,70 @@ public class LocatorLoadSnapshotJUnitTest {
     assertFalse(sn.hasBalancedConnections("b"));
   }
 
+  @Test
+  public void testThatReplacementServerIsSelected() {
+    final LocatorLoadSnapshot loadSnapshot = new LocatorLoadSnapshot();
+
+    final ServerLocation l1 = new ServerLocation("localhost", 1);
+    final ServerLocation l2 = new ServerLocation("localhost", 2);
+    final ServerLocation l3 = new ServerLocation("localhost", 3);
+
+    float defaultLoadImbalanceThreshold = LocatorLoadSnapshot.DEFAULT_LOAD_IMBALANCE_THRESHOLD;
+
+    float l1ConnectionLoad = 50 + defaultLoadImbalanceThreshold;
+    float l2ConnectionLoad = 50;
+    float l3ConnectionLoad = 50 - defaultLoadImbalanceThreshold;
+    loadSnapshot.addServer(l1, new String[] {"a"}, new ServerLoad(l1ConnectionLoad, 1, 0, 1));
+    loadSnapshot.addServer(l2, new String[] {"a", "b"}, new ServerLoad(l2ConnectionLoad, 1, 0, 1));
+    loadSnapshot.addServer(l3, new String[] {"b"}, new ServerLoad(l3ConnectionLoad, 1, 0, 1));
+
+    // a new server should be selected until the load-imbalance-threshold is reached
+    ServerLocation newServer = null;
+    do {
+      newServer = loadSnapshot.getReplacementServerForConnection(l1, "", Collections.EMPTY_SET);
+      if (newServer == l3) {
+        // the threshold check should have initiated client rebalancing
+        assertTrue(loadSnapshot.isRebalancing());
+      }
+    } while (newServer == l3);
+
+    // once balance is achieved we should have received the same server and
+    // rebalancing should have ended
+    assertEquals(l1, newServer);
+    assertFalse(loadSnapshot.isRebalancing());
+
+    // all load snapshots should now be balanced
+    Map<ServerLocation, ServerLoad> loadMap = loadSnapshot.getLoadMap();
+    ServerLoad l1Load = loadMap.get(l1);
+    assertEquals(50, l1Load.getConnectionLoad(), 0.01);
+    ServerLoad l2Load = loadMap.get(l2);
+    assertEquals(50, l1Load.getConnectionLoad(), 0.01);
+    ServerLoad l3Load = loadMap.get(l3);
+    assertEquals(50, l3Load.getConnectionLoad(), 0.01);
+  }
+
+  @Test
+  public void testThatReplacementServerIsNotSelectedIfThresholdNotReached() {
+    final LocatorLoadSnapshot loadSnapshot = new LocatorLoadSnapshot();
+
+    final ServerLocation l1 = new ServerLocation("localhost", 1);
+    final ServerLocation l2 = new ServerLocation("localhost", 2);
+    final ServerLocation l3 = new ServerLocation("localhost", 3);
+
+    float defaultLoadImbalanceThreshold = LocatorLoadSnapshot.DEFAULT_LOAD_IMBALANCE_THRESHOLD;
+
+    float l1ConnectionLoad = 50 + defaultLoadImbalanceThreshold - 1;
+    float l2ConnectionLoad = 50;
+    float l3ConnectionLoad = 50 + (defaultLoadImbalanceThreshold / 2);
+    loadSnapshot.addServer(l1, new String[] {"a"}, new ServerLoad(l1ConnectionLoad, 1, 0, 1));
+    loadSnapshot.addServer(l2, new String[] {"a", "b"}, new ServerLoad(l2ConnectionLoad, 1, 0, 1));
+    loadSnapshot.addServer(l3, new String[] {"b"}, new ServerLoad(l3ConnectionLoad, 1, 0, 1));
+
+    ServerLocation newServer =
+        loadSnapshot.getReplacementServerForConnection(l1, "", Collections.EMPTY_SET);
+    assertEquals(l1, newServer);
+    Map<ServerLocation, ServerLoad> loadMap = loadSnapshot.getLoadMap();
+    ServerLoad l1Load = loadMap.get(l1);
+    assertEquals(l1ConnectionLoad, l1Load.getConnectionLoad(), 0.01);
+  }
 }

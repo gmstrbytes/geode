@@ -14,23 +14,22 @@
  */
 package org.apache.geode.management.internal.cli.functions;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.logging.log4j.Logger;
 
-import org.apache.geode.SystemFailure;
-import org.apache.geode.cache.CacheClosedException;
-import org.apache.geode.cache.execute.Function;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.internal.ClassPathLoader;
 import org.apache.geode.internal.DeployedJar;
-import org.apache.geode.internal.InternalEntity;
 import org.apache.geode.internal.JarDeployer;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.cache.execute.InternalFunction;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
-public class ListDeployedFunction implements Function, InternalEntity {
+public class ListDeployedFunction implements InternalFunction {
   private static final Logger logger = LogService.getLogger();
 
   public static final String ID = ListDeployedFunction.class.getName();
@@ -55,28 +54,17 @@ public class ListDeployedFunction implements Function, InternalEntity {
       }
 
       final List<DeployedJar> jarClassLoaders = jarDeployer.findDeployedJars();
-      final String[] jars = new String[jarClassLoaders.size() * 2];
-      int index = 0;
+      final Map<String, String> jars = new HashMap<>();
       for (DeployedJar jarClassLoader : jarClassLoaders) {
-        jars[index++] = jarClassLoader.getJarName();
-        jars[index++] = jarClassLoader.getFileCanonicalPath();
+        jars.put(jarClassLoader.getJarName(), jarClassLoader.getFileCanonicalPath());
       }
 
-      CliFunctionResult result = new CliFunctionResult(memberId, jars);
+      CliFunctionResult result = new CliFunctionResult(memberId, jars, null);
       context.getResultSender().lastResult(result);
 
-    } catch (CacheClosedException cce) {
-      CliFunctionResult result = new CliFunctionResult(memberId, false, null);
-      context.getResultSender().lastResult(result);
-
-    } catch (VirtualMachineError e) {
-      SystemFailure.initiateFailure(e);
-      throw e;
-
-    } catch (Throwable th) {
-      SystemFailure.checkFailure();
-      logger.error("Could not list JAR files: {}", th.getMessage(), th);
-      CliFunctionResult result = new CliFunctionResult(memberId, th, null);
+    } catch (Exception cce) {
+      logger.error(cce.getMessage(), cce);
+      CliFunctionResult result = new CliFunctionResult(memberId, false, cce.getMessage());
       context.getResultSender().lastResult(result);
     }
   }

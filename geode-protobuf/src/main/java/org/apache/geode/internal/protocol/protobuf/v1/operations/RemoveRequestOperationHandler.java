@@ -14,25 +14,20 @@
  */
 package org.apache.geode.internal.protocol.protobuf.v1.operations;
 
-import static org.apache.geode.internal.protocol.ProtocolErrorCode.INVALID_REQUEST;
-import static org.apache.geode.internal.protocol.ProtocolErrorCode.SERVER_ERROR;
-
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.annotations.Experimental;
-import org.apache.geode.cache.Region;
 import org.apache.geode.internal.exception.InvalidExecutionContextException;
-import org.apache.geode.internal.protocol.Failure;
-import org.apache.geode.internal.protocol.MessageExecutionContext;
-import org.apache.geode.internal.protocol.Result;
-import org.apache.geode.internal.protocol.Success;
 import org.apache.geode.internal.protocol.operations.ProtobufOperationHandler;
-import org.apache.geode.internal.protocol.protobuf.v1.ClientProtocol;
+import org.apache.geode.internal.protocol.protobuf.v1.BasicTypes;
+import org.apache.geode.internal.protocol.protobuf.v1.Failure;
+import org.apache.geode.internal.protocol.protobuf.v1.MessageExecutionContext;
 import org.apache.geode.internal.protocol.protobuf.v1.ProtobufSerializationService;
 import org.apache.geode.internal.protocol.protobuf.v1.RegionAPI;
-import org.apache.geode.internal.protocol.protobuf.v1.utilities.ProtobufResponseUtilities;
-import org.apache.geode.internal.protocol.serialization.exception.EncodingException;
+import org.apache.geode.internal.protocol.protobuf.v1.Result;
+import org.apache.geode.internal.protocol.protobuf.v1.Success;
+import org.apache.geode.internal.protocol.protobuf.v1.serialization.exception.DecodingException;
 
 @Experimental
 public class RemoveRequestOperationHandler
@@ -40,28 +35,20 @@ public class RemoveRequestOperationHandler
   private static final Logger logger = LogManager.getLogger();
 
   @Override
-  public Result<RegionAPI.RemoveResponse, ClientProtocol.ErrorResponse> process(
-      ProtobufSerializationService serializationService, RegionAPI.RemoveRequest request,
-      MessageExecutionContext messageExecutionContext) throws InvalidExecutionContextException {
+  public Result<RegionAPI.RemoveResponse> process(ProtobufSerializationService serializationService,
+      RegionAPI.RemoveRequest request, MessageExecutionContext messageExecutionContext)
+      throws InvalidExecutionContextException, DecodingException {
 
     String regionName = request.getRegionName();
-    Region region = messageExecutionContext.getCache().getRegion(regionName);
-    if (region == null) {
-      logger.error("Received Remove request for non-existing region {}", regionName);
-      return Failure
-          .of(ProtobufResponseUtilities.makeErrorResponse(SERVER_ERROR, "Region not found"));
+
+    Object decodedKey = serializationService.decode(request.getKey());
+    if (decodedKey == null) {
+      return Failure.of(BasicTypes.ErrorCode.INVALID_REQUEST,
+          "NULL is not a valid key for removal.");
     }
 
-    try {
-      Object decodedKey = serializationService.decode(request.getKey());
-      region.remove(decodedKey);
+    messageExecutionContext.getSecureCache().remove(regionName, decodedKey);
 
-      return Success.of(RegionAPI.RemoveResponse.newBuilder().build());
-    } catch (EncodingException ex) {
-      // can be thrown by encoding or decoding.
-      logger.error("Received Remove request with unsupported encoding: {}", ex);
-      return Failure.of(ProtobufResponseUtilities.makeErrorResponse(INVALID_REQUEST,
-          "Encoding not supported: " + ex.getMessage()));
-    }
+    return Success.of(RegionAPI.RemoveResponse.newBuilder().build());
   }
 }

@@ -16,10 +16,13 @@
 
 package org.apache.geode.internal.admin.remote;
 
-import java.io.*;
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
 
-import org.apache.geode.distributed.internal.*;
-import org.apache.geode.internal.i18n.LocalizedStrings;
+import org.apache.geode.distributed.internal.DistributionManager;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
 
 /**
  * A message that is sent to a particular app vm to request the region statistics of a given region.
@@ -37,29 +40,32 @@ public class RegionStatisticsRequest extends RegionAdminRequest {
 
   public RegionStatisticsRequest() {
     friendlyName =
-        LocalizedStrings.RegionStatisticsRequest_FETCH_REGION_STATISTICS.toLocalizedString();
+        "Fetch region statistics";
   }
 
   /**
    * Must return a proper response to this request.
    */
   @Override
-  protected AdminResponse createResponse(DM dm) {
+  protected AdminResponse createResponse(DistributionManager dm) {
     return RegionStatisticsResponse.create(dm, this.getSender(), this.getRegion(dm.getSystem()));
   }
 
+  @Override
   public int getDSFID() {
     return REGION_STATISTICS_REQUEST;
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
   }
 
   @Override

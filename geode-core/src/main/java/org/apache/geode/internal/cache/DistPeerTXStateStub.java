@@ -25,11 +25,10 @@ import org.apache.geode.cache.EntryNotFoundException;
 import org.apache.geode.cache.Operation;
 import org.apache.geode.cache.UnsupportedOperationInTransactionException;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.cache.tier.sockets.VersionedObjectList;
 import org.apache.geode.internal.cache.tx.DistTxEntryEvent;
-import org.apache.geode.internal.i18n.LocalizedStrings;
 
 /**
  * DistPeerTXStateStub lives on the transaction coordinator for a distributed transaction </br>
@@ -44,7 +43,7 @@ public class DistPeerTXStateStub extends PeerTXStateStub implements DistTXCoordi
   private DistTXPrecommitMessage precommitDistTxMsg = null;
   private DistTXCommitMessage commitDistTxMsg = null;
   private DistTXRollbackMessage rollbackDistTxMsg = null;
-  private DM dm = null;
+  private DistributionManager dm = null;
 
   public DistPeerTXStateStub(TXStateProxy stateProxy, DistributedMember target,
       InternalDistributedMember onBehalfOfClient) {
@@ -187,6 +186,7 @@ public class DistPeerTXStateStub extends PeerTXStateStub implements DistTXCoordi
    * @see org.apache.geode.internal.cache.TXStateInterface#destroyExistingEntry
    * (org.apache.geode.internal.cache.EntryEventImpl, boolean, java.lang.Object)
    */
+  @Override
   public void destroyExistingEntry(EntryEventImpl event, boolean cacheWrite,
       Object expectedOldValue) throws EntryNotFoundException {
     // logger.debug("DistPeerTXStateStub.destroyExistingEntry", new Throwable());
@@ -200,6 +200,7 @@ public class DistPeerTXStateStub extends PeerTXStateStub implements DistTXCoordi
    * @see org.apache.geode.internal.cache.InternalDataView#destroyOnRemote(java .lang.Integer,
    * org.apache.geode.internal.cache.EntryEventImpl, java.lang.Object)
    */
+  @Override
   public void destroyOnRemote(EntryEventImpl event, boolean cacheWrite, Object expectedOldValue)
       throws DataLocationException {
     // logger.debug("DistPeerTXStateStub.destroyOnRemote", new Throwable());
@@ -213,6 +214,7 @@ public class DistPeerTXStateStub extends PeerTXStateStub implements DistTXCoordi
    * @see org.apache.geode.internal.cache.TXStateInterface#invalidateExistingEntry
    * (org.apache.geode.internal.cache.EntryEventImpl, boolean, boolean)
    */
+  @Override
   public void invalidateExistingEntry(EntryEventImpl event, boolean invokeCallbacks,
       boolean forceNewEntry) {
     // logger
@@ -227,6 +229,7 @@ public class DistPeerTXStateStub extends PeerTXStateStub implements DistTXCoordi
    * @see org.apache.geode.internal.cache.InternalDataView#invalidateOnRemote
    * (org.apache.geode.internal.cache.EntryEventImpl, boolean, boolean)
    */
+  @Override
   public void invalidateOnRemote(EntryEventImpl event, boolean invokeCallbacks,
       boolean forceNewEntry) throws DataLocationException {
     // logger.debug("DistPeerTXStateStub.invalidateOnRemote", new Throwable());
@@ -234,25 +237,26 @@ public class DistPeerTXStateStub extends PeerTXStateStub implements DistTXCoordi
     this.primaryTransactionalOperations.add(new DistTxEntryEvent(event));
   }
 
+  @Override
   public void postPutAll(DistributedPutAllOperation putallOp, VersionedObjectList successfulPuts,
-      LocalRegion region) {
-    super.postPutAll(putallOp, successfulPuts, region);
+      InternalRegion reg) {
+    super.postPutAll(putallOp, successfulPuts, reg);
     // TODO DISTTX: event is never released
-    EntryEventImpl event =
-        EntryEventImpl.createPutAllEvent(putallOp, region, Operation.PUTALL_CREATE,
-            putallOp.getBaseEvent().getKey(), putallOp.getBaseEvent().getValue());
+    EntryEventImpl event = EntryEventImpl.createPutAllEvent(putallOp, reg, Operation.PUTALL_CREATE,
+        putallOp.getBaseEvent().getKey(), putallOp.getBaseEvent().getValue());
     event.setEventId(putallOp.getBaseEvent().getEventId());
     DistTxEntryEvent dtop = new DistTxEntryEvent(event);
     dtop.setPutAllOperation(putallOp);
     this.primaryTransactionalOperations.add(dtop);
   }
 
+  @Override
   public void postRemoveAll(DistributedRemoveAllOperation removeAllOp,
-      VersionedObjectList successfulOps, LocalRegion region) {
-    super.postRemoveAll(removeAllOp, successfulOps, region);
+      VersionedObjectList successfulOps, InternalRegion reg) {
+    super.postRemoveAll(removeAllOp, successfulOps, reg);
     // TODO DISTTX: event is never released
-    EntryEventImpl event = EntryEventImpl.createRemoveAllEvent(removeAllOp, region,
-        removeAllOp.getBaseEvent().getKey());
+    EntryEventImpl event =
+        EntryEventImpl.createRemoveAllEvent(removeAllOp, reg, removeAllOp.getBaseEvent().getKey());
     event.setEventId(removeAllOp.getBaseEvent().getEventId());
     DistTxEntryEvent dtop = new DistTxEntryEvent(event);
     dtop.setRemoveAllOperation(removeAllOp);
@@ -272,41 +276,42 @@ public class DistPeerTXStateStub extends PeerTXStateStub implements DistTXCoordi
   @Override
   public boolean getPreCommitResponse() throws UnsupportedOperationInTransactionException {
     throw new UnsupportedOperationInTransactionException(
-        LocalizedStrings.Dist_TX_PRECOMMIT_NOT_SUPPORTED_IN_A_TRANSACTION
-            .toLocalizedString("getPreCommitResponse"));
+        String.format("precommit() operation %s meant for Dist Tx is not supported",
+            "getPreCommitResponse"));
   }
 
   @Override
   public boolean getRollbackResponse() throws UnsupportedOperationInTransactionException {
     throw new UnsupportedOperationInTransactionException(
-        LocalizedStrings.Dist_TX_ROLLBACK_NOT_SUPPORTED_IN_A_TRANSACTION
-            .toLocalizedString("getRollbackResponse"));
+        String.format("rollback() operation %s meant for Dist Tx is not supported",
+            "getRollbackResponse"));
   }
 
   @Override
-  public void setPrecommitMessage(DistTXPrecommitMessage precommitMsg, DM dm)
+  public void setPrecommitMessage(DistTXPrecommitMessage precommitMsg, DistributionManager dm)
       throws UnsupportedOperationInTransactionException {
     this.precommitDistTxMsg = precommitMsg;
     this.dm = dm;
   }
 
   @Override
-  public void setCommitMessage(DistTXCommitMessage commitMsg, DM dm)
+  public void setCommitMessage(DistTXCommitMessage commitMsg, DistributionManager dm)
       throws UnsupportedOperationInTransactionException {
     this.commitDistTxMsg = commitMsg;
     this.dm = dm;
   }
 
   @Override
-  public void setRollbackMessage(DistTXRollbackMessage rollbackMsg, DM dm)
+  public void setRollbackMessage(DistTXRollbackMessage rollbackMsg, DistributionManager dm)
       throws UnsupportedOperationInTransactionException {
     this.rollbackDistTxMsg = rollbackMsg;
     this.dm = dm;
   }
 
   @Override
-  public void gatherAffectedRegions(HashSet<LocalRegion> regionSet, boolean includePrimaryRegions,
-      boolean includeRedundantRegions) throws UnsupportedOperationInTransactionException {
+  public void gatherAffectedRegions(HashSet<InternalRegion> regionSet,
+      boolean includePrimaryRegions, boolean includeRedundantRegions)
+      throws UnsupportedOperationInTransactionException {
     if (includePrimaryRegions) {
       for (DistTxEntryEvent dtos : this.primaryTransactionalOperations) {
         regionSet.add(dtos.getRegion());

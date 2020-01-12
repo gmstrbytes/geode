@@ -14,8 +14,16 @@
  */
 package org.apache.geode.cache.lucene.internal.cli.functions;
 
-import static org.junit.Assert.*;
-import static org.mockito.Mockito.*;
+import static org.junit.Assert.assertEquals;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.anyInt;
+import static org.mockito.Mockito.anyString;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -40,9 +48,9 @@ import org.apache.geode.cache.lucene.internal.cli.LuceneQueryInfo;
 import org.apache.geode.cache.lucene.internal.cli.LuceneSearchResults;
 import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.test.fake.Fakes;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.test.junit.categories.LuceneTest;
 
-@Category(UnitTest.class)
+@Category({LuceneTest.class})
 
 public class LuceneSearchIndexFunctionJUnitTest {
 

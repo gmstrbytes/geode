@@ -17,6 +17,7 @@ package org.apache.geode.internal;
 
 import java.io.Console;
 
+import org.apache.geode.annotations.Immutable;
 import org.apache.geode.management.internal.cli.LogWrapper;
 import org.apache.geode.management.internal.cli.shell.Gfsh;
 import org.apache.geode.management.internal.cli.util.GfshConsoleReader;
@@ -30,19 +31,21 @@ import org.apache.geode.management.internal.cli.util.GfshConsoleReader;
  * @since GemFire 7.0.1
  */
 public class GfeConsoleReaderFactory {
-  private static GfeConsoleReader defaultConsoleReader = createConsoleReader();
+  @Immutable
+  private static final GfeConsoleReader defaultConsoleReader = createConsoleReader();
 
   public static GfeConsoleReader getDefaultConsoleReader() {
     return defaultConsoleReader;
   }
 
   public static GfeConsoleReader createConsoleReader() {
-    GfeConsoleReader consoleReader = null;
+    GfeConsoleReader consoleReader;
 
     if (Gfsh.getCurrentInstance() != null) {
-      LogWrapper.getInstance().info("GfeConsoleReaderFactory.createConsoleReader(): isGfshVM");
+      LogWrapper logWrapper = Gfsh.getCurrentInstance().getGfshFileLogger();
+      logWrapper.info("GfeConsoleReaderFactory.createConsoleReader(): isGfshVM");
       consoleReader = new GfshConsoleReader();
-      LogWrapper.getInstance().info("GfeConsoleReaderFactory.createConsoleReader(): consoleReader: "
+      logWrapper.info("GfeConsoleReaderFactory.createConsoleReader(): consoleReader: "
           + consoleReader + "=" + consoleReader.isSupported());
     } else {
       consoleReader = new GfeConsoleReader();

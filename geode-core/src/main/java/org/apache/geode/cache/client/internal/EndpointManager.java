@@ -38,7 +38,6 @@ public interface EndpointManager {
    * Indicate that a particular server has crashed. All of the listeners will be notified that the
    * server has crashed.
    *
-   * @param endpoint
    */
   void serverCrashed(Endpoint endpoint);
 
@@ -66,14 +65,14 @@ public interface EndpointManager {
    *
    * @return a map of ServerLocation-> ConnectionStats
    */
-  public Map getAllStats();
+  Map<ServerLocation, ConnectionStats> getAllStats();
 
   /**
    * Test hook that returns the number of servers we currently have connections to.
    */
-  public int getConnectedServerCount();
+  int getConnectedServerCount();
 
-  public static interface EndpointListener {
+  interface EndpointListener {
 
     void endpointNoLongerInUse(Endpoint endpoint);
 
@@ -82,14 +81,17 @@ public interface EndpointManager {
     void endpointNowInUse(Endpoint endpoint);
   }
 
-  public static class EndpointListenerAdapter implements EndpointListener {
+  class EndpointListenerAdapter implements EndpointListener {
 
+    @Override
     public void endpointCrashed(Endpoint endpoint) {}
 
+    @Override
     public void endpointNoLongerInUse(Endpoint endpoint) {}
 
+    @Override
     public void endpointNowInUse(Endpoint endpoint) {}
   }
 
-  public String getPoolName();
+  String getPoolName();
 }

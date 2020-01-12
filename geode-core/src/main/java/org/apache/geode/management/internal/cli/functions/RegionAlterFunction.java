@@ -14,40 +14,40 @@
  */
 package org.apache.geode.management.internal.cli.functions;
 
+import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 import org.apache.logging.log4j.Logger;
 
-import org.apache.geode.SystemFailure;
 import org.apache.geode.cache.AttributesMutator;
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.CacheListener;
-import org.apache.geode.cache.CacheLoader;
-import org.apache.geode.cache.CacheWriter;
+import org.apache.geode.cache.CustomExpiry;
 import org.apache.geode.cache.ExpirationAction;
 import org.apache.geode.cache.ExpirationAttributes;
-import org.apache.geode.cache.Region;
-import org.apache.geode.cache.execute.FunctionAdapter;
+import org.apache.geode.cache.configuration.DeclarableType;
+import org.apache.geode.cache.configuration.RegionAttributesType;
+import org.apache.geode.cache.configuration.RegionConfig;
 import org.apache.geode.cache.execute.FunctionContext;
-import org.apache.geode.cache.execute.ResultSender;
-import org.apache.geode.internal.ClassPathLoader;
-import org.apache.geode.internal.InternalEntity;
 import org.apache.geode.internal.cache.AbstractRegion;
-import org.apache.geode.internal.cache.xmlcache.CacheXml;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.management.internal.cli.CliUtil;
-import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.cli.util.RegionPath;
-import org.apache.geode.management.internal.configuration.domain.XmlEntity;
+import org.apache.geode.internal.cache.InternalCache;
+import org.apache.geode.internal.cache.PartitionedRegion;
+import org.apache.geode.internal.cache.partitioned.PRLocallyDestroyedException;
+import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.management.cli.CliFunction;
+import org.apache.geode.management.cli.Result;
+import org.apache.geode.management.internal.configuration.domain.DeclarableTypeInstantiator;
 
 /**
  * Function used by the 'alter region' gfsh command to alter a region on each member.
  *
  * @since GemFire 8.0
  */
-public class RegionAlterFunction extends FunctionAdapter implements InternalEntity {
+public class RegionAlterFunction extends CliFunction<RegionConfig> {
   private static final Logger logger = LogService.getLogger();
-
   private static final long serialVersionUID = -4846425364943216425L;
 
   @Override
@@ -56,132 +56,98 @@ public class RegionAlterFunction extends FunctionAdapter implements InternalEnti
   }
 
   @Override
-  public void execute(FunctionContext context) {
-    ResultSender<Object> resultSender = context.getResultSender();
-
-    Cache cache = context.getCache();
-    String memberNameOrId =
-        CliUtil.getMemberNameOrId(cache.getDistributedSystem().getDistributedMember());
-
-    RegionFunctionArgs regionAlterArgs = (RegionFunctionArgs) context.getArguments();
-    try {
-      Region<?, ?> alteredRegion = alterRegion(cache, regionAlterArgs);
-      XmlEntity xmlEntity = new XmlEntity(CacheXml.REGION, "name", alteredRegion.getName());
-      resultSender.lastResult(new CliFunctionResult(memberNameOrId, xmlEntity,
-          CliStrings.format(CliStrings.ALTER_REGION__MSG__REGION_0_ALTERED_ON_1,
-              new Object[] {alteredRegion.getFullPath(), memberNameOrId})));
-
-    } catch (IllegalStateException e) {
-      logger.error(e.getMessage(), e);
-
-      resultSender.lastResult(new CliFunctionResult(memberNameOrId, false, e.getMessage()));
-    } catch (IllegalArgumentException e) {
-      logger.error(e.getMessage(), e);
-
-      resultSender.lastResult(new CliFunctionResult(memberNameOrId, false, e.getMessage()));
-    } catch (VirtualMachineError e) {
-      SystemFailure.initiateFailure(e);
-      throw e;
-
-    } catch (Throwable th) {
-      SystemFailure.checkFailure();
-      logger.error(th.getMessage(), th);
-
-      String exceptionMsg = th.getMessage();
-      if (exceptionMsg == null) {
-        exceptionMsg = CliUtil.stackTraceAsString(th);
-      }
-      resultSender.lastResult(new CliFunctionResult(memberNameOrId, false, exceptionMsg));
-    }
+  public String getId() {
+    return RegionAlterFunction.class.getName();
   }
 
-  private <K, V> Region<?, ?> alterRegion(Cache cache, RegionFunctionArgs regionAlterArgs) {
-    final String regionPathString = regionAlterArgs.getRegionPath();
+  @Override
+  public CliFunctionResult executeFunction(FunctionContext<RegionConfig> context) {
+    Cache cache = ((InternalCache) context.getCache()).getCacheForProcessingClientRequests();
+    RegionConfig deltaConfig = context.getArguments();
+    alterRegion(cache, deltaConfig);
 
-    RegionPath regionPath = new RegionPath(regionPathString);
+    return new CliFunctionResult(context.getMemberName(), Result.Status.OK,
+        String.format("Region %s altered", deltaConfig.getName()));
+  }
+
+  private static <T> Predicate<T> not(Predicate<T> t) {
+    return t.negate();
+  }
+
+  void alterRegion(Cache cache, RegionConfig deltaConfig) {
+    final String regionPathString = deltaConfig.getName();
+
     AbstractRegion region = (AbstractRegion) cache.getRegion(regionPathString);
     if (region == null) {
-      throw new IllegalArgumentException(CliStrings.format(
-          CliStrings.ALTER_REGION__MSG__REGION_DOES_NOT_EXIST_0, new Object[] {regionPath}));
+      throw new IllegalArgumentException(
+          String.format("Region does not exist: %s", regionPathString));
     }
 
-    AttributesMutator mutator = region.getAttributesMutator();
+    AttributesMutator<?, ?> mutator = region.getAttributesMutator();
+    RegionAttributesType regionAttributes = deltaConfig.getRegionAttributes();
 
-    if (regionAlterArgs.isCloningEnabled() != null) {
-      mutator.setCloningEnabled(regionAlterArgs.isCloningEnabled());
+    if (regionAttributes.isCloningEnabled() != null) {
+      mutator.setCloningEnabled(regionAttributes.isCloningEnabled());
       if (logger.isDebugEnabled()) {
         logger.debug("Region successfully altered - cloning");
       }
     }
 
-    if (regionAlterArgs.getEvictionMax() != null) {
-      mutator.getEvictionAttributesMutator().setMaximum(regionAlterArgs.getEvictionMax());
+    if (regionAttributes.getEvictionAttributes() != null) {
+      mutator.getEvictionAttributesMutator().setMaximum(Integer
+          .parseInt(regionAttributes.getEvictionAttributes().getLruEntryCount().getMaximum()));
       if (logger.isDebugEnabled()) {
         logger.debug("Region successfully altered - eviction attributes max");
       }
     }
 
     // Alter expiration attributes
-    final RegionFunctionArgs.ExpirationAttrs newEntryExpirationIdleTime =
-        regionAlterArgs.getEntryExpirationIdleTime();
-    if (newEntryExpirationIdleTime != null) {
-      mutator.setEntryIdleTimeout(
-          parseExpirationAttributes(newEntryExpirationIdleTime, region.getEntryIdleTimeout()));
-      if (logger.isDebugEnabled()) {
-        logger.debug("Region successfully altered - entry idle timeout");
-      }
-    }
+    updateExpirationAttributes(cache, regionAttributes.getEntryIdleTime(),
+        region.getEntryIdleTimeout(), mutator::setEntryIdleTimeout,
+        mutator::setCustomEntryIdleTimeout);
+    updateExpirationAttributes(cache, regionAttributes.getEntryTimeToLive(),
+        region.getEntryTimeToLive(), mutator::setEntryTimeToLive,
+        mutator::setCustomEntryTimeToLive);
+    updateExpirationAttributes(cache, regionAttributes.getRegionIdleTime(),
+        region.getRegionIdleTimeout(), mutator::setRegionIdleTimeout, null);
+    updateExpirationAttributes(cache, regionAttributes.getRegionTimeToLive(),
+        region.getRegionTimeToLive(), mutator::setRegionTimeToLive, null);
 
-    final RegionFunctionArgs.ExpirationAttrs newEntryExpirationTTL =
-        regionAlterArgs.getEntryExpirationTTL();
-    if (newEntryExpirationTTL != null) {
-      mutator.setEntryTimeToLive(
-          parseExpirationAttributes(newEntryExpirationTTL, region.getEntryTimeToLive()));
-      if (logger.isDebugEnabled()) {
-        logger.debug("Region successfully altered - entry TTL");
-      }
-    }
+    final Set<String> newGatewaySenderIds = regionAttributes.getGatewaySenderIdsAsSet();
+    final Set<String> newAsyncEventQueueIds = regionAttributes.getAsyncEventQueueIdsAsSet();
 
-    final RegionFunctionArgs.ExpirationAttrs newRegionExpirationIdleTime =
-        regionAlterArgs.getRegionExpirationIdleTime();
-    if (newRegionExpirationIdleTime != null) {
-      mutator.setRegionIdleTimeout(
-          parseExpirationAttributes(newRegionExpirationIdleTime, region.getRegionIdleTimeout()));
-      if (logger.isDebugEnabled()) {
-        logger.debug("Region successfully altered - region idle timeout");
-      }
-    }
+    if (region instanceof PartitionedRegion) {
+      Set<String> senderIds = new HashSet<>();
 
-    final RegionFunctionArgs.ExpirationAttrs newRegionExpirationTTL =
-        regionAlterArgs.getRegionExpirationTTL();
-    if (newRegionExpirationTTL != null) {
-      mutator.setRegionTimeToLive(
-          parseExpirationAttributes(newRegionExpirationTTL, region.getRegionTimeToLive()));
-      if (logger.isDebugEnabled()) {
-        logger.debug("Region successfully altered - region TTL");
+      if (newGatewaySenderIds != null) {
+        validateParallelGatewaySenderIDs((PartitionedRegion) region, newGatewaySenderIds);
+        senderIds.addAll(newGatewaySenderIds);
+      } else if (region.getGatewaySenderIds() != null) {
+        senderIds.addAll(region.getAllGatewaySenderIds());
       }
+
+      if (newAsyncEventQueueIds != null) {
+        validateParallelAsynchronousEventQueueIDs((PartitionedRegion) region,
+            newAsyncEventQueueIds);
+        senderIds.addAll(newAsyncEventQueueIds);
+      } else if (region.getAsyncEventQueueIds() != null) {
+        senderIds.addAll(region.getAsyncEventQueueIds());
+      }
+
+      ((PartitionedRegion) region)
+          .updatePRConfigWithNewSetOfAsynchronousEventDispatchers(senderIds);
     }
 
     // Alter Gateway Sender Ids
-    final Set<String> newGatewaySenderIds = regionAlterArgs.getGatewaySenderIds();
     if (newGatewaySenderIds != null) {
-
-      // Remove old gateway sender ids that aren't in the new list
       Set<String> oldGatewaySenderIds = region.getGatewaySenderIds();
-      if (!oldGatewaySenderIds.isEmpty()) {
-        for (String gatewaySenderId : oldGatewaySenderIds) {
-          if (!newGatewaySenderIds.contains(gatewaySenderId)) {
-            mutator.removeGatewaySenderId(gatewaySenderId);
-          }
-        }
-      }
+      // Remove old gateway sender ids that aren't in the new list
+      oldGatewaySenderIds.stream().filter(not(newGatewaySenderIds::contains))
+          .forEach(mutator::removeGatewaySenderId);
 
       // Add new gateway sender ids that don't already exist
-      for (String gatewaySenderId : newGatewaySenderIds) {
-        if (!oldGatewaySenderIds.contains(gatewaySenderId)) {
-          mutator.addGatewaySenderId(gatewaySenderId);
-        }
-      }
+      newGatewaySenderIds.stream().filter(not(oldGatewaySenderIds::contains))
+          .forEach(mutator::addGatewaySenderId);
 
       if (logger.isDebugEnabled()) {
         logger.debug("Region successfully altered - gateway sender IDs");
@@ -189,25 +155,16 @@ public class RegionAlterFunction extends FunctionAdapter implements InternalEnti
     }
 
     // Alter Async Queue Ids
-    final Set<String> newAsyncEventQueueIds = regionAlterArgs.getAsyncEventQueueIds();
     if (newAsyncEventQueueIds != null) {
+      Set<String> oldAsyncEventQueueIds = region.getAsyncEventQueueIds();
 
       // Remove old async event queue ids that aren't in the new list
-      Set<String> oldAsyncEventQueueIds = region.getAsyncEventQueueIds();
-      if (!oldAsyncEventQueueIds.isEmpty()) {
-        for (String asyncEventQueueId : oldAsyncEventQueueIds) {
-          if (!newAsyncEventQueueIds.contains(asyncEventQueueId)) {
-            mutator.removeAsyncEventQueueId(asyncEventQueueId);
-          }
-        }
-      }
+      oldAsyncEventQueueIds.stream().filter(not(newAsyncEventQueueIds::contains))
+          .forEach(mutator::removeAsyncEventQueueId);
 
       // Add new async event queue ids that don't already exist
-      for (String asyncEventQueueId : newAsyncEventQueueIds) {
-        if (!oldAsyncEventQueueIds.contains(asyncEventQueueId)) {
-          mutator.addAsyncEventQueueId(asyncEventQueueId);
-        }
-      }
+      newAsyncEventQueueIds.stream().filter(not(oldAsyncEventQueueIds::contains))
+          .forEach(mutator::addAsyncEventQueueId);
 
       if (logger.isDebugEnabled()) {
         logger.debug("Region successfully altered - async event queue IDs");
@@ -215,51 +172,34 @@ public class RegionAlterFunction extends FunctionAdapter implements InternalEnti
     }
 
     // Alter Cache Listeners
-    final Set<String> newCacheListenerNames = regionAlterArgs.getCacheListeners();
-    if (newCacheListenerNames != null) {
+    final List<DeclarableType> newCacheListeners = regionAttributes.getCacheListeners();
 
-      // Remove old cache listeners that aren't in the new list
+    // user specified a new set of cache listeners
+    if (!newCacheListeners.isEmpty()) {
+      // remove the old ones, even if the new set includes the same class name, the init properties
+      // might be different
       CacheListener[] oldCacheListeners = region.getCacheListeners();
       for (CacheListener oldCacheListener : oldCacheListeners) {
-        if (!newCacheListenerNames.contains(oldCacheListener.getClass().getName())) {
-          mutator.removeCacheListener(oldCacheListener);
-        }
+        mutator.removeCacheListener(oldCacheListener);
       }
 
-      // Add new cache listeners that don't already exist
-      for (String newCacheListenerName : newCacheListenerNames) {
-        if (newCacheListenerName.isEmpty()) {
-          continue;
-        }
-        boolean nameFound = false;
-        for (CacheListener oldCacheListener : oldCacheListeners) {
-          if (oldCacheListener.getClass().getName().equals(newCacheListenerName)) {
-            nameFound = true;
-            break;
-          }
-        }
-
-        if (!nameFound) {
-          Class<CacheListener<K, V>> cacheListenerKlass =
-              forName(newCacheListenerName, CliStrings.ALTER_REGION__CACHELISTENER);
-          mutator.addCacheListener(
-              newInstance(cacheListenerKlass, CliStrings.ALTER_REGION__CACHELISTENER));
+      // Add new cache listeners
+      for (DeclarableType newCacheListener : newCacheListeners) {
+        if (!newCacheListener.equals(DeclarableType.EMPTY)) {
+          mutator.addCacheListener(DeclarableTypeInstantiator.newInstance(newCacheListener, cache));
         }
       }
-
       if (logger.isDebugEnabled()) {
         logger.debug("Region successfully altered - cache listeners");
       }
     }
 
-    final String cacheLoader = regionAlterArgs.getCacheLoader();
+    final DeclarableType cacheLoader = regionAttributes.getCacheLoader();
     if (cacheLoader != null) {
-      if (cacheLoader.isEmpty()) {
+      if (cacheLoader.equals(DeclarableType.EMPTY)) {
         mutator.setCacheLoader(null);
       } else {
-        Class<CacheLoader<K, V>> cacheLoaderKlass =
-            forName(cacheLoader, CliStrings.ALTER_REGION__CACHELOADER);
-        mutator.setCacheLoader(newInstance(cacheLoaderKlass, CliStrings.ALTER_REGION__CACHELOADER));
+        mutator.setCacheLoader(DeclarableTypeInstantiator.newInstance(cacheLoader, cache));
       }
 
       if (logger.isDebugEnabled()) {
@@ -267,94 +207,80 @@ public class RegionAlterFunction extends FunctionAdapter implements InternalEnti
       }
     }
 
-    final String cacheWriter = regionAlterArgs.getCacheWriter();
+    final DeclarableType cacheWriter = regionAttributes.getCacheWriter();
     if (cacheWriter != null) {
-      if (cacheWriter.isEmpty()) {
+      if (cacheWriter.equals(DeclarableType.EMPTY)) {
         mutator.setCacheWriter(null);
       } else {
-        Class<CacheWriter<K, V>> cacheWriterKlass =
-            forName(cacheWriter, CliStrings.ALTER_REGION__CACHEWRITER);
-        mutator.setCacheWriter(newInstance(cacheWriterKlass, CliStrings.ALTER_REGION__CACHEWRITER));
+        mutator.setCacheWriter(DeclarableTypeInstantiator.newInstance(cacheWriter, cache));
       }
 
       if (logger.isDebugEnabled()) {
         logger.debug("Region successfully altered - cache writer");
       }
     }
-
-    return region;
   }
 
-  /**
-   * Converts the expiration attributes passed as arguments from the command to the function into a
-   * type suitable for applying to a Region.
-   *
-   * @param newExpirationAttrs Attributes supplied by the command
-   * @param oldExpirationAttributes Attributes currently applied to the Region.
-   *
-   * @return A new pair of expiration attributes taken from the command if it was given or the
-   *         current value from the Region if it was not.
-   */
-  private ExpirationAttributes parseExpirationAttributes(
-      RegionFunctionArgs.ExpirationAttrs newExpirationAttrs,
-      ExpirationAttributes oldExpirationAttributes) {
-
-    ExpirationAction action = oldExpirationAttributes.getAction();
-    int timeout = oldExpirationAttributes.getTimeout();
-
-    if (newExpirationAttrs.getTime() != null) {
-      timeout = newExpirationAttrs.getTime();
-    }
-    if (newExpirationAttrs.getAction() != null) {
-      action = newExpirationAttrs.getAction();
+  private void updateExpirationAttributes(Cache cache,
+      RegionAttributesType.ExpirationAttributesType newAttributes,
+      ExpirationAttributes existingAttributes, Consumer<ExpirationAttributes> mutator1,
+      Consumer<CustomExpiry> mutator2) {
+    if (newAttributes == null) {
+      return;
     }
 
-    return new ExpirationAttributes(timeout, action);
-  }
+    if (newAttributes.hasTimoutOrAction() && existingAttributes != null) {
+      int existingTimeout = existingAttributes.getTimeout();
+      ExpirationAction existingAction = existingAttributes.getAction();
 
-  @SuppressWarnings("unchecked")
-  private static <K> Class<K> forName(String classToLoadName, String neededFor) {
-    Class<K> loadedClass = null;
-    try {
-      // Set Constraints
-      ClassPathLoader classPathLoader = ClassPathLoader.getLatest();
-      if (classToLoadName != null && !classToLoadName.isEmpty()) {
-        loadedClass = (Class<K>) classPathLoader.forName(classToLoadName);
+      if (newAttributes.getTimeout() != null) {
+        existingTimeout = Integer.parseInt(newAttributes.getTimeout());
       }
-    } catch (ClassNotFoundException e) {
-      throw new RuntimeException(
-          CliStrings.format(CliStrings.ALTER_REGION__MSG__COULD_NOT_FIND_CLASS_0_SPECIFIED_FOR_1,
-              classToLoadName, neededFor),
-          e);
-    } catch (ClassCastException e) {
-      throw new RuntimeException(CliStrings.format(
-          CliStrings.ALTER_REGION__MSG__CLASS_SPECIFIED_FOR_0_SPECIFIED_FOR_1_IS_NOT_OF_EXPECTED_TYPE,
-          classToLoadName, neededFor), e);
+
+      if (newAttributes.getAction() != null) {
+        existingAction = ExpirationAction.fromXmlString(newAttributes.getAction());
+      }
+
+      mutator1.accept(new ExpirationAttributes(existingTimeout, existingAction));
     }
 
-    return loadedClass;
+    if (mutator2 == null) {
+      return;
+    }
+
+    if (newAttributes.hasCustomExpiry()) {
+      DeclarableType newCustomExpiry = newAttributes.getCustomExpiry();
+
+      if (newCustomExpiry.equals(DeclarableType.EMPTY)) {
+        mutator2.accept(null);
+      } else {
+        mutator2.accept(DeclarableTypeInstantiator.newInstance(newCustomExpiry, cache));
+      }
+    }
+
+    if (logger.isDebugEnabled()) {
+      logger.debug("Region successfully altered - entry idle timeout");
+    }
   }
 
-  private static <K> K newInstance(Class<K> klass, String neededFor) {
-    K instance = null;
+  private void validateParallelGatewaySenderIDs(PartitionedRegion region,
+      Set<String> newGatewaySenderIds) {
     try {
-      instance = klass.newInstance();
-    } catch (InstantiationException e) {
-      throw new RuntimeException(CliStrings.format(
-          CliStrings.ALTER_REGION__MSG__COULD_NOT_INSTANTIATE_CLASS_0_SPECIFIED_FOR_1, klass,
-          neededFor), e);
-    } catch (IllegalAccessException e) {
-      throw new RuntimeException(
-          CliStrings.format(CliStrings.ALTER_REGION__MSG__COULD_NOT_ACCESS_CLASS_0_SPECIFIED_FOR_1,
-              klass, neededFor),
-          e);
+      Set<String> parallelSenders = region.filterOutNonParallelGatewaySenders(newGatewaySenderIds);
+      region.validateParallelAsynchronousEventDispatcherIds(parallelSenders);
+    } catch (PRLocallyDestroyedException e) {
+      throw new IllegalStateException("Partitioned Region not found registered", e);
     }
-
-    return instance;
   }
 
-  @Override
-  public String getId() {
-    return RegionAlterFunction.class.getName();
+  private void validateParallelAsynchronousEventQueueIDs(PartitionedRegion region,
+      Set<String> newAsyncEventQueueIds) {
+    try {
+      Set<String> parallelSenders =
+          region.filterOutNonParallelAsyncEventQueues(newAsyncEventQueueIds);
+      region.validateParallelAsynchronousEventDispatcherIds(parallelSenders);
+    } catch (PRLocallyDestroyedException e) {
+      throw new IllegalStateException("Partitioned Region not found registered", e);
+    }
   }
 }

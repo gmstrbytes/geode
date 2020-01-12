@@ -26,6 +26,7 @@ import org.apache.geode.cache.lucene.internal.LuceneServiceImpl;
 import org.apache.geode.cache.lucene.internal.cli.LuceneIndexDetails;
 import org.apache.geode.cache.lucene.internal.cli.LuceneIndexInfo;
 import org.apache.geode.internal.InternalEntity;
+import org.apache.geode.internal.cache.execute.InternalFunction;
 
 /**
  * The LuceneDescribeIndexFunction class is a function used to collect the information on a
@@ -41,14 +42,16 @@ import org.apache.geode.internal.InternalEntity;
  * @see LuceneIndexInfo
  */
 @SuppressWarnings("unused")
-public class LuceneDescribeIndexFunction implements InternalEntity, Function {
+public class LuceneDescribeIndexFunction implements InternalFunction {
 
   private static final long serialVersionUID = 1776072528558670172L;
 
+  @Override
   public String getId() {
     return LuceneDescribeIndexFunction.class.getName();
   }
 
+  @Override
   public void execute(final FunctionContext context) {
     LuceneIndexDetails result = null;
 

@@ -12,13 +12,9 @@
  * or implied. See the License for the specific language governing permissions and limitations under
  * the License.
  */
-/**
- *
- */
 package org.apache.geode.internal.cache.xmlcache;
 
 import java.util.IllegalFormatException;
-import java.util.Properties;
 
 /**
  * @since GemFire 6.6
@@ -26,10 +22,10 @@ import java.util.Properties;
 public interface PropertyResolver {
 
   /** If system properties are overridden by Gemfire properties */
-  public static final int SYSTEM_PROPERTIES_OVERRIDE = 0;
+  int SYSTEM_PROPERTIES_OVERRIDE = 0;
 
   /** if system properties are not overridden by any other properties */
-  public static final int NO_SYSTEM_PROPERTIES_OVERRIDE = 1;
+  int NO_SYSTEM_PROPERTIES_OVERRIDE = 1;
 
   /**
    * Resolves the given property string either from system properties or given properties. and
@@ -37,17 +33,14 @@ public interface PropertyResolver {
    * is found then {@link IllegalFormatException} would be thrown based on
    * <code>ignoreUnresolvedProperties</code> flag being set by {@link CacheXmlParser}.
    *
-   * @param replaceString
-   * @return resolvedString
    */
-  public String resolveReplaceString(String replaceString);
+  String resolveReplaceString(String replaceString);
 
-  public boolean isIgnoreUnresolvedProperties();
+  boolean isIgnoreUnresolvedProperties();
 
-  public int getPropertyOverridden();
+  int getPropertyOverridden();
 
-  public String processUnresolvableString(String stringWithPrefixAndSuffix, String prefix,
-      String suffix);
+  String processUnresolvableString(String stringWithPrefixAndSuffix, String prefix, String suffix);
 
-  public String processUnresolvableString(String string);
+  String processUnresolvableString(String string);
 }

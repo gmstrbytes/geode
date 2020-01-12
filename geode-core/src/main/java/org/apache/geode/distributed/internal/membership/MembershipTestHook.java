@@ -12,25 +12,24 @@
  * or implied. See the License for the specific language governing permissions and limitations under
  * the License.
  */
-/**
- *
- */
 package org.apache.geode.distributed.internal.membership;
 
 /**
- * Test hook for hydra test development
- *
- *
+ * Test hook for membership test development
  */
 public interface MembershipTestHook {
+
   /**
    * test hook invoked prior to shutting down distributed system
    */
-  public void beforeMembershipFailure(String reason, Throwable cause);
+  default void beforeMembershipFailure(String reason, Throwable cause) {
+    // nothing
+  }
 
   /**
    * test hook invoked after shutting down distributed system
    */
-  public void afterMembershipFailure(String reason, Throwable cause);
-
+  default void afterMembershipFailure(String reason, Throwable cause) {
+    // nothing
+  }
 }

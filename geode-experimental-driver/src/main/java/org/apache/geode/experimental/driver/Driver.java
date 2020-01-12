@@ -33,7 +33,6 @@ public interface Driver {
    * connected.
    *
    * @return Set of strings of names that uniquely identify regions.
-   * @throws IOException
    */
   Set<String> getRegionNames() throws IOException;
 
@@ -47,4 +46,28 @@ public interface Driver {
    * @return the region object
    */
   <K, V> Region<K, V> getRegion(String regionName);
+
+  /**
+   * Creates a new query service or retrieves an extant query service.
+   *
+   * @return Query service.
+   */
+  QueryService getQueryService();
+
+  /**
+   * Creates a new function service or retrieves an extant function service.
+   *
+   * @return Function service.
+   */
+  FunctionService getFunctionService();
+
+  /**
+   * Close this Driver, rendering it useless
+   */
+  void close();
+
+  /**
+   * Is this driver connected?
+   */
+  boolean isConnected();
 }

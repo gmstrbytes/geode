@@ -14,14 +14,13 @@
  */
 package org.apache.geode.distributed.internal.membership.gms.interfaces;
 
-import org.apache.geode.distributed.internal.DistributionMessage;
 
 /**
  * MessageHandler processes a message received by Messenger. Handlers are registered with Messenger
  * to consume specific classes of message.
  */
-public interface MessageHandler {
+public interface MessageHandler<T> {
 
-  public void processMessage(DistributionMessage m);
+  void processMessage(T m);
 
 }

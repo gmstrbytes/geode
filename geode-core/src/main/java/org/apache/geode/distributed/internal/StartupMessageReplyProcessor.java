@@ -16,8 +16,8 @@ package org.apache.geode.distributed.internal;
 
 import java.util.Set;
 
+import org.apache.geode.LogWriter;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.i18n.LogWriterI18n;
 
 public class StartupMessageReplyProcessor extends ReplyProcessor21 {
   /** has a rejection message (license mismatch, etc) been received? */
@@ -28,9 +28,9 @@ public class StartupMessageReplyProcessor extends ReplyProcessor21 {
    * receive replies from admin dm but they do not have the authority to accept us into the group.
    */
   private boolean receivedAcceptance;
-  private DM dm;
+  private DistributionManager dm;
 
-  public StartupMessageReplyProcessor(DM dm, Set recipients) {
+  public StartupMessageReplyProcessor(DistributionManager dm, Set recipients) {
     super(dm, recipients);
     this.dm = dm;
   }
@@ -61,12 +61,11 @@ public class StartupMessageReplyProcessor extends ReplyProcessor21 {
   /**
    * Adds any unresponsive members to s
    */
-  void collectUnresponsiveMembers(Set s) {
+  void collectUnresponsiveMembers(Set<InternalDistributedMember> s) {
     if (stillWaiting()) {
       InternalDistributedMember[] memberList = getMembers();
       synchronized (memberList) {
-        for (int i = 0; i < memberList.length; i++) {
-          InternalDistributedMember m = memberList[i];
+        for (InternalDistributedMember m : memberList) {
           if (m != null) {
             s.add(m);
           }
@@ -77,7 +76,7 @@ public class StartupMessageReplyProcessor extends ReplyProcessor21 {
 
   @Override
   public void process(DistributionMessage msg) {
-    final LogWriterI18n log = this.system.getLogWriter().convertToLogWriterI18n();
+    final LogWriter log = this.system.getLogWriter();
     super.process(msg);
     if (log.fineEnabled()) {
       log.fine(this.toString() + " done processing " + msg + " from " + msg.getSender());
@@ -87,7 +86,7 @@ public class StartupMessageReplyProcessor extends ReplyProcessor21 {
   @Override
   protected void preWait() {
     this.waiting = true;
-    DM mgr = getDistributionManager();
+    DistributionManager mgr = getDistributionManager();
     this.statStart = mgr.getStats().startReplyWait();
     // Note we do not use addMembershipListenerAndGetDistributionManagerIds
     // because this is the startup message and we do not yet have any

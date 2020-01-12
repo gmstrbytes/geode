@@ -41,7 +41,7 @@ import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.partitioned.PartitionedRegionRebalanceOp;
 import org.apache.geode.internal.cache.partitioned.rebalance.CompositeDirector;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * Implements {@code RebalanceOperation} for rebalancing Cache resources.
@@ -125,6 +125,7 @@ public class RebalanceOperationImpl implements RebalanceOperation {
 
       try {
         Future<RebalanceResults> future = ex.submit(new Callable<RebalanceResults>() {
+          @Override
           public RebalanceResults call() {
             try {
               RebalanceResultsImpl results = new RebalanceResultsImpl();
@@ -168,6 +169,7 @@ public class RebalanceOperationImpl implements RebalanceOperation {
     }
   }
 
+  @Override
   public boolean cancel() {
     cancelled.set(true);
 
@@ -185,6 +187,7 @@ public class RebalanceOperationImpl implements RebalanceOperation {
     return true;
   }
 
+  @Override
   public RebalanceResults getResults() throws CancellationException, InterruptedException {
     RebalanceResultsImpl results = new RebalanceResultsImpl();
     List<Future<RebalanceResults>> frlist = getFutureList();
@@ -206,6 +209,7 @@ public class RebalanceOperationImpl implements RebalanceOperation {
     return results;
   }
 
+  @Override
   public RebalanceResults getResults(long timeout, TimeUnit unit)
       throws CancellationException, TimeoutException, InterruptedException {
     long endTime = unit.toNanos(timeout) + System.nanoTime();
@@ -230,6 +234,7 @@ public class RebalanceOperationImpl implements RebalanceOperation {
     return results;
   }
 
+  @Override
   public boolean isCancelled() {
     return this.cancelled.get();
   }
@@ -242,6 +247,7 @@ public class RebalanceOperationImpl implements RebalanceOperation {
     return true;
   }
 
+  @Override
   public boolean isDone() {
     return this.cancelled.get() || isAllDone();
   }

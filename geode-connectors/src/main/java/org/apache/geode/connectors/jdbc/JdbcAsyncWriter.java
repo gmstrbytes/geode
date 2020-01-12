@@ -14,8 +14,9 @@
  */
 package org.apache.geode.connectors.jdbc;
 
+import java.sql.SQLException;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.LongAdder;
 
 import org.apache.logging.log4j.Logger;
 
@@ -23,11 +24,10 @@ import org.apache.geode.CopyHelper;
 import org.apache.geode.annotations.Experimental;
 import org.apache.geode.cache.asyncqueue.AsyncEvent;
 import org.apache.geode.cache.asyncqueue.AsyncEventListener;
-import org.apache.geode.cache.query.internal.DefaultQuery;
 import org.apache.geode.connectors.jdbc.internal.AbstractJdbcCallback;
 import org.apache.geode.connectors.jdbc.internal.SqlHandler;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.pdx.PdxInstance;
 
 /**
@@ -39,9 +39,10 @@ import org.apache.geode.pdx.PdxInstance;
 public class JdbcAsyncWriter extends AbstractJdbcCallback implements AsyncEventListener {
   private static final Logger logger = LogService.getLogger();
 
-  private AtomicLong totalEvents = new AtomicLong();
-  private AtomicLong successfulEvents = new AtomicLong();
-  private AtomicLong failedEvents = new AtomicLong();
+  private final LongAdder totalEvents = new LongAdder();
+  private final LongAdder successfulEvents = new LongAdder();
+  private final LongAdder failedEvents = new LongAdder();
+  private final LongAdder ignoredEvents = new LongAdder();
 
   @SuppressWarnings("unused")
   public JdbcAsyncWriter() {
@@ -49,8 +50,8 @@ public class JdbcAsyncWriter extends AbstractJdbcCallback implements AsyncEventL
   }
 
   // Constructor for test purposes only
-  JdbcAsyncWriter(SqlHandler sqlHandler) {
-    super(sqlHandler);
+  JdbcAsyncWriter(SqlHandler sqlHandler, InternalCache cache) {
+    super(sqlHandler, cache);
   }
 
   @Override
@@ -58,50 +59,68 @@ public class JdbcAsyncWriter extends AbstractJdbcCallback implements AsyncEventL
     changeTotalEvents(events.size());
 
     if (!events.isEmpty()) {
-      checkInitialized((InternalCache) events.get(0).getRegion().getRegionService());
+      try {
+        checkInitialized(events.get(0).getRegion());
+      } catch (RuntimeException ex) {
+        changeFailedEvents(events.size());
+        logger.error("Exception initializing JdbcAsyncWriter", ex);
+        return true;
+      }
     }
 
-    DefaultQuery.setPdxReadSerialized(true);
+    Boolean initialPdxReadSerialized = cache.getPdxReadSerializedOverride();
+    cache.setPdxReadSerializedOverride(true);
     try {
       for (AsyncEvent event : events) {
+        if (eventCanBeIgnored(event.getOperation())) {
+          changeIgnoredEvents(1);
+          continue;
+        }
         try {
           getSqlHandler().write(event.getRegion(), event.getOperation(), event.getKey(),
               getPdxInstance(event));
           changeSuccessfulEvents(1);
-        } catch (RuntimeException ex) {
+        } catch (SQLException | RuntimeException ex) {
           changeFailedEvents(1);
           logger.error("Exception processing event {}", event, ex);
         }
       }
     } finally {
-      DefaultQuery.setPdxReadSerialized(false);
+      cache.setPdxReadSerializedOverride(initialPdxReadSerialized);
     }
-
     return true;
   }
 
   long getTotalEvents() {
-    return totalEvents.get();
+    return totalEvents.longValue();
   }
 
   long getSuccessfulEvents() {
-    return successfulEvents.get();
+    return successfulEvents.longValue();
   }
 
   long getFailedEvents() {
-    return failedEvents.get();
+    return failedEvents.longValue();
+  }
+
+  long getIgnoredEvents() {
+    return ignoredEvents.longValue();
   }
 
   private void changeSuccessfulEvents(long delta) {
-    successfulEvents.addAndGet(delta);
+    successfulEvents.add(delta);
   }
 
   private void changeFailedEvents(long delta) {
-    failedEvents.addAndGet(delta);
+    failedEvents.add(delta);
   }
 
   private void changeTotalEvents(long delta) {
-    totalEvents.addAndGet(delta);
+    totalEvents.add(delta);
+  }
+
+  private void changeIgnoredEvents(long delta) {
+    ignoredEvents.add(delta);
   }
 
   /**

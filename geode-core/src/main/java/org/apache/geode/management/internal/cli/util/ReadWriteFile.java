@@ -28,7 +28,7 @@ import java.util.List;
 
 import org.apache.geode.cache.execute.FunctionException;
 import org.apache.geode.internal.logging.LogWriterImpl;
-import org.apache.geode.internal.logging.log4j.LogLevel;
+import org.apache.geode.logging.internal.log4j.LogLevel;
 import org.apache.geode.management.internal.cli.GfshParser;
 
 /**
@@ -38,9 +38,6 @@ import org.apache.geode.management.internal.cli.GfshParser;
  */
 public class ReadWriteFile {
 
-  /**
-   * @param args
-   */
   public static void main(String[] args) {
     if (args.length < 6 || args.length > 6) {
       throw new IllegalArgumentException(
@@ -87,8 +84,7 @@ public class ReadWriteFile {
       // get all the levels below the one mentioned by user
       List<String> logLevels = new ArrayList<>();
       if (onlyLogLevel.toLowerCase().equals("false")) {
-        int[] intLogLevels = LogWriterImpl.allLevels;
-        for (int level : intLogLevels) {
+        for (int level : LogWriterImpl.allLevels) {
           if (level >= LogLevel.getLogWriterLevel(logLevel)) {
             logLevels.add(LogWriterImpl.levelToString(level).toLowerCase());
           }
@@ -153,13 +149,9 @@ public class ReadWriteFile {
           }
         }
       }
-      if (input != null) {
-        input.close();
-      }
-      if (output != null) {
-        output.flush();
-        output.close();
-      }
+      input.close();
+      output.flush();
+      output.close();
       return ("Successfully written file " + logFileName);
     } catch (FunctionException ex) {
       return ("readWriteFile FunctionException " + ex.getMessage());

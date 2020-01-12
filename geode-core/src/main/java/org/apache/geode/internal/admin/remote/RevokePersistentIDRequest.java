@@ -22,14 +22,16 @@ import java.util.Set;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.CancelException;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.ReplyException;
 import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.persistence.PersistentMemberManager;
 import org.apache.geode.internal.cache.persistence.PersistentMemberPattern;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * An instruction to all members that they should forget about the persistent member described by
@@ -50,7 +52,7 @@ public class RevokePersistentIDRequest extends CliLegacyMessage {
     this.pattern = pattern;
   }
 
-  public static void send(DM dm, PersistentMemberPattern pattern) {
+  public static void send(DistributionManager dm, PersistentMemberPattern pattern) {
     Set recipients = dm.getOtherDistributionManagerIds();
     RevokePersistentIDRequest request = new RevokePersistentIDRequest(pattern);
     request.setRecipients(recipients);
@@ -69,11 +71,11 @@ public class RevokePersistentIDRequest extends CliLegacyMessage {
     } catch (InterruptedException e) {
       logger.warn(e);
     }
-    request.createResponse((DistributionManager) dm);
+    request.createResponse((ClusterDistributionManager) dm);
   }
 
   @Override
-  protected AdminResponse createResponse(DM dm) {
+  protected AdminResponse createResponse(DistributionManager dm) {
     InternalCache cache = dm.getCache();
     if (cache != null && !cache.isClosed()) {
       PersistentMemberManager mm = cache.getPersistentMemberManager();
@@ -89,15 +91,17 @@ public class RevokePersistentIDRequest extends CliLegacyMessage {
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     this.pattern = new PersistentMemberPattern();
     InternalDataSerializer.invokeFromData(this.pattern, in);
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     InternalDataSerializer.invokeToData(this.pattern, out);
   }
 }

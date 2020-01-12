@@ -15,6 +15,8 @@
 package org.apache.geode.admin.internal;
 
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.net.InetAddressUtilsWithLogging.toInetAddress;
+import static org.apache.geode.internal.net.InetAddressUtilsWithLogging.validateHost;
 
 import java.net.InetAddress;
 import java.util.Properties;
@@ -22,8 +24,7 @@ import java.util.Properties;
 import org.apache.geode.GemFireConfigException;
 import org.apache.geode.admin.DistributionLocator;
 import org.apache.geode.admin.DistributionLocatorConfig;
-import org.apache.geode.distributed.internal.tcpserver.*;
-import org.apache.geode.internal.i18n.LocalizedStrings;
+import org.apache.geode.distributed.internal.tcpserver.TcpClient;
 
 /**
  * Provides an implementation of <code>DistributionLocatorConfig</code>.
@@ -73,7 +74,7 @@ public class DistributionLocatorConfigImpl extends ManagedEntityConfigImpl
       if (bindAddress != null) {
         info = client.getInfo(bindAddress, port);
       } else {
-        info = client.getInfo(InetAddressUtil.toInetAddress(host), port);
+        info = client.getInfo(toInetAddress(host), port);
       }
       if (info == null) {
         return null;
@@ -121,30 +122,36 @@ public class DistributionLocatorConfigImpl extends ManagedEntityConfigImpl
     return this.locator != null && this.locator.isRunning();
   }
 
+  @Override
   public int getPort() {
     return this.port;
   }
 
+  @Override
   public void setPort(int port) {
     checkReadOnly();
     this.port = port;
     configChanged();
   }
 
+  @Override
   public String getBindAddress() {
     return this.bindAddress;
   }
 
+  @Override
   public void setBindAddress(String bindAddress) {
     checkReadOnly();
     this.bindAddress = bindAddress;
     configChanged();
   }
 
+  @Override
   public void setDistributedSystemProperties(Properties props) {
     this.dsProperties = props;
   }
 
+  @Override
   public Properties getDistributedSystemProperties() {
     return this.dsProperties;
   }
@@ -155,15 +162,15 @@ public class DistributionLocatorConfigImpl extends ManagedEntityConfigImpl
 
     if (port < MIN_PORT || port > MAX_PORT) {
       throw new IllegalArgumentException(
-          LocalizedStrings.DistributionLocatorConfigImpl_PORT_0_MUST_BE_AN_INTEGER_BETWEEN_1_AND_2
-              .toLocalizedString(new Object[] {Integer.valueOf(port), Integer.valueOf(MIN_PORT),
+          String.format("Port ( %s ) must be an integer between %s and %s",
+              new Object[] {Integer.valueOf(port), Integer.valueOf(MIN_PORT),
                   Integer.valueOf(MAX_PORT)}));
     }
 
-    if (this.bindAddress != null && InetAddressUtil.validateHost(this.bindAddress) == null) {
+    if (this.bindAddress != null && validateHost(this.bindAddress) == null) {
       throw new IllegalArgumentException(
-          LocalizedStrings.DistributionLocatorConfigImpl_INVALID_HOST_0
-              .toLocalizedString(this.bindAddress));
+          String.format("Invalid host %s",
+              this.bindAddress));
     }
   }
 

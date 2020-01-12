@@ -18,8 +18,6 @@ package org.apache.geode.internal.cache;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
-import java.util.Collections;
-import java.util.List;
 
 import org.apache.logging.log4j.Logger;
 
@@ -28,12 +26,13 @@ import org.apache.geode.cache.CacheEvent;
 import org.apache.geode.cache.CacheWriterException;
 import org.apache.geode.cache.EntryNotFoundException;
 import org.apache.geode.cache.TimeoutException;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DirectReplyProcessor;
-import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.internal.cache.versions.ConcurrentCacheModificationException;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
 import org.apache.geode.internal.offheap.annotations.Retained;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * This operation updates Version stamp of an entry if entry is available and entry version stamp
@@ -44,9 +43,6 @@ import org.apache.geode.internal.offheap.annotations.Retained;
 public class UpdateEntryVersionOperation extends DistributedCacheOperation {
   private static final Logger logger = LogService.getLogger();
 
-  /**
-   * @param event
-   */
   public UpdateEntryVersionOperation(CacheEvent event) {
     super(event);
   }
@@ -114,10 +110,10 @@ public class UpdateEntryVersionOperation extends DistributedCacheOperation {
     }
 
     @Override
-    protected boolean operateOnRegion(CacheEvent event, DistributionManager dm)
+    protected boolean operateOnRegion(CacheEvent event, ClusterDistributionManager dm)
         throws EntryNotFoundException {
       EntryEventImpl ev = (EntryEventImpl) event;
-      DistributedRegion rgn = (DistributedRegion) ev.region;
+      DistributedRegion rgn = (DistributedRegion) ev.getRegion();
 
       try {
         if (!rgn.isCacheContentProxy()) {
@@ -140,19 +136,18 @@ public class UpdateEntryVersionOperation extends DistributedCacheOperation {
         }
         return true; // concurrent modification problems are not reported to senders
       } catch (CacheWriterException e) {
-        throw new Error(LocalizedStrings.UpdateVersionOperation_CACHEWRITER_SHOULD_NOT_BE_CALLED
-            .toLocalizedString(), e);
+        throw new Error("CacheWriter should not be called", e);
       } catch (TimeoutException e) {
         throw new Error(
-            LocalizedStrings.UpdateVersionOperation_DISTRIBUTEDLOCK_SHOULD_NOT_BE_ACQUIRED
-                .toLocalizedString(),
+            "DistributedLock should not be acquired",
             e);
       }
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.eventId = (EventID) DataSerializer.readObject(in);
       this.key = DataSerializer.readObject(in);
       Boolean hasTailKey = DataSerializer.readBoolean(in);
@@ -162,8 +157,9 @@ public class UpdateEntryVersionOperation extends DistributedCacheOperation {
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       DataSerializer.writeObject(this.eventId, out);
       DataSerializer.writeObject(this.key, out);
 

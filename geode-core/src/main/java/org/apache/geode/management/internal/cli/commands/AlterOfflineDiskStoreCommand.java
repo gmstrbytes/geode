@@ -12,7 +12,6 @@
  * or implied. See the License for the specific language governing permissions and limitations under
  * the License.
  */
-
 package org.apache.geode.management.internal.cli.commands;
 
 import java.io.File;
@@ -24,15 +23,14 @@ import org.apache.geode.cache.CacheExistsException;
 import org.apache.geode.cache.Region;
 import org.apache.geode.internal.cache.DiskStoreImpl;
 import org.apache.geode.management.cli.CliMetaData;
-import org.apache.geode.management.cli.Result;
+import org.apache.geode.management.cli.SingleGfshCommand;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.cli.result.ErrorResultData;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 
-public class AlterOfflineDiskStoreCommand implements GfshCommand {
+public class AlterOfflineDiskStoreCommand extends SingleGfshCommand {
   @CliCommand(value = CliStrings.ALTER_DISK_STORE, help = CliStrings.ALTER_DISK_STORE__HELP)
-  @CliMetaData(shellOnly = true, relatedTopic = {CliStrings.TOPIC_GEODE_DISKSTORE})
-  public Result alterOfflineDiskStore(
+  @CliMetaData(shellOnly = true, relatedTopic = CliStrings.TOPIC_GEODE_DISKSTORE)
+  public ResultModel alterOfflineDiskStore(
       @CliOption(key = CliStrings.ALTER_DISK_STORE__DISKSTORENAME, mandatory = true,
           help = CliStrings.ALTER_DISK_STORE__DISKSTORENAME__HELP) String diskStoreName,
       @CliOption(key = CliStrings.ALTER_DISK_STORE__REGIONNAME, mandatory = true,
@@ -61,7 +59,12 @@ public class AlterOfflineDiskStoreCommand implements GfshCommand {
           help = CliStrings.ALTER_DISK_STORE__REMOVE__HELP, specifiedDefaultValue = "true",
           unspecifiedDefaultValue = "false") boolean remove) {
 
-    Result result;
+    String validatedDirectories = DiskStoreCommandsUtils.validatedDirectories(diskDirs);
+    if (validatedDirectories != null) {
+      throw new IllegalArgumentException(
+          "Could not find " + CliStrings.ALTER_DISK_STORE__DISKDIRS + ": \""
+              + validatedDirectories + "\"");
+    }
 
     try {
       File[] dirs = null;
@@ -74,7 +77,7 @@ public class AlterOfflineDiskStoreCommand implements GfshCommand {
       }
 
       if (regionName.equals(Region.SEPARATOR)) {
-        return ResultBuilder.createUserErrorResult(CliStrings.INVALID_REGION_NAME);
+        return ResultModel.createError(CliStrings.INVALID_REGION_NAME);
       }
 
       if ((lruEvictionAlgo != null) || (lruEvictionAction != null) || (lruEvictionLimit != null)
@@ -101,41 +104,30 @@ public class AlterOfflineDiskStoreCommand implements GfshCommand {
               initialCapacityString, loadFactorString, compressorClassName, statisticsEnabledString,
               offHeapString, false);
 
-          result = ResultBuilder.createInfoResult(resultMessage);
+          return ResultModel.createInfo(resultMessage);
         } else {
-          result = ResultBuilder.createParsingErrorResult(
+          return ResultModel.createError(
               "Cannot use the --remove=true parameter with any other parameters");
         }
       } else {
         if (remove) {
           DiskStoreImpl.destroyRegion(diskStoreName, dirs, "/" + regionName);
-          result = ResultBuilder.createInfoResult("The region " + regionName
+          return ResultModel.createInfo("The region " + regionName
               + " was successfully removed from the disk store " + diskStoreName);
         } else {
           // Please provide an option
-          result = ResultBuilder.createParsingErrorResult("Please provide a relevant parameter");
+          return ResultModel.createInfo("Please provide a relevant parameter");
         }
       }
       // Catch the IllegalArgumentException thrown by the modifyDiskStore function and sent the
     } catch (IllegalArgumentException e) {
-      String message = "Please check the parameters";
-      message += "\n" + e.getMessage();
-      result = ResultBuilder.createGemFireErrorResult(message);
-    } catch (IllegalStateException e) {
-      result = ResultBuilder.createGemFireErrorResult(e.getMessage());
+      return ResultModel.createError("Please check the parameters. " + e.getMessage());
     } catch (CacheExistsException e) {
       // Indicates that the command is being used when a cache is open
-      result = ResultBuilder.createGemFireErrorResult("Cannot execute "
-          + CliStrings.ALTER_DISK_STORE + " when a cache exists (Offline command)");
+      return ResultModel.createError("Cannot execute " + CliStrings.ALTER_DISK_STORE
+          + " when a cache exists (Offline command)");
     } catch (Exception e) {
-      result = createErrorResult(e.getMessage());
+      return ResultModel.createError(e.getMessage());
     }
-    return result;
-  }
-
-  private Result createErrorResult(String message) {
-    ErrorResultData erd = ResultBuilder.createErrorResultData();
-    erd.addLine(message);
-    return ResultBuilder.buildResult(erd);
   }
 }

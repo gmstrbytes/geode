@@ -22,9 +22,9 @@ import org.junit.rules.ExpectedException;
 import org.apache.geode.cache.lucene.LuceneIndex;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.test.fake.Fakes;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.test.junit.categories.LuceneTest;
 
-@Category(UnitTest.class)
+@Category({LuceneTest.class})
 public class LuceneIndexImplJUnitTest {
 
   public static final String REGION = "region";

@@ -20,10 +20,8 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.internal.cache.BucketRegion;
 import org.apache.geode.internal.cache.versions.RegionVersionVector;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 abstract class AbstractEvictionList implements EvictionList {
   private static final Logger logger = LogService.getLogger();
@@ -34,20 +32,13 @@ abstract class AbstractEvictionList implements EvictionList {
   /** The starting point in the LRU list for searching for the LRU node */
   protected final EvictionNode head = new GuardNode();
 
-  /** Description of the Field */
-  protected final InternalEvictionStatistics stats;
-
   /** Counter for the size of the LRU list */
   private final AtomicInteger size = new AtomicInteger();
 
-  private BucketRegion bucketRegion;
+  private final EvictionController controller;
 
-  AbstractEvictionList(InternalEvictionStatistics stats, BucketRegion region) {
-    if (stats == null) {
-      throw new IllegalArgumentException("EvictionStatistics must not be null");
-    }
-    this.stats = stats;
-    this.bucketRegion = region;
+  protected AbstractEvictionList(EvictionController controller) {
+    this.controller = controller;
     initEmptyList();
   }
 
@@ -68,33 +59,26 @@ abstract class AbstractEvictionList implements EvictionList {
 
   @Override
   public void closeStats() {
-    stats.close();
+    getStatistics().close();
   }
 
   @Override
-  public EvictionStatistics getStatistics() {
-    return stats;
+  public EvictionCounters getStatistics() {
+    return this.controller.getCounters();
   }
 
   @Override
-  public void setBucketRegion(Object region) {
-    if (region instanceof BucketRegion) {
-      this.bucketRegion = (BucketRegion) region; // see bug 41388
-    }
-  }
-
-  @Override
-  public void clear(RegionVersionVector regionVersionVector) {
+  public void clear(RegionVersionVector regionVersionVector, BucketRegion bucketRegion) {
     if (regionVersionVector != null) {
       return; // when concurrency checks are enabled the clear operation removes entries iteratively
     }
 
     synchronized (this) {
       if (bucketRegion != null) {
-        stats.decrementCounter(bucketRegion.getCounter());
+        getStatistics().decrementCounter(bucketRegion.getCounter());
         bucketRegion.resetCounter();
       } else {
-        stats.resetCounter();
+        getStatistics().resetCounter();
       }
       initEmptyList();
     }
@@ -116,9 +100,8 @@ abstract class AbstractEvictionList implements EvictionList {
       return;
     }
 
-    if (logger.isTraceEnabled(LogMarker.LRU_CLOCK)) {
-      logger.trace(LogMarker.LRU_CLOCK, LocalizedMessage
-          .create(LocalizedStrings.NewLRUClockHand_ADDING_ANODE_TO_LRU_LIST, evictionNode));
+    if (logger.isTraceEnabled(LogMarker.LRU_CLOCK_VERBOSE)) {
+      logger.trace(LogMarker.LRU_CLOCK_VERBOSE, "adding a Node to lru list: {}", evictionNode);
     }
 
     evictionNode.setNext(tail);
@@ -131,9 +114,8 @@ abstract class AbstractEvictionList implements EvictionList {
 
   @Override
   public synchronized void destroyEntry(EvictionNode evictionNode) {
-    if (logger.isTraceEnabled(LogMarker.LRU_CLOCK)) {
-      logger.trace(LogMarker.LRU_CLOCK, LocalizedMessage
-          .create(LocalizedStrings.NewLRUClockHand_UNLINKENTRY_CALLED, evictionNode));
+    if (logger.isTraceEnabled(LogMarker.LRU_CLOCK_VERBOSE)) {
+      logger.trace(LogMarker.LRU_CLOCK_VERBOSE, "destroyEntry called for {}", evictionNode);
     }
 
     if (removeEntry(evictionNode)) {
@@ -187,9 +169,9 @@ abstract class AbstractEvictionList implements EvictionList {
 
   protected boolean isEvictable(EvictionNode evictionNode) {
     if (evictionNode.isEvicted()) {
-      if (logger.isTraceEnabled(LogMarker.LRU_CLOCK)) {
-        logger.trace(LogMarker.LRU_CLOCK,
-            LocalizedMessage.create(LocalizedStrings.NewLRUClockHand_DISCARDING_EVICTED_ENTRY));
+      if (logger.isTraceEnabled(LogMarker.LRU_CLOCK_VERBOSE)) {
+        logger.trace(LogMarker.LRU_CLOCK_VERBOSE,
+            "discarding evicted entry");
       }
       return false;
     }
@@ -198,13 +180,14 @@ abstract class AbstractEvictionList implements EvictionList {
     // eviction should not cause commit conflicts
     synchronized (evictionNode) {
       if (evictionNode.isInUseByTransaction()) {
-        if (logger.isTraceEnabled(LogMarker.LRU_CLOCK)) {
-          logger.trace(LogMarker.LRU_CLOCK, LocalizedMessage.create(
-              LocalizedStrings.NewLRUClockHand_REMOVING_TRANSACTIONAL_ENTRY_FROM_CONSIDERATION));
+        if (logger.isTraceEnabled(LogMarker.LRU_CLOCK_VERBOSE)) {
+          logger.trace(LogMarker.LRU_CLOCK_VERBOSE,
+              "removing transactional entry from consideration");
         }
         return false;
       }
     }
     return true;
   }
+
 }

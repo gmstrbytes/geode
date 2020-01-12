@@ -20,11 +20,14 @@ import java.net.URL;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.Executor;
 
 import javax.transaction.TransactionManager;
+
+import io.micrometer.core.instrument.MeterRegistry;
 
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.CacheClosedException;
@@ -47,12 +50,12 @@ import org.apache.geode.cache.wan.GatewayReceiver;
 import org.apache.geode.cache.wan.GatewaySender;
 import org.apache.geode.distributed.DistributedLockService;
 import org.apache.geode.distributed.internal.CacheTime;
-import org.apache.geode.distributed.internal.DM;
 import org.apache.geode.distributed.internal.DistributionAdvisor;
+import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.SystemTimer;
-import org.apache.geode.internal.cache.backup.BackupManager;
+import org.apache.geode.internal.cache.backup.BackupService;
 import org.apache.geode.internal.cache.control.InternalResourceManager;
 import org.apache.geode.internal.cache.control.ResourceAdvisor;
 import org.apache.geode.internal.cache.event.EventTrackerExpiryTask;
@@ -63,6 +66,7 @@ import org.apache.geode.internal.cache.tier.sockets.ClientProxyMembershipID;
 import org.apache.geode.internal.logging.InternalLogWriter;
 import org.apache.geode.internal.offheap.MemoryAllocator;
 import org.apache.geode.internal.security.SecurityService;
+import org.apache.geode.internal.statistics.StatisticsClockSupplier;
 import org.apache.geode.management.internal.JmxManagerAdvisor;
 import org.apache.geode.management.internal.RestAgent;
 import org.apache.geode.pdx.PdxInstanceFactory;
@@ -75,7 +79,8 @@ import org.apache.geode.pdx.internal.TypeRegistry;
  * @see org.apache.geode.cache.Cache
  * @since GemFire 7.0
  */
-public interface InternalCache extends Cache, Extensible<Cache>, CacheTime {
+public interface InternalCache extends Cache, Extensible<Cache>, CacheTime,
+    StatisticsClockSupplier {
 
   InternalDistributedMember getMyId();
 
@@ -86,6 +91,8 @@ public interface InternalCache extends Cache, Extensible<Cache>, CacheTime {
   CqService getCqService();
 
   <T extends CacheService> T getService(Class<T> clazz);
+
+  <T extends CacheService> Optional<T> getOptionalService(Class<T> clazz);
 
   Collection<CacheService> getServices();
 
@@ -113,11 +120,11 @@ public interface InternalCache extends Cache, Extensible<Cache>, CacheTime {
 
   CachePerfStats getCachePerfStats();
 
-  DM getDistributionManager();
+  DistributionManager getDistributionManager();
 
   void regionReinitialized(Region region);
 
-  void setRegionByPath(String path, LocalRegion r);
+  void setRegionByPath(String path, InternalRegion r);
 
   InternalResourceManager getInternalResourceManager();
 
@@ -127,14 +134,14 @@ public interface InternalCache extends Cache, Extensible<Cache>, CacheTime {
 
   boolean requiresNotificationFromPR(PartitionedRegion r);
 
-  <K, V> RegionAttributes<K, V> invokeRegionBefore(LocalRegion parent, String name,
+  <K, V> RegionAttributes<K, V> invokeRegionBefore(InternalRegion parent, String name,
       RegionAttributes<K, V> attrs, InternalRegionArguments internalRegionArgs);
 
-  void invokeRegionAfter(LocalRegion region);
+  void invokeRegionAfter(InternalRegion region);
 
-  void invokeBeforeDestroyed(LocalRegion region);
+  void invokeBeforeDestroyed(InternalRegion region);
 
-  void invokeCleanupFailedInitialization(LocalRegion region);
+  void invokeCleanupFailedInitialization(InternalRegion region);
 
   TXManagerImpl getTXMgr();
 
@@ -156,13 +163,15 @@ public interface InternalCache extends Cache, Extensible<Cache>, CacheTime {
 
   void unregisterReinitializingRegion(String fullPath);
 
-  boolean removeRoot(LocalRegion rootRgn);
+  boolean removeRoot(InternalRegion rootRgn);
 
   Executor getEventThreadPool();
 
-  LocalRegion getReinitializingRegion(String fullPath);
+  InternalRegion getReinitializingRegion(String fullPath);
 
   boolean keepDurableSubscriptionsAlive();
+
+  CacheClosedException getCacheClosedException(String reason);
 
   CacheClosedException getCacheClosedException(String reason, Throwable cause);
 
@@ -182,15 +191,14 @@ public interface InternalCache extends Cache, Extensible<Cache>, CacheTime {
 
   ClientMetadataService getClientMetadataService();
 
+  @Override
   long cacheTimeMillis();
-
-  void clearBackupManager();
 
   URL getCacheXmlURL();
 
   List<File> getBackupFiles();
 
-  LocalRegion getRegionByPath(String path);
+  InternalRegion getRegionByPath(String path);
 
   boolean isClient();
 
@@ -207,8 +215,6 @@ public interface InternalCache extends Cache, Extensible<Cache>, CacheTime {
   CacheConfig getCacheConfig();
 
   boolean getPdxReadSerializedByAnyGemFireServices();
-
-  BackupManager getBackupManager();
 
   void setDeclarativeCacheConfig(CacheConfig cacheConfig);
 
@@ -231,7 +237,7 @@ public interface InternalCache extends Cache, Extensible<Cache>, CacheTime {
   <K, V> Region<K, V> basicCreateRegion(String name, RegionAttributes<K, V> attrs)
       throws RegionExistsException, TimeoutException;
 
-  BackupManager startBackup(InternalDistributedMember sender) throws IOException;
+  BackupService getBackupService();
 
   Throwable getDisconnectCause();
 
@@ -265,7 +271,7 @@ public interface InternalCache extends Cache, Extensible<Cache>, CacheTime {
 
   Set<Region<?, ?>> rootRegions(boolean includePRAdminRegions);
 
-  Set<LocalRegion> getAllRegions();
+  Set<InternalRegion> getAllRegions();
 
   DistributedRegion getRegionInDestroy(String path);
 
@@ -275,9 +281,9 @@ public interface InternalCache extends Cache, Extensible<Cache>, CacheTime {
 
   void close(String reason, Throwable optionalCause);
 
-  LocalRegion getRegionByPathForProcessing(String path);
+  InternalRegion getRegionByPathForProcessing(String path);
 
-  List getCacheServersAndGatewayReceiver();
+  List<InternalCacheServer> getCacheServersAndGatewayReceiver();
 
   boolean isGlobalRegionInitializing(String fullPath);
 
@@ -293,7 +299,7 @@ public interface InternalCache extends Cache, Extensible<Cache>, CacheTime {
 
   InternalLogWriter getSecurityInternalLogWriter();
 
-  Set<LocalRegion> getApplicationRegions();
+  Set<InternalRegion> getApplicationRegions();
 
   void removeGatewaySender(GatewaySender sender);
 
@@ -309,7 +315,13 @@ public interface InternalCache extends Cache, Extensible<Cache>, CacheTime {
 
   void addGatewayReceiver(GatewayReceiver receiver);
 
-  CacheServer addCacheServer(boolean isGatewayReceiver);
+  void removeGatewayReceiver(GatewayReceiver receiver);
+
+  InternalCacheServer addGatewayReceiverServer(GatewayReceiver receiver);
+
+  boolean removeCacheServer(CacheServer cacheServer);
+
+  boolean removeGatewayReceiverServer(InternalCacheServer receiverServer);
 
   /**
    * A test-hook allowing you to alter the cache setting established by
@@ -329,6 +341,8 @@ public interface InternalCache extends Cache, Extensible<Cache>, CacheTime {
 
   void waitForRegisterInterestsInProgress();
 
+  void reLoadClusterConfiguration() throws IOException, ClassNotFoundException;
+
   SecurityService getSecurityService();
 
   boolean hasPersistentRegion();
@@ -336,10 +350,41 @@ public interface InternalCache extends Cache, Extensible<Cache>, CacheTime {
   void shutDownAll();
 
   void invokeRegionEntrySynchronizationListenersAfterSynchronization(
-      InternalDistributedMember sender, LocalRegion region,
+      InternalDistributedMember sender, InternalRegion region,
       List<InitialImageOperation.Entry> entriesToSynchronize);
 
+  @Override
   InternalQueryService getQueryService();
 
   Set<AsyncEventQueue> getAsyncEventQueues(boolean visibleOnly);
+
+  void closeDiskStores();
+
+  /**
+   * If obj is a PdxInstance and pdxReadSerialized is not true
+   * then convert obj by calling PdxInstance.getObject.
+   *
+   * @return either the original obj if no conversion was needed;
+   *         or the result of calling PdxInstance.getObject on obj.
+   */
+  Object convertPdxInstanceIfNeeded(Object obj, boolean preferCD);
+
+  Boolean getPdxReadSerializedOverride();
+
+  void setPdxReadSerializedOverride(boolean pdxReadSerialized);
+
+  /**
+   * Returns a version of InternalCache that can only access
+   * application visible regions. Any regions created internally
+   * by Geode will not be accessible from the returned cache.
+   */
+  InternalCacheForClientAccess getCacheForProcessingClientRequests();
+
+  void initialize();
+
+  void throwCacheExistsException();
+
+  MeterRegistry getMeterRegistry();
+
+  void saveCacheXmlForReconnect();
 }

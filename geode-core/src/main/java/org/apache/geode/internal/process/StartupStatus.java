@@ -14,12 +14,12 @@
  */
 package org.apache.geode.internal.process;
 
-import static org.apache.commons.lang.Validate.notNull;
+import static org.apache.commons.lang3.Validate.notNull;
 
 import org.apache.logging.log4j.Logger;
 
-import org.apache.geode.i18n.StringId;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.annotations.internal.MakeNotStatic;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * Extracted from LogWriterImpl and changed to static.
@@ -28,6 +28,7 @@ public class StartupStatus {
   private static final Logger logger = LogService.getLogger();
 
   /** protected by static synchronized */
+  @MakeNotStatic
   private static StartupStatusListener listener;
 
   private StartupStatus() {
@@ -40,11 +41,11 @@ public class StartupStatus {
    *
    * @since GemFire 7.0
    */
-  public static synchronized void startup(final StringId msgId, final Object... params) {
-    notNull(msgId, "Invalid msgId '" + msgId + "' specified");
-    notNull(params, "Invalid params '" + params + "' specified");
+  public static synchronized void startup(final String msg, final Object... params) {
+    notNull(msg, "Invalid msgId '" + msg + "' specified");
+    notNull(params, "Invalid params specified");
 
-    String message = msgId.toLocalizedString(params);
+    String message = String.format(msg, params);
 
     if (listener != null) {
       listener.setStatus(message);

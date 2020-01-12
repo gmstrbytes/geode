@@ -30,7 +30,7 @@ import org.apache.geode.cache.execute.ResultCollector;
  */
 public interface InternalExecution extends Execution {
 
-  public InternalExecution withMemberMappedArgument(MemberMappedArgument argument);
+  InternalExecution withMemberMappedArgument(MemberMappedArgument argument);
 
   /**
    * Specifies a filter of bucketIDs for selecting the GemFire members to execute the function on.
@@ -44,15 +44,14 @@ public interface InternalExecution extends Execution {
    *         {@link FunctionService#onRegion(org.apache.geode.cache.Region)}
    * @since Geode 1.0
    */
-  public InternalExecution withBucketFilter(Set<Integer> bucketIDs);
+  InternalExecution withBucketFilter(Set<Integer> bucketIDs);
 
   /**
    * If true, function execution waits for all exceptions from target nodes <br>
    * If false, function execution returns when first exception is occurred.
    *
-   * @param setWaitOnException
    */
-  public void setWaitOnExceptionFlag(boolean setWaitOnException);
+  void setWaitOnExceptionFlag(boolean setWaitOnException);
 
   /**
    * Sets the exception delivery flag. If set, all exceptions will be forwarded directly to the
@@ -62,7 +61,7 @@ public interface InternalExecution extends Execution {
    *
    * @param forward true if all exceptions should be forwarded to the <code>ResultCollector</code>
    */
-  public void setForwardExceptions(boolean forward);
+  void setForwardExceptions(boolean forward);
 
   /**
    * If true, allows results of function execution on groups to be collected in presence of member
@@ -73,5 +72,5 @@ public interface InternalExecution extends Execution {
    *
    * @param ignore true to collect results
    */
-  public void setIgnoreDepartedMembers(boolean ignore);
+  void setIgnoreDepartedMembers(boolean ignore);
 }

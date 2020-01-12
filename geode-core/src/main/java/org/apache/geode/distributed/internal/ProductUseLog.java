@@ -14,6 +14,8 @@
  */
 package org.apache.geode.distributed.internal;
 
+import static org.apache.geode.logging.internal.spi.LogWriterLevel.INFO;
+
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
@@ -22,9 +24,9 @@ import java.util.List;
 import java.util.Set;
 
 import org.apache.geode.GemFireIOException;
+import org.apache.geode.annotations.internal.MutableForTesting;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.distributed.internal.membership.MembershipManager;
-import org.apache.geode.internal.i18n.LocalizedStrings;
+import org.apache.geode.distributed.internal.membership.gms.api.Membership;
 import org.apache.geode.internal.logging.InternalLogWriter;
 import org.apache.geode.internal.logging.PureLogWriter;
 
@@ -39,6 +41,7 @@ import org.apache.geode.internal.logging.PureLogWriter;
  * @since GemFire 2013
  */
 public class ProductUseLog implements MembershipListener {
+  @MutableForTesting
   protected static long MAX_PRODUCT_USE_FILE_SIZE = Long.getLong("max_view_log_size", 5000000);
   private final int logLevel;
   private final File productUseLogFile;
@@ -53,8 +56,9 @@ public class ProductUseLog implements MembershipListener {
   }
 
   public ProductUseLog(File productUseLogFile) {
-    this.productUseLogFile = productUseLogFile;
-    this.logLevel = InternalLogWriter.INFO_LEVEL;
+    // GEODE-4180, use absolute paths
+    this.productUseLogFile = productUseLogFile.getAbsoluteFile();
+    this.logLevel = INFO.intLevel();
     createLogWriter();
   }
 
@@ -63,9 +67,9 @@ public class ProductUseLog implements MembershipListener {
    */
   public void monitorUse(InternalDistributedSystem system) {
     this.system = system;
-    DM dmgr = system.getDistributionManager();
+    DistributionManager dmgr = system.getDistributionManager();
     dmgr.addMembershipListener(this);
-    MembershipManager mmgr = dmgr.getMembershipManager();
+    Membership mmgr = dmgr.getMembershipManager();
     if (mmgr != null) {
       log("Log opened with new distributed system connection.  "
           + system.getDM().getMembershipManager().getView());
@@ -118,8 +122,8 @@ public class ProductUseLog implements MembershipListener {
     try {
       fos = new FileOutputStream(productUseLogFile, true);
     } catch (FileNotFoundException ex) {
-      String s = LocalizedStrings.InternalDistributedSystem_COULD_NOT_OPEN_LOG_FILE_0
-          .toLocalizedString(productUseLogFile.getAbsolutePath());
+      String s = String.format("Could not open log file %s.",
+          productUseLogFile.getAbsolutePath());
       throw new GemFireIOException(s, ex);
     }
     PrintStream out = new PrintStream(fos);
@@ -127,19 +131,20 @@ public class ProductUseLog implements MembershipListener {
   }
 
   @Override
-  public void memberJoined(InternalDistributedMember id) {
+  public void memberJoined(DistributionManager distributionManager, InternalDistributedMember id) {
     log("A new member joined: " + id + ".  " + system.getDM().getMembershipManager().getView());
   }
 
   @Override
-  public void memberDeparted(InternalDistributedMember id, boolean crashed) {}
+  public void memberDeparted(DistributionManager distributionManager, InternalDistributedMember id,
+      boolean crashed) {}
 
   @Override
-  public void memberSuspect(InternalDistributedMember id, InternalDistributedMember whoSuspected,
-      String reason) {}
+  public void memberSuspect(DistributionManager distributionManager, InternalDistributedMember id,
+      InternalDistributedMember whoSuspected, String reason) {}
 
   @Override
-  public void quorumLost(Set<InternalDistributedMember> failures,
-      List<InternalDistributedMember> remaining) {}
+  public void quorumLost(DistributionManager distributionManager,
+      Set<InternalDistributedMember> failures, List<InternalDistributedMember> remaining) {}
 
 }

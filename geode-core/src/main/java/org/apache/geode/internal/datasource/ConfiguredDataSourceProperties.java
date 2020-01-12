@@ -14,17 +14,18 @@
  */
 package org.apache.geode.internal.datasource;
 
+import java.io.PrintWriter;
+import java.io.Serializable;
+
 /**
- * JavaBean for datasource and poold properties.
+ * JavaBean for datasource and pooled properties.
  *
- * This class now contains only those paramaters which are needed by the Gemfire DataSource
- * configuration. This maps to those paramaters which are specified as attributes of
+ * This class now contains only those parameters which are needed by the Gemfire DataSource
+ * configuration. This maps to those parameters which are specified as attributes of
  * <jndi-binding>tag. Those parameters which are specified as attributes of <property>tag are not
  * stored.
  *
  */
-import java.io.*;
-
 public class ConfiguredDataSourceProperties implements Serializable {
 
   private static final long serialVersionUID = 1241739895646314739L;
@@ -134,7 +135,6 @@ public class ConfiguredDataSourceProperties implements Serializable {
   /**
    * Returns the class name for managed connection factory.
    *
-   * @return String
    */
   public String getMCFClass() {
     return mcfClass;
@@ -152,7 +152,6 @@ public class ConfiguredDataSourceProperties implements Serializable {
   /**
    * Sets the login time
    *
-   * @param loginTime
    */
   public void setLoginTimeOut(int loginTime) {
     if (loginTime > 0)
@@ -162,7 +161,6 @@ public class ConfiguredDataSourceProperties implements Serializable {
   /**
    * Sets the database user name .
    *
-   * @param usr
    */
   public void setUser(String usr) {
     this.user = usr;
@@ -171,7 +169,6 @@ public class ConfiguredDataSourceProperties implements Serializable {
   /**
    * Sets the database user password .
    *
-   * @param passwd
    */
   public void setPassword(String passwd) {
     this.password = passwd;
@@ -180,7 +177,6 @@ public class ConfiguredDataSourceProperties implements Serializable {
   /**
    * Sets the database driver name.
    *
-   * @param confDriver
    */
   public void setJDBCDriver(String confDriver) {
     this.jdbcDriver = confDriver;
@@ -189,7 +185,6 @@ public class ConfiguredDataSourceProperties implements Serializable {
   /**
    * Sets the initiale pool size.
    *
-   * @param inpoolSize
    */
   public void setInitialPoolSize(int inpoolSize) {
     if (inpoolSize >= 0)
@@ -199,7 +194,6 @@ public class ConfiguredDataSourceProperties implements Serializable {
   /**
    * Sets the maximum pool size
    *
-   * @param mxpoolSize
    */
   public void setMaxPoolSize(int mxpoolSize) {
     if (mxpoolSize > 0)
@@ -209,12 +203,10 @@ public class ConfiguredDataSourceProperties implements Serializable {
   /**
    * Sets the max idle time
    *
-   * @param mxIdleTime
    */
   /**
    * * Sets the db URL.
    *
-   * @param urlStr
    */
   public void setURL(String urlStr) {
     url = urlStr;
@@ -223,7 +215,6 @@ public class ConfiguredDataSourceProperties implements Serializable {
   /**
    * Sets the connection expiration time
    *
-   * @param time
    */
   public void setConnectionExpirationTime(int time) {
     if (time > 0)
@@ -233,7 +224,6 @@ public class ConfiguredDataSourceProperties implements Serializable {
   /**
    * Sets the connection time out.
    *
-   * @param time
    */
   public void setConnectionTimeOut(int time) {
     if (time > 0)
@@ -243,7 +233,6 @@ public class ConfiguredDataSourceProperties implements Serializable {
   /**
    * Sets the ConnectionPoolDataSource class name
    *
-   * @param classname
    */
   public void setConnectionPoolDSClass(String classname) {
     connPoolDSClass = classname;
@@ -252,7 +241,6 @@ public class ConfiguredDataSourceProperties implements Serializable {
   /**
    * Sets the XADatasource class name
    *
-   * @param classname
    */
   public void setXADSClass(String classname) {
     xadsClass = classname;
@@ -261,7 +249,6 @@ public class ConfiguredDataSourceProperties implements Serializable {
   /**
    * Sets the log writer.
    *
-   * @param pw
    */
   public void setPrintWriter(PrintWriter pw) {
     dataSourcePW = pw;
@@ -270,7 +257,6 @@ public class ConfiguredDataSourceProperties implements Serializable {
   /**
    * Sets the MCFClass class name.
    *
-   * @param classname
    */
   public void setMCFClass(String classname) {
     mcfClass = classname;

@@ -23,11 +23,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.UnknownHostException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.attribute.PosixFilePermission;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -42,15 +39,22 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.healthmarketscience.rmiio.RemoteInputStream;
-import org.apache.commons.lang.StringUtils;
+import com.healthmarketscience.rmiio.RemoteInputStreamClient;
+import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.UnmodifiableException;
+import org.apache.geode.annotations.Immutable;
 import org.apache.geode.cache.Cache;
+import org.apache.geode.cache.execute.Function;
+import org.apache.geode.cache.execute.FunctionException;
+import org.apache.geode.cache.execute.FunctionInvocationTargetException;
 import org.apache.geode.cache.execute.FunctionService;
 import org.apache.geode.cache.execute.ResultCollector;
+import org.apache.geode.distributed.ConfigurationPersistenceService;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.internal.ClusterConfigurationService;
+import org.apache.geode.distributed.LockServiceDestroyedException;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.ClassPathLoader;
@@ -58,7 +62,8 @@ import org.apache.geode.internal.ConfigSource;
 import org.apache.geode.internal.DeployedJar;
 import org.apache.geode.internal.JarDeployer;
 import org.apache.geode.internal.config.ClusterConfigurationNotAvailableException;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.management.internal.beans.FileUploader;
 import org.apache.geode.management.internal.cli.CliUtil;
 import org.apache.geode.management.internal.configuration.domain.Configuration;
 import org.apache.geode.management.internal.configuration.functions.DownloadJarFunction;
@@ -69,6 +74,9 @@ public class ClusterConfigurationLoader {
 
   private static final Logger logger = LogService.getLogger();
 
+  @Immutable
+  private static final Function GET_CLUSTER_CONFIG_FUNCTION = new GetClusterConfigurationFunction();
+
   /**
    * Deploys the jars received from shared configuration, it undeploys any other jars that were not
    * part of shared configuration
@@ -77,11 +85,11 @@ public class ClusterConfigurationLoader {
    */
   public void deployJarsReceivedFromClusterConfiguration(ConfigurationResponse response)
       throws IOException, ClassNotFoundException {
-    logger.info("Requesting cluster configuration");
     if (response == null) {
       return;
     }
 
+    logger.info("deploying jars received from cluster configuration");
     List<String> jarFileNames =
         response.getJarNames().values().stream().flatMap(Set::stream).collect(Collectors.toList());
 
@@ -125,7 +133,7 @@ public class ClusterConfigurationLoader {
     return results;
   }
 
-  public File downloadJar(DistributedMember locator, String groupName, String jarName)
+  public static File downloadJar(DistributedMember locator, String groupName, String jarName)
       throws IOException {
     ResultCollector<RemoteInputStream, List<RemoteInputStream>> rc =
         (ResultCollector<RemoteInputStream, List<RemoteInputStream>>) CliUtil.executeFunction(
@@ -133,28 +141,19 @@ public class ClusterConfigurationLoader {
             Collections.singleton(locator));
 
     List<RemoteInputStream> result = rc.getResult();
-    RemoteInputStream jarStream = result.get(0);
+    if (result.get(0) instanceof Throwable) {
+      throw new IllegalStateException(((Throwable) result.get(0)).getMessage());
+    }
 
-    Set<PosixFilePermission> perms = new HashSet<>();
-    perms.add(PosixFilePermission.OWNER_READ);
-    perms.add(PosixFilePermission.OWNER_WRITE);
-    perms.add(PosixFilePermission.OWNER_EXECUTE);
-    Path tempDir =
-        Files.createTempDirectory("deploy-", PosixFilePermissions.asFileAttribute(perms));
+    Path tempDir = FileUploader.createSecuredTempDirectory("deploy-");
     Path tempJar = Paths.get(tempDir.toString(), jarName);
     FileOutputStream fos = new FileOutputStream(tempJar.toString());
 
-    int packetId = 0;
-    while (true) {
-      byte[] data = jarStream.readPacket(packetId);
-      if (data == null) {
-        break;
-      }
-      fos.write(data);
-      packetId++;
-    }
+    InputStream jarStream = RemoteInputStreamClient.wrap(result.get(0));
+    IOUtils.copyLarge(jarStream, fos);
+
     fos.close();
-    jarStream.close(true);
+    jarStream.close();
 
     return tempJar.toFile();
   }
@@ -175,7 +174,7 @@ public class ClusterConfigurationLoader {
 
     // apply the cluster config first
     Configuration clusterConfiguration =
-        requestedConfiguration.get(ClusterConfigurationService.CLUSTER_CONFIG);
+        requestedConfiguration.get(ConfigurationPersistenceService.CLUSTER_CONFIG);
     if (clusterConfiguration != null) {
       String cacheXmlContent = clusterConfiguration.getCacheXmlContent();
       if (StringUtils.isNotBlank(cacheXmlContent)) {
@@ -227,7 +226,7 @@ public class ClusterConfigurationLoader {
 
     // apply the cluster config first
     Configuration clusterConfiguration =
-        requestedConfiguration.get(ClusterConfigurationService.CLUSTER_CONFIG);
+        requestedConfiguration.get(ConfigurationPersistenceService.CLUSTER_CONFIG);
     if (clusterConfiguration != null) {
       runtimeProps.putAll(clusterConfiguration.getGemfireProperties());
     }
@@ -276,24 +275,27 @@ public class ClusterConfigurationLoader {
       throws ClusterConfigurationNotAvailableException, UnknownHostException {
 
     Set<String> groups = getGroups(groupList);
-    GetClusterConfigurationFunction function = new GetClusterConfigurationFunction();
 
     ConfigurationResponse response = null;
-    for (InternalDistributedMember locator : locatorList) {
-      ResultCollector resultCollector =
-          FunctionService.onMember(locator).setArguments(groups).execute(function);
-      Object result = ((ArrayList) resultCollector.getResult()).get(0);
-      if (result instanceof ConfigurationResponse) {
-        response = (ConfigurationResponse) result;
-        response.setMember(locator);
-        break;
-      } else {
-        logger.error("Received invalid result from {}: {}", locator.toString(), result);
-        if (result instanceof Throwable) {
-          // log the stack trace.
-          logger.error(result.toString(), result);
+
+    int attempts = 6;
+    OUTER: while (attempts > 0) {
+      for (InternalDistributedMember locator : locatorList) {
+        logger.info("Attempting to retrieve cluster configuration from {} - {} attempts remaining",
+            locator.getName(), attempts);
+        response = requestConfigurationFromOneLocator(locator, groups);
+        if (response != null) {
+          break OUTER;
         }
       }
+
+      try {
+        Thread.sleep(10000);
+      } catch (InterruptedException ex) {
+        break;
+      }
+
+      attempts--;
     }
 
     // if the response is null
@@ -303,6 +305,37 @@ public class ClusterConfigurationLoader {
     }
 
     return response;
+  }
+
+  protected ConfigurationResponse requestConfigurationFromOneLocator(
+      InternalDistributedMember locator, Set<String> groups) {
+    ConfigurationResponse configResponse = null;
+
+    try {
+      ResultCollector resultCollector = FunctionService.onMember(locator).setArguments(groups)
+          .execute(GET_CLUSTER_CONFIG_FUNCTION);
+      Object result = ((ArrayList) resultCollector.getResult()).get(0);
+      if (result instanceof ConfigurationResponse) {
+        configResponse = (ConfigurationResponse) result;
+        configResponse.setMember(locator);
+      } else {
+        if (result != null) {
+          logger.error("Received invalid result from {}: {}", locator.toString(), result);
+        }
+        if (result instanceof Throwable) {
+          // log the stack trace.
+          logger.error(result.toString(), result);
+        }
+      }
+    } catch (FunctionException fex) {
+      // Rethrow unless we're possibly reconnecting
+      if (!(fex.getCause() instanceof LockServiceDestroyedException
+          || fex.getCause() instanceof FunctionInvocationTargetException)) {
+        throw fex;
+      }
+    }
+
+    return configResponse;
   }
 
   Set<String> getGroups(String groupString) {

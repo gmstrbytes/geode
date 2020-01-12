@@ -14,25 +14,34 @@
  */
 package org.apache.geode.internal.tcp;
 
-import static org.mockito.Mockito.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.isNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
-import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.UnknownHostException;
+import java.nio.channels.SocketChannel;
 
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 
 import org.apache.geode.CancelCriterion;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.alerting.internal.spi.AlertingAction;
+import org.apache.geode.distributed.internal.DMStats;
+import org.apache.geode.distributed.internal.DistributionConfig;
+import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.distributed.internal.membership.MembershipManager;
+import org.apache.geode.internal.net.BufferPool;
 import org.apache.geode.internal.net.SocketCloser;
 import org.apache.geode.internal.net.SocketCreator;
 import org.apache.geode.test.junit.categories.MembershipTest;
-import org.apache.geode.test.junit.categories.UnitTest;
 
-@Category({UnitTest.class, MembershipTest.class})
+@Category({MembershipTest.class})
 public class ConnectionJUnitTest {
 
   /**
@@ -46,13 +55,15 @@ public class ConnectionJUnitTest {
 
     // mock the socket
     ConnectionTable table = mock(ConnectionTable.class);
-    DM distMgr = mock(DM.class);
+    DistributionManager distMgr = mock(DistributionManager.class);
     MembershipManager membership = mock(MembershipManager.class);
     TCPConduit conduit = mock(TCPConduit.class);
+    DMStats stats = mock(DMStats.class);
 
     // mock the connection table and conduit
 
     when(table.getConduit()).thenReturn(conduit);
+    when(table.getBufferPool()).thenReturn(new BufferPool(stats));
 
     CancelCriterion stopper = mock(CancelCriterion.class);
     when(stopper.cancelInProgress()).thenReturn(null);
@@ -61,25 +72,37 @@ public class ConnectionJUnitTest {
     when(conduit.getSocketId())
         .thenReturn(new InetSocketAddress(SocketCreator.getLocalHost(), 10337));
 
-    // NIO can't be mocked because SocketChannel has a final method that
-    // is used by Connection - configureBlocking
-    when(conduit.useNIO()).thenReturn(false);
-
     // mock the distribution manager and membership manager
     when(distMgr.getMembershipManager()).thenReturn(membership);
     when(conduit.getDM()).thenReturn(distMgr);
+    when(conduit.getStats()).thenReturn(stats);
     when(table.getDM()).thenReturn(distMgr);
     SocketCloser closer = mock(SocketCloser.class);
     when(table.getSocketCloser()).thenReturn(closer);
 
-    InputStream instream = mock(InputStream.class);
-    when(instream.read()).thenReturn(-1);
-    Socket socket = mock(Socket.class);
-    when(socket.getInputStream()).thenReturn(instream);
+    SocketChannel channel = SocketChannel.open();
 
-    Connection conn = new Connection(table, socket);
+    Connection conn = new Connection(table, channel.socket());
     conn.setSharedUnorderedForTest();
     conn.run();
     verify(membership).suspectMember(isNull(InternalDistributedMember.class), any(String.class));
+  }
+
+  @Test
+  public void connectTimeoutIsShortWhenAlerting() throws UnknownHostException {
+    ConnectionTable table = mock(ConnectionTable.class);
+    TCPConduit conduit = mock(TCPConduit.class);
+    when(table.getConduit()).thenReturn(conduit);
+    when(conduit.getSocketId())
+        .thenReturn(new InetSocketAddress(SocketCreator.getLocalHost(), 12345));
+    DistributionConfig config = mock(DistributionConfig.class);
+    when(config.getMemberTimeout()).thenReturn(100);
+    Connection connection = new Connection(table, mock(Socket.class));
+    int normalTimeout = connection.getP2PConnectTimeout(config);
+    assertThat(normalTimeout).isEqualTo(600);
+    AlertingAction.execute(() -> {
+      assertThat(connection.getP2PConnectTimeout(config)).isEqualTo(100);
+    });
+
   }
 }

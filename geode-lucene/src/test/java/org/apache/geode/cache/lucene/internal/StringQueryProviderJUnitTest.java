@@ -29,9 +29,9 @@ import org.mockito.Mockito;
 
 import org.apache.geode.CopyHelper;
 import org.apache.geode.cache.lucene.LuceneQueryException;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.test.junit.categories.LuceneTest;
 
-@Category(UnitTest.class)
+@Category({LuceneTest.class})
 public class StringQueryProviderJUnitTest {
 
   private LuceneIndexImpl mockIndex;

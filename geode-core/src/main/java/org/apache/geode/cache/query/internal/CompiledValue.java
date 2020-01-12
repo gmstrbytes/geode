@@ -17,6 +17,7 @@ package org.apache.geode.cache.query.internal;
 import java.util.List;
 import java.util.Set;
 
+import org.apache.geode.annotations.Immutable;
 import org.apache.geode.cache.query.AmbiguousNameException;
 import org.apache.geode.cache.query.FunctionDomainException;
 import org.apache.geode.cache.query.NameResolutionException;
@@ -46,6 +47,11 @@ public interface CompiledValue {
   int LIKE = -15;
   int FIELD = -16;
   int GROUP_BY_SELECT = -17;
+  int MOD = -18;
+  int ADDITION = -19;
+  int SUBTRACTION = -20;
+  int DIVISION = -21;
+  int MULTIPLICATION = -22;
   int INDEX_RESULT_THRESHOLD_DEFAULT = 100;
   String INDX_THRESHOLD_PROP_STR = DistributionConfig.GEMFIRE_PREFIX + "Query.INDEX_THRESHOLD_SIZE";
   String INDEX_INFO = "index_info";
@@ -54,6 +60,7 @@ public interface CompiledValue {
   String RESULT_TYPE = "result_type";
   String PROJ_ATTRIB = "projection";
   String ORDERBY_ATTRIB = "orderby";
+  @Immutable("O size array cannot be modified")
   IndexInfo[] NO_INDEXES_IDENTIFIER = new IndexInfo[0];
   String RESULT_LIMIT = "limit";
   String CAN_APPLY_LIMIT_AT_INDEX = "can_apply_limit_at_index";
@@ -61,6 +68,7 @@ public interface CompiledValue {
   String PREF_INDEX_COND = "preferred_index_condition";
   String QUERY_INDEX_HINTS = "query_index_hints";
 
+  @Immutable
   CompiledValue MAP_INDEX_ALL_KEYS = new AbstractCompiledValue() {
     @Override
     public void generateCanonicalizedExpression(StringBuilder clauseBuffer,
@@ -86,6 +94,11 @@ public interface CompiledValue {
     @Override
     public int getType() {
       return OQLLexerTokenTypes.TOK_STAR;
+    }
+
+    @Override
+    void setTypecast(ObjectType objectType) {
+      throw new UnsupportedOperationException("Cannot modify singleton");
     }
   };
 
@@ -136,4 +149,8 @@ public interface CompiledValue {
   }
 
   CompiledValue getReceiver();
+
+  default boolean hasIdentifierAtLeafNode() {
+    return false;
+  }
 }

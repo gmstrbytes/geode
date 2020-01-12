@@ -14,7 +14,7 @@
  */
 package org.apache.geode.test.junit.rules;
 
-import static org.assertj.core.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -22,17 +22,14 @@ import java.util.concurrent.TimeoutException;
 
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 import org.junit.runner.Result;
 import org.junit.runner.notification.Failure;
 
-import org.apache.geode.test.junit.categories.UnitTest;
 import org.apache.geode.test.junit.runners.TestRunner;
 
 /**
  * Unit tests for {@link ExpectedTimeoutRule}.
  */
-@Category(UnitTest.class)
 public class ExpectedTimeoutRuleTest {
 
   @Test

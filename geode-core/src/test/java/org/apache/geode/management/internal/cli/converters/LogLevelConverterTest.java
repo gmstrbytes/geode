@@ -12,9 +12,7 @@
  * or implied. See the License for the specific language governing permissions and limitations under
  * the License.
  */
-
 package org.apache.geode.management.internal.cli.converters;
-
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -26,15 +24,16 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.springframework.shell.core.Completion;
 
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.test.junit.categories.GfshTest;
+import org.apache.geode.test.junit.categories.LoggingTest;
 
-@Category(UnitTest.class)
+@Category({GfshTest.class, LoggingTest.class})
 public class LogLevelConverterTest {
 
   @Test
-  public void testCompletionContainsOnlyLog4jLevels() throws Exception {
+  public void testCompletionContainsOnlyLog4jLevels() {
     LogLevelConverter converter = new LogLevelConverter();
-    List<Completion> completions = new ArrayList();
+    List<Completion> completions = new ArrayList<>();
 
     converter.getAllPossibleValues(completions, null, null, null, null);
 

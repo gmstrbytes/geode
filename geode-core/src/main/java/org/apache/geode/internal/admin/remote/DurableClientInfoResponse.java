@@ -20,10 +20,12 @@ import java.io.IOException;
 
 import org.apache.geode.cache.CacheClosedException;
 import org.apache.geode.cache.CacheFactory;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.cache.CacheServerImpl;
 import org.apache.geode.internal.cache.InternalCache;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
 
 /**
  * A message that is sent in response to a {@link DurableClientInfoRequest}.
@@ -40,8 +42,8 @@ public class DurableClientInfoResponse extends AdminResponse {
   /**
    * Returns a {@code DurableClientInfoResponse} that will be returned to the specified recipient.
    */
-  public static DurableClientInfoResponse create(DM dm, InternalDistributedMember recipient,
-      DurableClientInfoRequest request) {
+  public static DurableClientInfoResponse create(DistributionManager dm,
+      InternalDistributedMember recipient, DurableClientInfoRequest request) {
     DurableClientInfoResponse m = new DurableClientInfoResponse();
     m.setRecipient(recipient);
     try {
@@ -73,14 +75,16 @@ public class DurableClientInfoResponse extends AdminResponse {
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     out.writeBoolean(this.returnVal);
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     this.returnVal = in.readBoolean();
   }
 

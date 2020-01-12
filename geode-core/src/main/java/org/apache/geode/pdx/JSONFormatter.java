@@ -25,6 +25,9 @@ import com.fasterxml.jackson.core.JsonParser.Feature;
 import com.fasterxml.jackson.core.JsonParser.NumberType;
 import com.fasterxml.jackson.core.JsonToken;
 
+import org.apache.geode.cache.RegionService;
+import org.apache.geode.cache.client.internal.ProxyCache;
+import org.apache.geode.cache.client.internal.UserAttributes;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.pdx.internal.json.JSONToPdxMapper;
 import org.apache.geode.pdx.internal.json.PdxInstanceHelper;
@@ -35,9 +38,9 @@ import org.apache.geode.pdx.internal.json.PdxToJSON;
 
 /**
  * <p>
- * JSONFormatter has a static method {@link JSONFormatter#fromJSON(String)} to convert a JSON
- * document into a {@link PdxInstance} and a static method {@link JSONFormatter#toJSON(PdxInstance)}
- * to convert a {@link PdxInstance} into a JSON Document.
+ * JSONFormatter has a static method {@link JSONFormatter#fromJSON(String, String...)} to convert a
+ * JSON document into a {@link PdxInstance} and a static method
+ * {@link JSONFormatter#toJSON(PdxInstance)} to convert a {@link PdxInstance} into a JSON Document.
  * </p>
  * <p>
  * Using these methods an applications may convert a JSON document into a PdxInstance for storing in
@@ -108,29 +111,80 @@ public class JSONFormatter {
     NONE, OBJECT_START, FIELD_NAME, SCALAR_FOUND, LIST_FOUND, LIST_ENDS, OBJECT_ENDS
   }
 
-  private JSONFormatter() {}
+  private RegionService regionService;
+
+  public JSONFormatter() {}
+
+  public JSONFormatter(RegionService regionService) {
+    this.regionService = regionService;
+  }
+
+  public RegionService getRegionService() {
+    return regionService;
+  }
 
   /**
-   * Converts a JSON document into a PdxInstance
+   * Converts a String JSON document into a PdxInstance
    *
-   * @return the PdxInstance.
-   * @throws JSONFormatterException if unable to parse the JSON document
+   * @param jsonString The JSON String to convert to PDX
+   * @throws JSONFormatterException if unable to create the PdxInstance
+   * @return The PdxInstance
    */
   public static PdxInstance fromJSON(String jsonString) {
-    return getPdxInstanceFromJson(jsonString);
+    return new JSONFormatter().toPdxInstance(jsonString);
   }
 
   /**
-   * Converts a JSON document into a PdxInstance
+   * Converts a String JSON document into a PdxInstance
    *
-   * @return the PdxInstance.
-   * @throws JSONFormatterException if unable to parse the JSON document
+   * @param jsonString The JSON String to convert to PDX
+   * @param identityFields Any desired identity fields on the JSON object to be used for equals and
+   *        hashCode computations
+   * @throws JSONFormatterException if unable to create the PdxInstance
+   * @return The PdxInstance
    */
-  public static PdxInstance fromJSON(byte[] jsonByteArray) {
-    return getPdxInstanceFromJson(jsonByteArray);
+  public static PdxInstance fromJSON(String jsonString, String... identityFields) {
+    return new JSONFormatter().toPdxInstance(jsonString, identityFields);
   }
 
-  private static PdxInstance getPdxInstanceFromJson(Object json) {
+  /**
+   * Converts a Byte Array JSON document into a PdxInstance
+   *
+   * @param jsonByteArray The JSON Object as a byte array to convert to PDX
+   * @throws JSONFormatterException if unable to create the PdxInstance
+   * @return The PdxInstance
+   */
+  public static PdxInstance fromJSON(byte[] jsonByteArray) {
+    return new JSONFormatter().toPdxInstance(jsonByteArray);
+  }
+
+  /**
+   * Converts a Byte Array JSON document into a PdxInstance
+   *
+   * @param jsonByteArray The JSON Object as a byte array to convert to PDX
+   * @param identityFields Any desired identity fields on the JSON object to be used for equals and
+   *        hashCode computations
+   * @throws JSONFormatterException if unable to create the PdxInstance
+   * @return The PdxInstance
+   */
+  public static PdxInstance fromJSON(byte[] jsonByteArray, String... identityFields) {
+    return new JSONFormatter().toPdxInstance(jsonByteArray, identityFields);
+  }
+
+  /**
+   * Converts a JSON document (String or Byte Array) into a PdxInstance
+   *
+   * @param json The JSON document (String or Byte Array) to convert to PDX
+   * @param identityFields Any desired identity fields on the JSON object to be used for equals and
+   *        hashCode computations
+   * @return The PdxInstance
+   * @throws JSONFormatterException if unable to create the PdxInstance
+   */
+  public PdxInstance toPdxInstance(Object json, String... identityFields) {
+    if (regionService != null && regionService instanceof ProxyCache) {
+      ProxyCache proxyCache = (ProxyCache) regionService;
+      UserAttributes.userAttributes.set(proxyCache.getUserAttributes());
+    }
     JsonParser jp = null;
     try {
       if (json instanceof String) {
@@ -142,7 +196,7 @@ public class JSONFormatter {
         throw new JSONFormatterException("Could not parse the " + json.getClass() + " type");
       }
       enableJSONParserFeature(jp);
-      return new JSONFormatter().getPdxInstance(jp, states.NONE, null).getPdxInstance();
+      return getPdxInstance(jp, states.NONE, null, identityFields).getPdxInstance();
     } catch (JsonParseException jpe) {
       throw new JSONFormatterException("Could not parse JSON document ", jpe);
     } catch (IOException e) {
@@ -151,21 +205,35 @@ public class JSONFormatter {
     } catch (Exception e) {
       throw new JSONFormatterException("Could not parse JSON document: " + jp.getCurrentLocation(),
           e);
+    } finally {
+      UserAttributes.userAttributes.set(null);
     }
   }
 
-  private static void enableJSONParserFeature(JsonParser jp) {
+  private void enableJSONParserFeature(JsonParser jp) {
     jp.enable(Feature.ALLOW_BACKSLASH_ESCAPING_ANY_CHARACTER);
     jp.enable(Feature.ALLOW_UNQUOTED_FIELD_NAMES);
   }
 
   /**
-   * Converts a PdxInstance into a JSON document
+   * Converts a PdxInstance into a JSON document in String form
    *
-   * @return the JSON string.
-   * @throws JSONFormatterException if unable to create the JSON document
+   * @param pdxInstance the JSON string.
+   * @return the JSON string
+   *         JSONFormatterException if unable to create the JSON document
    */
   public static String toJSON(PdxInstance pdxInstance) {
+    return new JSONFormatter().fromPdxInstance(pdxInstance);
+  }
+
+  /**
+   * Converts a PdxInstance into a JSON document
+   *
+   * @param pdxInstance The PdxInstance to convert
+   * @return the JSON string
+   * @throws JSONFormatterException if unable to create the JSON document
+   */
+  public String fromPdxInstance(PdxInstance pdxInstance) {
     try {
       PdxToJSON pj = new PdxToJSON(pdxInstance);
       return pj.getJSON();
@@ -177,10 +245,22 @@ public class JSONFormatter {
   /**
    * Converts a PdxInstance into a JSON document in byte-array form
    *
-   * @return the JSON byte array.
+   * @param pdxInstance The PdxInstance to convert
+   * @return the JSON byte array
    * @throws JSONFormatterException if unable to create the JSON document
    */
   public static byte[] toJSONByteArray(PdxInstance pdxInstance) {
+    return new JSONFormatter().toJsonByteArrayFromPdxInstance(pdxInstance);
+  }
+
+  /**
+   * Converts a PdxInstance into a JSON document in byte-array form
+   *
+   * @param pdxInstance The PdxInstance to convert
+   * @return the JSON byte array
+   * @throws JSONFormatterException if unable to create the JSON document
+   */
+  public byte[] toJsonByteArrayFromPdxInstance(PdxInstance pdxInstance) {
     try {
       PdxToJSON pj = new PdxToJSON(pdxInstance);
       return pj.getJSONByteArray();
@@ -189,19 +269,20 @@ public class JSONFormatter {
     }
   }
 
-  private static JSONToPdxMapper createJSONToPdxMapper(String className, JSONToPdxMapper parent) {
+  private JSONToPdxMapper createJSONToPdxMapper(String className, JSONToPdxMapper parent,
+      String... identityFields) {
     if (Boolean.getBoolean(SORT_JSON_FIELD_NAMES_PROPERTY)) {
-      return new PdxInstanceSortedHelper(className, parent);
+      return new PdxInstanceSortedHelper(className, parent, identityFields);
     } else {
-      return new PdxInstanceHelper(className, parent);
+      return new PdxInstanceHelper(className, parent, identityFields);
     }
   }
 
   private JSONToPdxMapper getPdxInstance(JsonParser jp, states currentState,
-      JSONToPdxMapper currentPdxInstance) throws JsonParseException, IOException {
+      JSONToPdxMapper currentPdxInstance, String... identityFields) throws IOException {
     String currentFieldName = null;
     if (currentState == states.OBJECT_START && currentPdxInstance == null) {
-      currentPdxInstance = createJSONToPdxMapper(null, null);// from getlist
+      currentPdxInstance = createJSONToPdxMapper(null, null, identityFields);// from getlist
     }
     while (true) {
       JsonToken nt = jp.nextToken();
@@ -216,7 +297,8 @@ public class JSONFormatter {
           // need to create new PdxInstance
           // root object will not name, so create classname lazily from all members.
           // child object will have name; but create this as well lazily from all members
-          JSONToPdxMapper tmp = createJSONToPdxMapper(currentFieldName, currentPdxInstance);
+          JSONToPdxMapper tmp =
+              createJSONToPdxMapper(currentFieldName, currentPdxInstance, identityFields);
           currentPdxInstance = tmp;
           break;
         }
@@ -327,88 +409,76 @@ public class JSONFormatter {
 
   private void setNumberField(JsonParser jp, JSONToPdxMapper pih, String fieldName)
       throws IOException {
-    try {
-      NumberType nt = jp.getNumberType();
+    NumberType nt = jp.getNumberType();
 
-      switch (nt) {
-        case BIG_DECIMAL:
-          pih.addBigDecimalField(fieldName, jp.getDecimalValue());
-          break;
-        case BIG_INTEGER: {
-          BigInteger bi = jp.getBigIntegerValue();
-          pih.addBigIntegerField(fieldName, bi);
-        }
-          break;
-        case DOUBLE:
-          pih.addDoubleField(fieldName, jp.getDoubleValue());
-          break;
-        case FLOAT:
-          pih.addFloatField(fieldName, jp.getFloatValue());
-          break;
-        case INT: {
-          int val = jp.getIntValue();
-          if (val > Short.MAX_VALUE || val < Short.MIN_VALUE) {
-            pih.addIntField(fieldName, val);
-          } else if (val > Byte.MAX_VALUE || val < Byte.MIN_VALUE) {
-            pih.addShortField(fieldName, (short) val);
-          } else {
-            pih.addByteField(fieldName, (byte) val);
-          }
-        }
-          break;
-        case LONG:
-          pih.addLongField(fieldName, jp.getLongValue());
-          break;
-        default:
-          throw new IllegalStateException("setNumberField:unknow number type " + nt);
+    switch (nt) {
+      case BIG_DECIMAL:
+        pih.addBigDecimalField(fieldName, jp.getDecimalValue());
+        break;
+      case BIG_INTEGER: {
+        BigInteger bi = jp.getBigIntegerValue();
+        pih.addBigIntegerField(fieldName, bi);
       }
-    } catch (JsonParseException jpe) {
-      throw jpe;
-    } catch (IOException e) {
-      throw e;
+        break;
+      case DOUBLE:
+        pih.addDoubleField(fieldName, jp.getDoubleValue());
+        break;
+      case FLOAT:
+        pih.addFloatField(fieldName, jp.getFloatValue());
+        break;
+      case INT: {
+        int val = jp.getIntValue();
+        if (val > Short.MAX_VALUE || val < Short.MIN_VALUE) {
+          pih.addIntField(fieldName, val);
+        } else if (val > Byte.MAX_VALUE || val < Byte.MIN_VALUE) {
+          pih.addShortField(fieldName, (short) val);
+        } else {
+          pih.addByteField(fieldName, (byte) val);
+        }
+      }
+        break;
+      case LONG:
+        pih.addLongField(fieldName, jp.getLongValue());
+        break;
+      default:
+        throw new IllegalStateException("setNumberField:unknow number type " + nt);
     }
   }
 
   private void setNumberField(JsonParser jp, PdxListHelper pih) throws IOException {
-    try {
-      NumberType nt = jp.getNumberType();
+    NumberType nt = jp.getNumberType();
 
-      switch (nt) {
-        case BIG_DECIMAL:
-          pih.addBigDecimalField(jp.getDecimalValue());
-          break;
-        case BIG_INTEGER: {
-          BigInteger bi = jp.getBigIntegerValue();
-          pih.addBigIntegerField(bi);
-        }
-          break;
-        case DOUBLE:
-          pih.addDoubleField(jp.getDoubleValue());
-          break;
-        case FLOAT:
-          pih.addFloatField(jp.getFloatValue());
-          break;
-        case INT: {
-          int val = jp.getIntValue();
-          if (val > Short.MAX_VALUE || val < Short.MIN_VALUE) {
-            pih.addIntField(val);
-          } else if (val > Byte.MAX_VALUE || val < Byte.MIN_VALUE) {
-            pih.addShortField((short) val);
-          } else {
-            pih.addByteField((byte) val);
-          }
-        }
-          break;
-        case LONG:
-          pih.addLongField(jp.getLongValue());
-          break;
-        default:
-          throw new IllegalStateException("setNumberField:unknow number type " + nt);
+    switch (nt) {
+      case BIG_DECIMAL:
+        pih.addBigDecimalField(jp.getDecimalValue());
+        break;
+      case BIG_INTEGER: {
+        BigInteger bi = jp.getBigIntegerValue();
+        pih.addBigIntegerField(bi);
       }
-    } catch (JsonParseException jpe) {
-      throw jpe;
-    } catch (IOException e) {
-      throw e;
+        break;
+      case DOUBLE:
+        pih.addDoubleField(jp.getDoubleValue());
+        break;
+      case FLOAT:
+        pih.addFloatField(jp.getFloatValue());
+        break;
+      case INT: {
+        int val = jp.getIntValue();
+        if (val > Short.MAX_VALUE || val < Short.MIN_VALUE) {
+          pih.addIntField(val);
+        } else if (val > Byte.MAX_VALUE || val < Byte.MIN_VALUE) {
+          pih.addShortField((short) val);
+        } else {
+          pih.addByteField((byte) val);
+        }
+      }
+        break;
+      case LONG:
+        pih.addLongField(jp.getLongValue());
+        break;
+      default:
+        throw new IllegalStateException("setNumberField:unknow number type " + nt);
     }
   }
 

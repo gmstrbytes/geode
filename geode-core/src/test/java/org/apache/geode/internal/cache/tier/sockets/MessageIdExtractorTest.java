@@ -31,16 +31,17 @@ import org.junit.experimental.categories.Category;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import org.apache.geode.internal.cache.tier.Encryptor;
 import org.apache.geode.security.AuthenticationRequiredException;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.test.junit.categories.ClientServerTest;
 
-@Category(UnitTest.class)
+@Category({ClientServerTest.class})
 public class MessageIdExtractorTest {
   @Mock
   Message requestMessage;
 
   @Mock
-  HandShake handshake;
+  Encryptor encryptor;
 
   private MessageIdExtractor messageIdExtractor;
 
@@ -55,12 +56,12 @@ public class MessageIdExtractorTest {
 
     MockitoAnnotations.initMocks(this);
 
-    when(handshake.decryptBytes(any())).thenReturn(decryptedBytes);
+    when(encryptor.decryptBytes(any())).thenReturn(decryptedBytes);
   }
 
   @Test
   public void getUniqueIdFromMessage() throws Exception {
-    assertThat(messageIdExtractor.getUniqueIdFromMessage(requestMessage, handshake, connectionId))
+    assertThat(messageIdExtractor.getUniqueIdFromMessage(requestMessage, encryptor, connectionId))
         .isEqualTo(uniqueId);
   }
 
@@ -68,7 +69,7 @@ public class MessageIdExtractorTest {
   public void throwsWhenConnectionIdsDoNotMatch() throws Exception {
     long otherConnectionId = 789L;
 
-    assertThatThrownBy(() -> messageIdExtractor.getUniqueIdFromMessage(requestMessage, handshake,
+    assertThatThrownBy(() -> messageIdExtractor.getUniqueIdFromMessage(requestMessage, encryptor,
         otherConnectionId)).isInstanceOf(AuthenticationRequiredException.class);
   }
 

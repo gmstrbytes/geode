@@ -19,89 +19,76 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Map;
 
-import org.apache.commons.lang.StringUtils;
-import org.apache.commons.lang.SystemUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.shell.event.ParseResult;
 
-import org.apache.geode.management.cli.Result;
 import org.apache.geode.management.internal.cli.AbstractCliAroundInterceptor;
 import org.apache.geode.management.internal.cli.GfshParseResult;
+import org.apache.geode.management.internal.cli.domain.DataCommandResult;
 import org.apache.geode.management.internal.cli.result.CommandResult;
-import org.apache.geode.management.internal.cli.result.CompositeResultData;
-import org.apache.geode.management.internal.cli.result.InfoResultData;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
-import org.apache.geode.management.internal.cli.result.TabularResultData;
+import org.apache.geode.management.internal.cli.result.model.DataResultModel;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 
 public class QueryInterceptor extends AbstractCliAroundInterceptor {
   public static final String FILE_ALREADY_EXISTS_MESSAGE =
       "The specified output file already exists.";
 
   @Override
-  public Result preExecution(GfshParseResult parseResult) {
+  public ResultModel preExecution(GfshParseResult parseResult) {
     File outputFile = getOutputFile(parseResult);
 
     if (outputFile != null && outputFile.exists()) {
-      return ResultBuilder.createUserErrorResult(FILE_ALREADY_EXISTS_MESSAGE);
+      return ResultModel.createError(FILE_ALREADY_EXISTS_MESSAGE);
     }
 
-    return ResultBuilder.createInfoResult("");
+    return new ResultModel();
   }
 
   @Override
-  public Result postExecution(GfshParseResult parseResult, Result result, Path tempFile) {
+  public ResultModel postExecution(GfshParseResult parseResult, ResultModel model, Path tempFile)
+      throws Exception {
     File outputFile = getOutputFile(parseResult);
 
     if (outputFile == null) {
-      return result;
+      return model;
     }
 
-    CommandResult commandResult = (CommandResult) result;
-    CompositeResultData resultData = (CompositeResultData) commandResult.getResultData();
-    CompositeResultData.SectionResultData sectionResultData = resultData.retrieveSectionByIndex(0);
+    Map<String, String> sectionResultData =
+        model.getDataSection(DataCommandResult.DATA_INFO_SECTION).getContent();
 
-    String limit = sectionResultData.retrieveString("Limit");
-    String resultString = sectionResultData.retrieveString("Result");
-    String rows = sectionResultData.retrieveString("Rows");
+    String limit = sectionResultData.get("Limit");
+    String resultString = sectionResultData.get("Result");
+    String rows = sectionResultData.get("Rows");
 
     if ("false".equalsIgnoreCase(resultString)) {
-      return result;
+      return model;
     }
 
-    TabularResultData tabularResultData = sectionResultData.retrieveTableByIndex(0);
-    CommandResult resultTable = new CommandResult(tabularResultData);
-    try {
-      writeResultTableToFile(outputFile, resultTable);
-      // return a result w/ message explaining limit
-    } catch (IOException e) {
-      throw new RuntimeException(e);
-    }
+    writeResultTableToFile(outputFile, model);
+    ResultModel newModel = new ResultModel();
+    DataResultModel data = newModel.addData(DataCommandResult.DATA_INFO_SECTION);
 
-    InfoResultData infoResultData = ResultBuilder.createInfoResultData();
-    infoResultData.addLine("Result : " + resultString);
+    data.addData("Result", resultString);
     if (StringUtils.isNotBlank(limit)) {
-      infoResultData.addLine("Limit  : " + limit);
+      data.addData("Limit", limit);
     }
-    infoResultData.addLine("Rows   : " + rows);
-    infoResultData.addLine(SystemUtils.LINE_SEPARATOR);
-    infoResultData.addLine("Query results output to " + outputFile.getAbsolutePath());
+    data.addData("Rows", rows);
 
-    return new CommandResult(infoResultData);
+    newModel.addInfo().addLine("Query results output to " + outputFile.getAbsolutePath());
+
+    return newModel;
   }
 
   private File getOutputFile(ParseResult parseResult) {
     return (File) parseResult.getArguments()[1];
   }
 
-  private void writeResultTableToFile(File file, CommandResult commandResult) throws IOException {
+  private void writeResultTableToFile(File file, ResultModel resultModel) throws IOException {
+    CommandResult commandResult = new CommandResult(resultModel);
     try (FileWriter fileWriter = new FileWriter(file)) {
-      while (commandResult.hasNextLine()) {
-        fileWriter.write(commandResult.nextLine());
-
-        if (commandResult.hasNextLine()) {
-          fileWriter.write(SystemUtils.LINE_SEPARATOR);
-        }
-      }
+      fileWriter.write(commandResult.asString());
     }
   }
 }

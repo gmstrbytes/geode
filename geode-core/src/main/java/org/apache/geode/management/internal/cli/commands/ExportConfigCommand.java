@@ -20,7 +20,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.shell.core.annotation.CliCommand;
 import org.springframework.shell.core.annotation.CliOption;
 
@@ -28,20 +28,19 @@ import org.apache.geode.cache.execute.ResultCollector;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.management.cli.CliMetaData;
 import org.apache.geode.management.cli.ConverterHint;
-import org.apache.geode.management.cli.Result;
+import org.apache.geode.management.cli.GfshCommand;
 import org.apache.geode.management.internal.cli.AbstractCliAroundInterceptor;
 import org.apache.geode.management.internal.cli.CliUtil;
 import org.apache.geode.management.internal.cli.GfshParseResult;
 import org.apache.geode.management.internal.cli.functions.CliFunctionResult;
 import org.apache.geode.management.internal.cli.functions.ExportConfigFunction;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.cli.result.InfoResultData;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
-import org.apache.geode.management.internal.cli.shell.Gfsh;
+import org.apache.geode.management.internal.cli.result.model.InfoResultModel;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.management.internal.security.ResourceOperation;
 import org.apache.geode.security.ResourcePermission;
 
-public class ExportConfigCommand implements GfshCommand {
+public class ExportConfigCommand extends GfshCommand {
   private final ExportConfigFunction exportConfigFunction = new ExportConfigFunction();
 
   /**
@@ -57,7 +56,7 @@ public class ExportConfigCommand implements GfshCommand {
       relatedTopic = {CliStrings.TOPIC_GEODE_CONFIG})
   @ResourceOperation(resource = ResourcePermission.Resource.CLUSTER,
       operation = ResourcePermission.Operation.READ)
-  public Result exportConfig(
+  public ResultModel exportConfig(
       @CliOption(key = {CliStrings.MEMBER, CliStrings.MEMBERS},
           optionContext = ConverterHint.ALL_MEMBER_IDNAME,
           help = CliStrings.EXPORT_CONFIG__MEMBER__HELP) String[] member,
@@ -66,11 +65,14 @@ public class ExportConfigCommand implements GfshCommand {
           help = CliStrings.EXPORT_CONFIG__GROUP__HELP) String[] group,
       @CliOption(key = {CliStrings.EXPORT_CONFIG__DIR},
           help = CliStrings.EXPORT_CONFIG__DIR__HELP) String dir) {
-    InfoResultData infoData = ResultBuilder.createInfoResultData();
 
-    Set<DistributedMember> targetMembers = CliUtil.findMembers(group, member);
+    ResultModel crm = new ResultModel();
+    InfoResultModel infoData = crm.addInfo(ResultModel.INFO_SECTION);
+
+    Set<DistributedMember> targetMembers = findMembers(group, member);
     if (targetMembers.isEmpty()) {
-      return ResultBuilder.createUserErrorResult(CliStrings.NO_MEMBERS_FOUND_MESSAGE);
+      crm.createError(CliStrings.NO_MEMBERS_FOUND_MESSAGE);
+      return crm;
     }
 
     ResultCollector<?, ?> rc =
@@ -85,64 +87,56 @@ public class ExportConfigCommand implements GfshCommand {
         String cacheFileName = result.getMemberIdOrName() + "-cache.xml";
         String propsFileName = result.getMemberIdOrName() + "-gf.properties";
         String[] fileContent = (String[]) result.getSerializables();
-        infoData.addAsFile(cacheFileName, fileContent[0], "Downloading Cache XML file: {0}", false);
-        infoData.addAsFile(propsFileName, fileContent[1], "Downloading properties file: {0}",
-            false);
+        crm.addFile(cacheFileName, fileContent[0]);
+        crm.addFile(propsFileName, fileContent[1]);
       }
     }
-    return ResultBuilder.buildResult(infoData);
 
+    return crm;
   }
 
   /**
    * Interceptor used by gfsh to intercept execution of export config command at "shell".
    */
   public static class Interceptor extends AbstractCliAroundInterceptor {
-    private String saveDirString;
+    private File saveDirFile;
 
     @Override
-    public Result preExecution(GfshParseResult parseResult) {
+    public ResultModel preExecution(GfshParseResult parseResult) {
       String dir = parseResult.getParamValueAsString("dir");
       if (StringUtils.isBlank(dir)) {
-        saveDirString = new File(".").getAbsolutePath();
-        return ResultBuilder.createInfoResult("OK");
+        saveDirFile = new File(".").getAbsoluteFile();
+        return new ResultModel();
       }
 
-      File saveDirFile = new File(dir.trim());
+      saveDirFile = new File(dir.trim()).getAbsoluteFile();
 
       if (!saveDirFile.exists() && !saveDirFile.mkdirs()) {
-        return ResultBuilder.createGemFireErrorResult(
-            CliStrings.format(CliStrings.EXPORT_CONFIG__MSG__CANNOT_CREATE_DIR, dir));
+        return ResultModel
+            .createError(CliStrings.format(CliStrings.EXPORT_CONFIG__MSG__CANNOT_CREATE_DIR, dir));
       }
 
       if (!saveDirFile.isDirectory()) {
-        return ResultBuilder.createGemFireErrorResult(
-            CliStrings.format(CliStrings.EXPORT_CONFIG__MSG__NOT_A_DIRECTORY, dir));
+        return ResultModel
+            .createError(CliStrings.format(CliStrings.EXPORT_CONFIG__MSG__NOT_A_DIRECTORY, dir));
       }
 
       try {
         if (!saveDirFile.canWrite()) {
-          return ResultBuilder.createGemFireErrorResult(CliStrings.format(
+          return ResultModel.createError(CliStrings.format(
               CliStrings.EXPORT_CONFIG__MSG__NOT_WRITEABLE, saveDirFile.getCanonicalPath()));
         }
       } catch (IOException ioex) {
-        return ResultBuilder.createGemFireErrorResult(
+        return ResultModel.createError(
             CliStrings.format(CliStrings.EXPORT_CONFIG__MSG__NOT_WRITEABLE, saveDirFile.getName()));
       }
-
-      saveDirString = saveDirFile.getAbsolutePath();
-      return ResultBuilder.createInfoResult("OK");
+      return new ResultModel();
     }
 
     @Override
-    public Result postExecution(GfshParseResult parseResult, Result commandResult, Path tempFile) {
-      if (commandResult.hasIncomingFiles()) {
-        try {
-          commandResult.saveIncomingFiles(saveDirString);
-        } catch (IOException ioex) {
-          Gfsh.getCurrentInstance().logSevere("Unable to export config", ioex);
-        }
-      }
+    public ResultModel postExecution(GfshParseResult parseResult, ResultModel commandResult,
+        Path tempFile) throws Exception {
+      commandResult.saveFileTo(saveDirFile);
       return commandResult;
     }
   }

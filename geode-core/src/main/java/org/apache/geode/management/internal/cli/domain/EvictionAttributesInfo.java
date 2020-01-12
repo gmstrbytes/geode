@@ -17,7 +17,6 @@ package org.apache.geode.management.internal.cli.domain;
 import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
 
 import org.apache.geode.cache.EvictionAction;
 import org.apache.geode.cache.EvictionAlgorithm;
@@ -27,9 +26,6 @@ import org.apache.geode.management.internal.cli.util.RegionAttributesNames;
 
 public class EvictionAttributesInfo implements Serializable {
 
-  /**
-   *
-   */
   private static final long serialVersionUID = 1L;
   private String evictionAction = "";
   private String evictionAlgorithm = "";
@@ -46,9 +42,7 @@ public class EvictionAttributesInfo implements Serializable {
     if (evictionAlgo != null) {
       evictionAlgorithm = evictionAlgo.toString();
     }
-    if (!EvictionAlgorithm.LRU_HEAP.equals(evictionAlgo)) {
-      evictionMaxValue = ea.getMaximum();
-    }
+    evictionMaxValue = ea.getMaximum();
   }
 
   public String getEvictionAction() {

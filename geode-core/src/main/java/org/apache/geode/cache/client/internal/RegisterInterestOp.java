@@ -21,7 +21,6 @@ import org.apache.geode.InternalGemFireError;
 import org.apache.geode.cache.InterestResultPolicy;
 import org.apache.geode.cache.client.ServerOperationException;
 import org.apache.geode.distributed.internal.ServerLocation;
-import org.apache.geode.internal.Version;
 import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.internal.cache.LocalRegion;
 import org.apache.geode.internal.cache.tier.InterestType;
@@ -30,6 +29,7 @@ import org.apache.geode.internal.cache.tier.sockets.ChunkedMessage;
 import org.apache.geode.internal.cache.tier.sockets.Message;
 import org.apache.geode.internal.cache.tier.sockets.Part;
 import org.apache.geode.internal.cache.tier.sockets.VersionedObjectList;
+import org.apache.geode.internal.serialization.Version;
 
 /**
  * Does a region registerInterest on a server
@@ -119,7 +119,7 @@ public class RegisterInterestOp {
         byte regionDataPolicy) {
       super(MessageType.REGISTER_INTEREST, 7);
       this.region = region;
-      getMessage().addStringPart(region);
+      getMessage().addStringPart(region, true);
       getMessage().addIntPart(interestType);
       getMessage().addObjPart(policy);
       {
@@ -168,8 +168,6 @@ public class RegisterInterestOp {
           try {
             localRegion = (LocalRegion) GemFireCacheImpl.getInstance().getRegion(this.region);
           } catch (Exception ignore) {
-            // ignore but read message
-            // GemFireCacheImpl.getInstance().getLogger().config("hitesh error " + ex.getClass());
           }
 
           ArrayList list = new ArrayList();
@@ -192,14 +190,12 @@ public class RegisterInterestOp {
               throw new ServerOperationException(s, (Throwable) partObj);
               // Get the exception toString part.
               // This was added for c++ thin client and not used in java
-              // Part exceptionToStringPart = msg.getPart(1);
             } else {
               if (partObj instanceof VersionedObjectList) {
                 if (serverEntries == null) {
                   serverEntries = new VersionedObjectList(true);
                 }
                 ((VersionedObjectList) partObj).replaceNullIDs(con.getEndpoint().getMemberId());
-                // serverEntries.addAll((VersionedObjectList)partObj);
                 list.clear();
                 list.add(partObj);
 
@@ -208,8 +204,6 @@ public class RegisterInterestOp {
                     localRegion.refreshEntriesFromServerKeys(con, listOfList,
                         InterestResultPolicy.KEYS_VALUES);
                   } catch (Exception ex) {
-                    // GemFireCacheImpl.getInstance().getLogger().config("hitesh error2 " +
-                    // ex.getClass());
                   }
                 }
               } else {
@@ -237,7 +231,6 @@ public class RegisterInterestOp {
           Part part = chunkedMessage.getPart(0);
           // Get the exception toString part.
           // This was added for c++ thin client and not used in java
-          // Part exceptionToStringPart = msg.getPart(1);
           Object obj = part.getObject(); {
           String s = this + ": While performing a remote " + getOpName();
           throw new ServerOperationException(s, (Throwable) obj);

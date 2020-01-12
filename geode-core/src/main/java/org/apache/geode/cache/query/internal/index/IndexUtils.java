@@ -14,6 +14,7 @@
  */
 package org.apache.geode.cache.query.internal.index;
 
+import org.apache.geode.annotations.internal.MutableForTesting;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.query.AmbiguousNameException;
 import org.apache.geode.cache.query.IndexType;
@@ -24,7 +25,7 @@ import org.apache.geode.cache.query.internal.DefaultQueryService;
 import org.apache.geode.cache.query.internal.ExecutionContext;
 import org.apache.geode.cache.query.internal.index.IndexManager.TestHook;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.cache.LocalRegion;
+import org.apache.geode.internal.cache.InternalRegion;
 import org.apache.geode.internal.cache.PartitionedRegion;
 
 public class IndexUtils {
@@ -33,18 +34,19 @@ public class IndexUtils {
 
   public static final boolean useOnlyExactIndexs = false;
 
+  @MutableForTesting
   public static TestHook testHook;
 
   public static void setTestHook(TestHook testHook) {
     IndexUtils.testHook = testHook;
   }
 
-  public static IndexManager getIndexManager(Region region, boolean createIfNotAvailable) {
+  public static IndexManager getIndexManager(InternalCache cache, Region region,
+      boolean createIfNotAvailable) {
     if (region == null || region.isDestroyed()) {
       return null;
     }
-
-    LocalRegion lRegion = (LocalRegion) region;
+    InternalRegion lRegion = (InternalRegion) region;
     IndexManager idxMgr = lRegion.getIndexManager();
     if (idxMgr == null && createIfNotAvailable) {
       // JUst before creating new IndexManager.
@@ -55,7 +57,7 @@ public class IndexUtils {
       synchronized (imSync) {
         // Double checked locking
         if (lRegion.getIndexManager() == null) {
-          idxMgr = new IndexManager(region);
+          idxMgr = new IndexManager(cache, region);
           lRegion.setIndexManager(idxMgr);
         } else {
           idxMgr = lRegion.getIndexManager();

@@ -40,13 +40,11 @@ import org.apache.geode.admin.SystemMemberCacheEvent;
 import org.apache.geode.admin.SystemMemberRegionEvent;
 import org.apache.geode.admin.internal.ConfigurationParameterImpl;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.i18n.LogWriterI18n;
 import org.apache.geode.internal.admin.ApplicationVM;
 import org.apache.geode.internal.admin.ClientMembershipMessage;
 import org.apache.geode.internal.admin.GemFireVM;
 import org.apache.geode.internal.admin.StatResource;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * Provides MBean support for managing a SystemMember application.
@@ -114,9 +112,6 @@ public class SystemMemberJmxImpl extends org.apache.geode.admin.internal.SystemM
 
   /** Create and register the MBean to manage this resource */
   private void initializeMBean() throws org.apache.geode.admin.AdminException {
-    // initialize Managed Resources for stats & cache first.
-    // initializeManagedResources();
-
     this.mbeanName = new StringBuffer("GemFire.Member:id=")
         .append(MBeanUtil.makeCompliantMBeanNameProperty(getId())).append(",type=")
         .append(MBeanUtil.makeCompliantMBeanNameProperty(getType().getName())).toString();
@@ -139,6 +134,7 @@ public class SystemMemberJmxImpl extends org.apache.geode.admin.internal.SystemM
    *
    * @return the current refresh interval in seconds
    */
+  @Override
   public int getRefreshInterval() {
     return this.refreshInterval;
   }
@@ -152,11 +148,11 @@ public class SystemMemberJmxImpl extends org.apache.geode.admin.internal.SystemM
    * @param refreshInterval the new refresh interval in seconds
    * @deprecated since 6.0 use DistributedSystemConfig.refreshInterval instead
    */
+  @Override
   @Deprecated
   public void setRefreshInterval(int refreshInterval) throws OperationNotSupportedException {
     throw new OperationNotSupportedException(
-        LocalizedStrings.MANAGED_RESOURCE_REFRESH_INTERVAL_CANT_BE_SET_DIRECTLY
-            .toLocalizedString());
+        "RefreshInterval can not be set directly. Use DistributedSystemConfig.refreshInterval.");
   }
 
   /**
@@ -165,6 +161,7 @@ public class SystemMemberJmxImpl extends org.apache.geode.admin.internal.SystemM
    *
    * @param refreshInterval the new refresh interval in seconds
    */
+  @Override
   public void _setRefreshInterval(int refreshInterval) {
     boolean isRegistered = MBeanUtil.isRefreshNotificationRegistered(this,
         RefreshNotificationType.SYSTEM_MEMBER_CONFIG);
@@ -179,6 +176,7 @@ public class SystemMemberJmxImpl extends org.apache.geode.admin.internal.SystemM
   // MBean Operations
   // -------------------------------------------------------------------------
 
+  @Override
   public void refreshConfig() throws org.apache.geode.admin.AdminException {
     // 1st call to refreshConfig would trigger
     // the auto-refresh if an interval is set
@@ -190,44 +188,13 @@ public class SystemMemberJmxImpl extends org.apache.geode.admin.internal.SystemM
   }
 
   /**
-   * Initializes Cache & Statistics managed resources.
-   *
-   * @throws AdminException if initialization of managed resources fails
-   */
-  // private void initializeManagedResources() throws AdminException {
-  // try {
-  // manageCache();
-  // } catch (MalformedObjectNameException e) {
-  // throw new
-  // AdminException(LocalizedStrings.SystemMemberJmxImpl_EXCEPTION_OCCURRED_WHILE_INITIALIZING_0_MBEANS_FOR_1.toLocalizedString(
-  // new Object[] {"Cache", getId()}),
-  // e);
-  // } catch (AdminException ae) {
-  // if
-  // (LocalizedStrings.SystemMemberJmx_THIS_SYSTEM_MEMBER_DOES_NOT_HAVE_A_CACHE.toLocalizedString().equals(ae.getMessage()))
-  // {
-  // //ignore this exception for a cache-less peer
-  // } else {
-  // throw ae;
-  // }
-  // }
-  // try {
-  // manageStats();
-  // } catch (MalformedObjectNameException e) {
-  // throw new
-  // AdminException(LocalizedStrings.SystemMemberJmxImpl_EXCEPTION_OCCURRED_WHILE_INITIALIZING_0_MBEANS_FOR_1.toLocalizedString(
-  // new Object[] {"Statistics", getId()}),
-  // e);
-  // }
-  // }
-
-  /**
    * Gets this member's cache.
    *
    * @return <code>ObjectName</code> for this member's cache
    *
    * @throws AdminException If this system member does not host a cache
    */
+  @Override
   public ObjectName manageCache() throws AdminException, MalformedObjectNameException {
 
     return Helper.manageCache(this);
@@ -238,6 +205,7 @@ public class SystemMemberJmxImpl extends org.apache.geode.admin.internal.SystemM
    *
    * @return array of ObjectName instances
    */
+  @Override
   public ObjectName[] manageStats() throws AdminException, MalformedObjectNameException {
 
     return Helper.manageStats(this);
@@ -248,6 +216,7 @@ public class SystemMemberJmxImpl extends org.apache.geode.admin.internal.SystemM
    *
    * @return ObjectName of StatisticResourceJMX instance
    */
+  @Override
   public ObjectName[] manageStat(String statisticsTypeName)
       throws AdminException, MalformedObjectNameException {
 
@@ -266,6 +235,7 @@ public class SystemMemberJmxImpl extends org.apache.geode.admin.internal.SystemM
    * @param notification the JMX notification being received
    * @param hb handback object is unused
    */
+  @Override
   public void handleNotification(Notification notification, Object hb) {
     AdminDistributedSystemJmxImpl systemJmx = (AdminDistributedSystemJmxImpl) this.system;
 
@@ -345,6 +315,7 @@ public class SystemMemberJmxImpl extends org.apache.geode.admin.internal.SystemM
    * @return a new instance of ManagedBean copied from <code>managed</code> but with the new
    *         attributes added
    */
+  @Override
   public ManagedBean addDynamicAttributes(ManagedBean managed) throws AdminException {
 
     return Helper.addDynamicAttributes(this, managed);
@@ -360,22 +331,27 @@ public class SystemMemberJmxImpl extends org.apache.geode.admin.internal.SystemM
   /** The ModelMBean that is configured to manage this resource */
   private ModelMBean modelMBean;
 
+  @Override
   public String getMBeanName() {
     return this.mbeanName;
   }
 
+  @Override
   public ModelMBean getModelMBean() {
     return this.modelMBean;
   }
 
+  @Override
   public void setModelMBean(ModelMBean modelMBean) {
     this.modelMBean = modelMBean;
   }
 
+  @Override
   public ObjectName getObjectName() {
     return this.objectName;
   }
 
+  @Override
   public ManagedResourceType getManagedResourceType() {
     return ManagedResourceType.SYSTEM_MEMBER;
   }
@@ -384,6 +360,7 @@ public class SystemMemberJmxImpl extends org.apache.geode.admin.internal.SystemM
    * Un-registers all the statistics & cache managed resource created for this member. After
    * un-registering the resource MBean instances, clears managedStatisticsResourcesMap collection.
    */
+  @Override
   public void cleanupResource() {
     synchronized (this.managedStatisticsResourcesMap) {
       ConfigurationParameter[] names = getConfiguration();
@@ -447,6 +424,7 @@ public class SystemMemberJmxImpl extends org.apache.geode.admin.internal.SystemM
    * @param eventType membership change type; one of {@link ClientMembershipMessage#JOINED},
    *        {@link ClientMembershipMessage#LEFT}, {@link ClientMembershipMessage#CRASHED}
    */
+  @Override
   public void handleClientMembership(String clientId, int eventType) {
     String notifType = null;
     List<ManagedResource> cleanedUp = null;
@@ -478,6 +456,7 @@ public class SystemMemberJmxImpl extends org.apache.geode.admin.internal.SystemM
    *
    * @param event event object corresponding to the creation of the cache
    */
+  @Override
   public void handleCacheCreate(SystemMemberCacheEvent event) {
     Helper.sendNotification(this, new Notification(NOTIF_CACHE_CREATED, this.modelMBean,
         Helper.getNextNotificationSequenceNumber(), Helper.getCacheEventDetails(event)));
@@ -490,6 +469,7 @@ public class SystemMemberJmxImpl extends org.apache.geode.admin.internal.SystemM
    *
    * @param event event object corresponding to the closure of the cache
    */
+  @Override
   public void handleCacheClose(SystemMemberCacheEvent event) {
     Helper.sendNotification(this, new Notification(NOTIF_CACHE_CLOSED, this.modelMBean,
         Helper.getNextNotificationSequenceNumber(), Helper.getCacheEventDetails(event)));
@@ -502,6 +482,7 @@ public class SystemMemberJmxImpl extends org.apache.geode.admin.internal.SystemM
    *
    * @param event event object corresponding to the creation of a region
    */
+  @Override
   public void handleRegionCreate(SystemMemberRegionEvent event) {
     Notification notification = new Notification(NOTIF_REGION_CREATED, this.modelMBean,
         Helper.getNextNotificationSequenceNumber(), Helper.getRegionEventDetails(event));
@@ -519,6 +500,7 @@ public class SystemMemberJmxImpl extends org.apache.geode.admin.internal.SystemM
    *
    * @param event event object corresponding to the loss of a region
    */
+  @Override
   public void handleRegionLoss(SystemMemberRegionEvent event) {
     SystemMemberCacheJmxImpl cacheResource = this.managedSystemMemberCache;
 

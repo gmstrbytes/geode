@@ -14,6 +14,8 @@
  */
 package org.apache.geode.internal.cache.persistence;
 
+import static org.apache.geode.internal.cache.LocalRegion.InitializationLevel.ANY_INIT;
+
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
@@ -27,10 +29,9 @@ import org.apache.geode.CancelException;
 import org.apache.geode.DataSerializer;
 import org.apache.geode.SystemFailure;
 import org.apache.geode.cache.Cache;
-import org.apache.geode.cache.CacheFactory;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.RegionDestroyedException;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.HighPriorityDistributionMessage;
@@ -40,15 +41,14 @@ import org.apache.geode.distributed.internal.ReplyMessage;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.cache.DistributedRegion;
-import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.internal.cache.LocalRegion;
+import org.apache.geode.internal.cache.LocalRegion.InitializationLevel;
 import org.apache.geode.internal.cache.PartitionedRegionHelper;
 import org.apache.geode.internal.cache.partitioned.Bucket;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
-/**
- *
- */
 public class PersistentStateQueryMessage extends HighPriorityDistributionMessage
     implements MessageWithReply {
 
@@ -71,24 +71,19 @@ public class PersistentStateQueryMessage extends HighPriorityDistributionMessage
     this.processorId = processorId;
   }
 
-  public static PersistentStateQueryResults send(Set<InternalDistributedMember> members, DM dm,
-      String regionPath, PersistentMemberID persistentId, PersistentMemberID initializingId)
-      throws ReplyException {
-    PersistentStateQueryReplyProcessor processor =
-        new PersistentStateQueryReplyProcessor(dm, members);
-    PersistentStateQueryMessage msg = new PersistentStateQueryMessage(regionPath, persistentId,
-        initializingId, processor.getProcessorId());
-    msg.setRecipients(members);
+  PersistentStateQueryResults send(Set<InternalDistributedMember> members, DistributionManager dm,
+      PersistentStateQueryReplyProcessor processor) {
+    setRecipients(members);
 
-    dm.putOutgoing(msg);
+    dm.putOutgoing(this);
+
     processor.waitForRepliesUninterruptibly();
     return processor.results;
   }
 
   @Override
-  protected void process(DistributionManager dm) {
-    int oldLevel = // Set thread local flag to allow entrance through initialization Latch
-        LocalRegion.setThreadInitLevelRequirement(LocalRegion.ANY_INIT);
+  protected void process(ClusterDistributionManager dm) {
+    final InitializationLevel oldLevel = LocalRegion.setThreadInitLevelRequirement(ANY_INIT);
 
     PersistentMemberState state = null;
     PersistentMemberID myId = null;
@@ -163,13 +158,15 @@ public class PersistentStateQueryMessage extends HighPriorityDistributionMessage
     }
   }
 
+  @Override
   public int getDSFID() {
     return PERSISTENT_STATE_QUERY_REQUEST;
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     regionPath = DataSerializer.readString(in);
     processorId = in.readInt();
     boolean hasId = in.readBoolean();
@@ -185,8 +182,9 @@ public class PersistentStateQueryMessage extends HighPriorityDistributionMessage
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     DataSerializer.writeString(regionPath, out);
     out.writeInt(processorId);
     out.writeBoolean(id != null);
@@ -205,10 +203,10 @@ public class PersistentStateQueryMessage extends HighPriorityDistributionMessage
         + initializingId;
   }
 
-  private static class PersistentStateQueryReplyProcessor extends ReplyProcessor21 {
+  static class PersistentStateQueryReplyProcessor extends ReplyProcessor21 {
     PersistentStateQueryResults results = new PersistentStateQueryResults();
 
-    public PersistentStateQueryReplyProcessor(DM dm, Collection initMembers) {
+    public PersistentStateQueryReplyProcessor(DistributionManager dm, Collection initMembers) {
       super(dm, initMembers);
     }
 
@@ -236,8 +234,9 @@ public class PersistentStateQueryMessage extends HighPriorityDistributionMessage
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       boolean hasId = in.readBoolean();
       if (hasId) {
         myId = new PersistentMemberID();
@@ -263,8 +262,9 @@ public class PersistentStateQueryMessage extends HighPriorityDistributionMessage
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       if (myId == null) {
         out.writeBoolean(false);
       } else {

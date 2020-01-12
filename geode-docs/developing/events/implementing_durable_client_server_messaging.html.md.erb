@@ -20,7 +20,7 @@ limitations under the License.
 -->
 
 <a id="implementing_durable_client_server_messaging__section_7A0D0B7D1F2748C7BA7479E0FD5C6BFA"></a>
-Use durable messaging for subscriptions that you need maintained for your clients even when your clients are down or disconnected. You can configure any of your event subscriptions as durable. Events for durable queries and subscriptions are saved in queue when the client is disconnected and played back when the client reconnects. Other queries and subscriptions are removed from the queue.
+Use durable messaging for subscriptions that you need maintained for your clients even when your clients are down or disconnected. You can configure any of your event subscriptions as durable. Events for durable queries and subscriptions are saved in a queue when the client is disconnected and played back when the client reconnects. Other queries and subscriptions are removed from the queue.
 
 Use durable messaging for client/server installations that use event subscriptions.
 
@@ -52,7 +52,7 @@ Use one of the following methods:
 
 <a id="implementing_durable_client_server_messaging__section_B8E01FE4B5A347EB96085DA3194F6AE8"></a>
 
-The `durable-client-id` indicates that the client is durable and gives the server an identifier to correlate the client to its durable messages. For a non-durable client, this id is an empty string. The ID can be any number that is unique among the clients attached to servers in the same distributed system.
+The `durable-client-id` indicates that the client is durable and gives the server an identifier to correlate the client to its durable messages. For a non-durable client, this id is an empty string. The ID can be any number that is unique among the clients attached to servers in the same cluster.
 
 The `durable-client-timeout` tells the server how long to wait for client reconnect. When this timeout is reached, the server stops storing to the client's message queue and discards any stored messages. The default is 300 seconds. This is a tuning parameter. If you change it, take into account the normal activity of your application, the average size of your messages, and the level of risk you can handle, both in lost messages and in the servers' capacity to store enqueued messages. Assuming that no messages are being removed from the queue, how long can the server run before the queue reaches the maximum capacity? How many durable clients can the server handle? To assist with tuning, use the <%=vars.product_name%> message queue statistics for durable clients through the disconnect and reconnect cycles.
 
@@ -173,7 +173,7 @@ During initialization, the client cache is not blocked from doing operations, so
 
 This figure shows the three concurrent procedures during the initialization process. The application begins operations immediately on the client (step 1), while the client’s cache ready message (also step 1) triggers a series of queue operations on the servers (starting with step 2 on the primary server). At the same time, the client registers interest (step 2 on the client) and receives a response from the server. Message B2 applies to an entry in Region A, so the cache listener handles B2’s event. Because B2 comes before the marker, the client does not apply the update to the cache.
 
-<img src="../../images/ClientServerAdvancedTopics-6.gif" alt="Durable client reconnection. " id="implementing_durable_client_server_messaging__image_068A59FA019E46FA9DE0BC7FA60AAADD" class="image" />
+<img src="../../images/ClientServerAdvancedTopics-6.png" alt="Durable client reconnection. " class="image" />
 
 ## <a id="implementing_durable_client_server_messaging__section_C848DF6D649F4DCAA2B895F5439BAA97" class="no-quick-link"></a>Durable Event Replay
 

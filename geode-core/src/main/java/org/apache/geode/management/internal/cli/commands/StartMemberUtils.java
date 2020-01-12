@@ -28,9 +28,10 @@ import java.util.Properties;
 
 import javax.management.MalformedObjectNameException;
 
-import org.apache.commons.lang.ArrayUtils;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.ArrayUtils;
+import org.apache.commons.lang3.StringUtils;
 
+import org.apache.geode.annotations.Immutable;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.internal.GemFireVersion;
 import org.apache.geode.internal.process.ProcessLauncherContext;
@@ -50,8 +51,10 @@ public class StartMemberUtils {
 
   private static final String JAVA_HOME = System.getProperty("java.home");
   static final int CMS_INITIAL_OCCUPANCY_FRACTION = 60;
+  @Immutable
   private static final ThreePhraseGenerator nameGenerator = new ThreePhraseGenerator();
 
+  static final String EXTENSIONS_PATHNAME = IOUtils.appendToPath(GEODE_HOME, "extensions");
   static final String CORE_DEPENDENCIES_JAR_PATHNAME =
       IOUtils.appendToPath(GEODE_HOME, "lib", "geode-dependencies.jar");
   static final String GEODE_JAR_PATHNAME =
@@ -69,9 +72,10 @@ public class StartMemberUtils {
     }
   }
 
-  static String resolveWorkingDir(String userSpecifiedDir, String memberName) {
+  static String resolveWorkingDir(File userSpecifiedDir, File memberNameDir) {
     File workingDir =
-        (userSpecifiedDir == null) ? new File(memberName) : new File(userSpecifiedDir);
+        (userSpecifiedDir == null || userSpecifiedDir.equals(new File(""))) ? memberNameDir
+            : userSpecifiedDir;
     String workingDirPath = IOUtils.tryGetCanonicalPathElseGetAbsolutePath(workingDir);
     if (!workingDir.exists()) {
       if (!workingDir.mkdirs()) {
@@ -126,12 +130,20 @@ public class StartMemberUtils {
   static void addMaxHeap(final List<String> commandLine, final String maxHeap) {
     if (StringUtils.isNotBlank(maxHeap)) {
       commandLine.add("-Xmx" + maxHeap);
-      commandLine.add("-XX:+UseConcMarkSweepGC");
-      commandLine.add("-XX:CMSInitiatingOccupancyFraction=" + CMS_INITIAL_OCCUPANCY_FRACTION);
+
+      String collectorKey = "-XX:+UseConcMarkSweepGC";
+      if (!commandLine.contains(collectorKey)) {
+        commandLine.add(collectorKey);
+      }
+
+      String occupancyFractionKey = "-XX:CMSInitiatingOccupancyFraction=";
+      if (commandLine.stream().noneMatch(s -> s.contains(occupancyFractionKey))) {
+        commandLine.add(occupancyFractionKey + CMS_INITIAL_OCCUPANCY_FRACTION);
+      }
     }
   }
 
-  static void addCurrentLocators(GfshCommand gfshCommand, final List<String> commandLine,
+  static void addCurrentLocators(OfflineGfshCommand gfshCommand, final List<String> commandLine,
       final Properties gemfireProperties) throws MalformedObjectNameException {
     if (StringUtils.isBlank(gemfireProperties.getProperty(LOCATORS))) {
       String currentLocators = getCurrentLocators(gfshCommand);
@@ -142,7 +154,7 @@ public class StartMemberUtils {
     }
   }
 
-  private static String getCurrentLocators(GfshCommand gfshCommand)
+  private static String getCurrentLocators(OfflineGfshCommand gfshCommand)
       throws MalformedObjectNameException {
     String delimitedLocators = "";
     try {

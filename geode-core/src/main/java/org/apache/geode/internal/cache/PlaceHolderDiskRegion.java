@@ -18,11 +18,10 @@ import org.apache.geode.CancelCriterion;
 import org.apache.geode.InternalGemFireError;
 import org.apache.geode.cache.DiskAccessException;
 import org.apache.geode.internal.cache.entries.DiskEntry;
-import org.apache.geode.internal.cache.eviction.EvictionStatistics;
+import org.apache.geode.internal.cache.eviction.EvictionController;
 import org.apache.geode.internal.cache.persistence.DiskRecoveryStore;
 import org.apache.geode.internal.cache.persistence.DiskRegionView;
 import org.apache.geode.internal.cache.persistence.DiskStoreID;
-import org.apache.geode.internal.i18n.LocalizedStrings;
 
 /**
  * Used to represent a recovered disk region. Once the region actually exists this instance will be
@@ -31,7 +30,8 @@ import org.apache.geode.internal.i18n.LocalizedStrings;
  *
  * @since GemFire prPersistSprint2
  */
-public class PlaceHolderDiskRegion extends AbstractDiskRegion implements DiskRecoveryStore {
+public class PlaceHolderDiskRegion extends AbstractDiskRegion
+    implements DiskRecoveryStore, RegionMapOwner {
 
   private final String name;
 
@@ -53,12 +53,6 @@ public class PlaceHolderDiskRegion extends AbstractDiskRegion implements DiskRec
     this.name = drv.getName();
   }
 
-  EvictionStatistics prlruStats;
-
-  public EvictionStatistics getPRLRUStats() {
-    return this.prlruStats;
-  }
-
   @Override
   public String getName() {
     return this.name;
@@ -76,6 +70,7 @@ public class PlaceHolderDiskRegion extends AbstractDiskRegion implements DiskRec
     // nothing needed
   }
 
+  @Override
   public void finishPendingDestroy() {
     // nothing needed
   }
@@ -90,10 +85,12 @@ public class PlaceHolderDiskRegion extends AbstractDiskRegion implements DiskRec
   }
 
   // DiskRecoveryStore methods
+  @Override
   public DiskRegionView getDiskRegionView() {
     return this;
   }
 
+  @Override
   public DiskEntry getDiskEntry(Object key) {
     RegionEntry re = getRecoveredEntryMap().getEntry(key);
     if (re != null && re.isRemoved() && !re.isTombstone()) {
@@ -102,39 +99,47 @@ public class PlaceHolderDiskRegion extends AbstractDiskRegion implements DiskRec
     return (DiskEntry) re;
   }
 
+  @Override
   public DiskEntry initializeRecoveredEntry(Object key, DiskEntry.RecoveredEntry value) {
     RegionEntry re = getRecoveredEntryMap().initRecoveredEntry(key, value);
     if (re == null) {
       throw new InternalGemFireError(
-          LocalizedStrings.LocalRegion_ENTRY_ALREADY_EXISTED_0.toLocalizedString(key));
+          String.format("Entry already existed: %s", key));
     }
     return (DiskEntry) re;
   }
 
+  @Override
   public DiskEntry updateRecoveredEntry(Object key, DiskEntry.RecoveredEntry value) {
     return (DiskEntry) getRecoveredEntryMap().updateRecoveredEntry(key, value);
   }
 
+  @Override
   public void destroyRecoveredEntry(Object key) {
     throw new IllegalStateException("destroyRecoveredEntry should not be called during recovery");
   }
 
+  @Override
   public void copyRecoveredEntries(RegionMap rm) {
     throw new IllegalStateException("copyRecoveredEntries should not be called during recovery");
   }
 
+  @Override
   public void foreachRegionEntry(LocalRegion.RegionEntryCallback callback) {
     throw new IllegalStateException("foreachRegionEntry should not be called during recovery");
   }
 
+  @Override
   public boolean lruLimitExceeded() {
     return getRecoveredEntryMap().lruLimitExceeded(this);
   }
 
+  @Override
   public DiskStoreID getDiskStoreID() {
     return getDiskStore().getDiskStoreID();
   }
 
+  @Override
   public void acquireReadLock() {
     // not needed. The only thread
     // using this method is the async recovery thread.
@@ -143,10 +148,12 @@ public class PlaceHolderDiskRegion extends AbstractDiskRegion implements DiskRec
 
   }
 
+  @Override
   public void releaseReadLock() {
     // not needed
   }
 
+  @Override
   public void updateSizeOnFaultIn(Object key, int newSize, int bytesOnDisk) {
     // only used by bucket regions
   }
@@ -157,10 +164,6 @@ public class PlaceHolderDiskRegion extends AbstractDiskRegion implements DiskRec
   }
 
   @Override
-  public int calculateRegionEntryValueSize(RegionEntry re) {
-    return 0;
-  }
-
   public RegionMap getRegionMap() {
     return getRecoveredEntryMap();
   }
@@ -169,41 +172,58 @@ public class PlaceHolderDiskRegion extends AbstractDiskRegion implements DiskRec
   public void close() {
     RegionMap rm = getRecoveredEntryMap();
     if (rm != null) {
-      rm.close();
+      rm.close(null);
     }
   }
 
+  @Override
   public void handleDiskAccessException(DiskAccessException dae) {
-    getDiskStore().getCache().getLoggerI18n().error(
-        LocalizedStrings.PlaceHolderDiskRegion_A_DISKACCESSEXCEPTION_HAS_OCCURRED_WHILE_RECOVERING_FROM_DISK,
-        getName(), dae);
+    getDiskStore().getCache().getLogger().error(
+        String.format(
+            "A DiskAccessException has occurred while recovering values asynchronously from disk for region %s.",
+            getName()),
+        dae);
 
   }
 
+  @Override
   public boolean didClearCountChange() {
     return false;
   }
 
+  @Override
   public CancelCriterion getCancelCriterion() {
     return getDiskStore().getCancelCriterion();
   }
 
+  @Override
   public boolean isSync() {
     return true;
   }
 
+  @Override
   public void endRead(long start, long end, long bytesRead) {
     // do nothing
   }
 
+  @Override
   public boolean isRegionClosed() {
     return false;
   }
 
+  @Override
   public void initializeStats(long numEntriesInVM, long numOverflowOnDisk,
       long numOverflowBytesOnDisk) {
     this.numEntriesInVM.set(numEntriesInVM);
     this.numOverflowOnDisk.set(numOverflowOnDisk);
     this.numOverflowBytesOnDisk.set(numOverflowBytesOnDisk);
+  }
+
+  @Override
+  public EvictionController getExistingController(InternalRegionArguments internalArgs) {
+    if (isBucket()) {
+      return this.getDiskStore().getOrCreatePRLRUStats(this);
+    }
+    return null;
   }
 }

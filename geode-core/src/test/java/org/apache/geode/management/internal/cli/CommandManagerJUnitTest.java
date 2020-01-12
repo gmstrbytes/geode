@@ -18,30 +18,29 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
-import java.util.List;
+import java.util.Properties;
 
+import com.examples.UserGfshCommand;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 import org.springframework.shell.core.CommandMarker;
 import org.springframework.shell.core.Completion;
-import org.springframework.shell.core.Converter;
-import org.springframework.shell.core.MethodTarget;
 import org.springframework.shell.core.annotation.CliAvailabilityIndicator;
 import org.springframework.shell.core.annotation.CliCommand;
 import org.springframework.shell.core.annotation.CliOption;
 
+import org.apache.geode.distributed.ConfigurationProperties;
 import org.apache.geode.management.cli.CliMetaData;
+import org.apache.geode.management.cli.Disabled;
 import org.apache.geode.management.cli.Result;
+import org.apache.geode.management.internal.cli.result.CommandResult;
 import org.apache.geode.management.internal.security.ResourceOperation;
 import org.apache.geode.security.ResourcePermission.Operation;
 import org.apache.geode.security.ResourcePermission.Resource;
-import org.apache.geode.test.junit.categories.UnitTest;
 
 /**
  * CommandManagerTest - Includes tests to check the CommandManager functions
  */
-@Category(UnitTest.class)
 public class CommandManagerJUnitTest {
 
   private static final String COMMAND1_NAME = "command1";
@@ -97,7 +96,7 @@ public class CommandManagerJUnitTest {
    * tests loadCommands()
    */
   @Test
-  public void testCommandManagerLoadCommands() throws Exception {
+  public void testCommandManagerLoadCommands() {
     assertNotNull(commandManager);
     assertThat(commandManager.getCommandMarkers().size()).isGreaterThan(0);
     assertThat(commandManager.getConverters().size()).isGreaterThan(0);
@@ -107,24 +106,53 @@ public class CommandManagerJUnitTest {
    * tests commandManagerInstance method
    */
   @Test
-  public void testCommandManagerInstance() throws Exception {
+  public void testCommandManagerInstance() {
     assertNotNull(commandManager);
   }
 
   /**
-   * Tests {@link CommandManager#loadPluginCommands()}.
-   *
    * @since GemFire 8.1
    */
   @Test
-  public void testCommandManagerLoadPluginCommands() throws Exception {
+  public void testCommandManagerLoadPluginCommands() {
     assertNotNull(commandManager);
 
-    // see META-INF/services/org.springframework.shell.core.CommandMarker service loader file.
     assertTrue("Should find listed plugin.",
         commandManager.getHelper().getCommands().contains("mock plugin command"));
     assertTrue("Should not find unlisted plugin.",
         !commandManager.getHelper().getCommands().contains("mock plugin command unlisted"));
+  }
+
+  @Test
+  public void testCommandManagerLoadsUserCommand() throws Exception {
+    Properties props = new Properties();
+    props.setProperty(ConfigurationProperties.USER_COMMAND_PACKAGES, "com.examples");
+    CommandManager commandManager = new CommandManager(props, null);
+
+    assertThat(
+        commandManager.getCommandMarkers().stream().anyMatch(c -> c instanceof UserGfshCommand));
+  }
+
+  @Test
+  public void commandManagerDoesNotAddUnsatisfiedFeatureFlaggedCommands() {
+    System.setProperty("enabled.flag", "true");
+    try {
+      CommandMarker accessibleCommand = new AccessibleCommand();
+      CommandMarker enabledCommand = new FeatureFlaggedAndEnabledCommand();
+      CommandMarker reachableButDisabledCommand = new FeatureFlaggedReachableCommand();
+      CommandMarker unreachableCommand = new FeatureFlaggedUnreachableCommand();
+
+      commandManager.add(accessibleCommand);
+      commandManager.add(enabledCommand);
+      commandManager.add(reachableButDisabledCommand);
+      commandManager.add(unreachableCommand);
+
+      assertThat(commandManager.getCommandMarkers()).contains(accessibleCommand, enabledCommand);
+      assertThat(commandManager.getCommandMarkers()).doesNotContain(reachableButDisabledCommand,
+          unreachableCommand);
+    } finally {
+      System.clearProperty("enabled.flag");
+    }
   }
 
   /**
@@ -180,41 +208,6 @@ public class CommandManagerJUnitTest {
     }
   }
 
-  /**
-   * Used by testCommandManagerLoadPluginCommands
-   */
-  private static class SimpleConverter implements Converter<String> {
-
-    @Override
-    public boolean supports(Class<?> type, String optionContext) {
-      return type.isAssignableFrom(String.class);
-    }
-
-    @Override
-    public String convertFromText(String value, Class<?> targetType, String optionContext) {
-      return value;
-    }
-
-    @Override
-    public boolean getAllPossibleValues(List<Completion> completions, Class<?> targetType,
-        String existingData, String context, MethodTarget target) {
-      if (context.equals(ARGUMENT1_CONTEXT)) {
-        for (Completion completion : ARGUMENT1_COMPLETIONS) {
-          completions.add(completion);
-        }
-      } else if (context.equals(ARGUMENT2_CONTEXT)) {
-        for (Completion completion : ARGUMENT2_COMPLETIONS) {
-          completions.add(completion);
-        }
-      } else if (context.equals(OPTION1_CONTEXT)) {
-        for (Completion completion : OPTION1_COMPLETIONS) {
-          completions.add(completion);
-        }
-      }
-      return true;
-    }
-  }
-
   public static class MockPluginCommand implements CommandMarker {
     @CliCommand(value = "mock plugin command")
     @ResourceOperation(resource = Resource.CLUSTER, operation = Operation.READ)
@@ -228,6 +221,43 @@ public class CommandManagerJUnitTest {
     @ResourceOperation(resource = Resource.CLUSTER, operation = Operation.READ)
     public Result mockPluginCommandUnlisted() {
       return null;
+    }
+  }
+
+
+  class AccessibleCommand implements CommandMarker {
+    @CliCommand(value = "test-command")
+    public Result ping() {
+      return CommandResult.createInfo("pong");
+    }
+
+    @CliAvailabilityIndicator("test-command")
+    public boolean always() {
+      return true;
+    }
+  }
+
+  @Disabled
+  class FeatureFlaggedUnreachableCommand implements CommandMarker {
+    @CliCommand(value = "unreachable")
+    public Result nothing() {
+      throw new RuntimeException("You reached the body of a feature-flagged command.");
+    }
+  }
+
+  @Disabled(unlessPropertyIsSet = "reachable.flag")
+  class FeatureFlaggedReachableCommand implements CommandMarker {
+    @CliCommand(value = "reachable")
+    public Result nothing() {
+      throw new RuntimeException("You reached the body of a feature-flagged command.");
+    }
+  }
+
+  @Disabled(unlessPropertyIsSet = "enabled.flag")
+  class FeatureFlaggedAndEnabledCommand implements CommandMarker {
+    @CliCommand(value = "reachable")
+    public Result nothing() {
+      throw new RuntimeException("You reached the body of a feature-flagged command.");
     }
   }
 

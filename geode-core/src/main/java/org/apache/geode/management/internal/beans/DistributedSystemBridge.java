@@ -14,13 +14,10 @@
  */
 package org.apache.geode.management.internal.beans;
 
-import java.io.File;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -31,7 +28,6 @@ import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 
 import javax.management.InstanceNotFoundException;
 import javax.management.ListenerNotFoundException;
@@ -41,12 +37,13 @@ import javax.management.NotificationBroadcasterSupport;
 import javax.management.NotificationListener;
 import javax.management.ObjectName;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.Logger;
 
+import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.cache.persistence.PersistentID;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
@@ -54,14 +51,11 @@ import org.apache.geode.internal.admin.remote.MissingPersistentIDsRequest;
 import org.apache.geode.internal.admin.remote.PrepareRevokePersistentIDRequest;
 import org.apache.geode.internal.admin.remote.RevokePersistentIDRequest;
 import org.apache.geode.internal.admin.remote.ShutdownAllRequest;
-import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.cache.backup.BackupDataStoreHelper;
-import org.apache.geode.internal.cache.backup.BackupDataStoreResult;
+import org.apache.geode.internal.cache.backup.BackupOperation;
 import org.apache.geode.internal.cache.persistence.PersistentMemberPattern;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
+import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.management.BackupStatus;
 import org.apache.geode.management.CacheServerMXBean;
 import org.apache.geode.management.DiskBackupStatus;
 import org.apache.geode.management.DiskMetrics;
@@ -85,13 +79,12 @@ import org.apache.geode.management.internal.DiskBackupStatusImpl;
 import org.apache.geode.management.internal.FederationComponent;
 import org.apache.geode.management.internal.MBeanJMXAdapter;
 import org.apache.geode.management.internal.ManagementConstants;
-import org.apache.geode.management.internal.ManagementStrings;
 import org.apache.geode.management.internal.SystemManagementService;
 import org.apache.geode.management.internal.beans.stats.GatewayReceiverClusterStatsMonitor;
 import org.apache.geode.management.internal.beans.stats.GatewaySenderClusterStatsMonitor;
 import org.apache.geode.management.internal.beans.stats.MemberClusterStatsMonitor;
 import org.apache.geode.management.internal.beans.stats.ServerClusterStatsMonitor;
-import org.apache.geode.management.internal.cli.json.TypedJson;
+import org.apache.geode.management.internal.cli.CliUtil;
 
 /**
  * This is the gateway to distributed system as a whole. Aggregated metrics and stats are shown
@@ -147,11 +140,6 @@ public class DistributedSystemBridge {
   private volatile int gatewayReceiverSetSize;
 
   /**
-   * Member MBean for current member
-   */
-  private MemberMXBean thisMember;
-
-  /**
    * Cache instance
    */
   private InternalCache cache;
@@ -174,7 +162,7 @@ public class DistributedSystemBridge {
   /**
    * Distribution manager
    */
-  private DM dm;
+  private DistributionManager dm;
 
   private String alertLevel;
 
@@ -202,7 +190,8 @@ public class DistributedSystemBridge {
   /**
    * Static reference to the platform mbean server
    */
-  private static MBeanServer mbeanServer = MBeanJMXAdapter.mbeanServer;
+  @MakeNotStatic
+  private static final MBeanServer mbeanServer = MBeanJMXAdapter.mbeanServer;
 
   /**
    * emitter is a helper class for sending notifications on behalf of the MemberMBean
@@ -218,7 +207,12 @@ public class DistributedSystemBridge {
    * NUmber of elements to be shown in queryData operation if query results contain collections like
    * Map, List etc.
    */
-  private int queryCollectionsDepth = TypedJson.DEFAULT_COLLECTION_ELEMENT_LIMIT;
+  private int queryCollectionsDepth = QueryDataFunction.DEFAULT_COLLECTION_ELEMENT_LIMIT;
+
+  /**
+   * used to issue queries
+   */
+  private DataQueryEngine dataQueryEngine;
 
   /**
    * Helper method to get a member bean reference given a member name or id
@@ -240,7 +234,7 @@ public class DistributedSystemBridge {
    *
    * @param service Management service
    */
-  public DistributedSystemBridge(SystemManagementService service) {
+  public DistributedSystemBridge(SystemManagementService service, InternalCache cache) {
     this.distrLockServiceMap = new ConcurrentHashMap<>();
     this.distrRegionMap = new ConcurrentHashMap<>();
     this.mapOfMembers = new ConcurrentHashMap<>();
@@ -248,11 +242,12 @@ public class DistributedSystemBridge {
     this.mapOfGatewayReceivers = new ConcurrentHashMap<>();
     this.mapOfGatewaySenders = new ConcurrentHashMap<>();
     this.service = service;
-    this.cache = GemFireCacheImpl.getInstance();
+    this.cache = cache;
     this.system = cache.getInternalDistributedSystem();
     this.dm = system.getDistributionManager();
     this.alertLevel = ManagementConstants.DEFAULT_ALERT_LEVEL;
     this.thisMemberName = MBeanJMXAdapter.getMemberMBeanName(system.getDistributedMember());
+    this.dataQueryEngine = new DataQueryEngine(service, cache);
 
     this.distributedSystemId = this.system.getConfig().getDistributedSystemId();
 
@@ -264,6 +259,10 @@ public class DistributedSystemBridge {
     this.serverMBeanMonitor = new ServerClusterStatsMonitor();
     this.senderMonitor = new GatewaySenderClusterStatsMonitor();
     this.receiverMonitor = new GatewayReceiverClusterStatsMonitor();
+  }
+
+  public InternalCache getCache() {
+    return cache;
   }
 
   /**
@@ -298,7 +297,7 @@ public class DistributedSystemBridge {
         logger.debug(e.getMessage());
       }
 
-      logger.info(LocalizedMessage.create(ManagementStrings.INSTANCE_NOT_FOUND, objectName));
+      logger.info("{} Instance Not Found in Platform MBean Server", objectName);
     }
   }
 
@@ -351,12 +350,12 @@ public class DistributedSystemBridge {
     try {
       mbeanServer.removeNotificationListener(objectName, distListener);
     } catch (ListenerNotFoundException e) {
-      logger.info(LocalizedMessage.create(ManagementStrings.LISTENER_NOT_FOUND_FOR_0, objectName));
+      logger.info("Listener Not Found For MBean : {}", objectName);
       if (logger.isDebugEnabled()) {
         logger.debug(e.getMessage(), e);
       }
     } catch (InstanceNotFoundException e) {
-      logger.info(LocalizedMessage.create(ManagementStrings.INSTANCE_NOT_FOUND, objectName));
+      logger.info("{} Instance Not Found in Platform MBean Server", objectName);
       if (logger.isDebugEnabled()) {
         logger.debug(e.getMessage(), e);
       }
@@ -482,57 +481,13 @@ public class DistributedSystemBridge {
    * @param baselineDirPath path of the directory for baseline backup.
    * @return open type DiskBackupStatus containing each member wise disk back up status
    */
-  public DiskBackupStatus backupAllMembers(String targetDirPath, String baselineDirPath)
-      throws Exception {
-    if (BackupDataStoreHelper.obtainLock(dm)) {
-      try {
-
-        if (targetDirPath == null || targetDirPath.isEmpty()) {
-          throw new Exception(
-              ManagementStrings.TARGET_DIR_CANT_BE_NULL_OR_EMPTY.toLocalizedString());
-        }
-        SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd-HH-mm-ss");
-        File targetDir = new File(targetDirPath);
-        targetDir = new File(targetDir, format.format(new Date()));
-
-        File baselineDir = null;
-        if (baselineDirPath != null) {
-          baselineDir = new File(baselineDirPath);
-        }
-
-        DM dm = cache.getDistributionManager();
-        Set recipients = dm.getOtherDistributionManagerIds();
-
-        BackupDataStoreResult result =
-            BackupDataStoreHelper.backupAllMembers(dm, recipients, targetDir, baselineDir);
-
-
-        DiskBackupStatusImpl diskBackupStatus = new DiskBackupStatusImpl();
-        Map<DistributedMember, Set<PersistentID>> successfulMembers = result.getSuccessfulMembers();
-        diskBackupStatus.generateBackedUpDiskStores(successfulMembers);
-
-        // It's possible that when calling getMissingPersistentMembers, some
-        // members
-        // are
-        // still creating/recovering regions, and at FinishBackupRequest.send, the
-        // regions at the members are ready. Logically, since the members in
-        // successfulMembers
-        // should override the previous missingMembers
-        Set<PersistentID> successfulIds = result.getSuccessfulMembers().values().stream()
-            .flatMap(Set::stream).collect(Collectors.toSet());
-        Set<PersistentID> missingIds =
-            result.getExistingDataStores().values().stream().flatMap(Set::stream)
-                .filter((v) -> !successfulIds.contains(v)).collect(Collectors.toSet());
-
-        diskBackupStatus.generateOfflineDiskStores(missingIds);
-        return diskBackupStatus;
-      } finally {
-        BackupDataStoreHelper.releaseLock(dm);
-      }
-    } else {
-      throw new Exception(
-          LocalizedStrings.DistributedSystem_BACKUP_ALREADY_IN_PROGRESS.toLocalizedString());
-    }
+  public DiskBackupStatus backupAllMembers(String targetDirPath, String baselineDirPath) {
+    BackupStatus result =
+        new BackupOperation(dm, dm.getCache()).backupAllMembers(targetDirPath, baselineDirPath);
+    DiskBackupStatusImpl diskBackupStatus = new DiskBackupStatusImpl();
+    diskBackupStatus.generateBackedUpDiskStores(result.getBackedUpDiskStores());
+    diskBackupStatus.generateOfflineDiskStores(result.getOfflineDiskStores());
+    return diskBackupStatus;
   }
 
   /**
@@ -667,7 +622,9 @@ public class DistributedSystemBridge {
     if (bean != null) {
       return bean;
     } else {
-      throw new Exception(ManagementStrings.INVALID_MEMBER_NAME_OR_ID.toLocalizedString(member));
+      throw new Exception(
+          String.format("%s is an invalid member name or Id. Current members are %s", member,
+              mapOfMembers.keySet()));
     }
   }
 
@@ -695,7 +652,7 @@ public class DistributedSystemBridge {
         set.addAll(hostedLocators);
       }
 
-      return set.toArray(new String[set.size()]);
+      return set.toArray(new String[0]);
     }
     return ManagementConstants.NO_DATA_STRING;
   }
@@ -804,7 +761,7 @@ public class DistributedSystemBridge {
     if (!members.isEmpty()) {
       Set<String> locatorMemberSet = new TreeSet<>();
       for (DistributedMember member : members) {
-        if (DistributionManager.LOCATOR_DM_TYPE == ((InternalDistributedMember) member)
+        if (ClusterDistributionManager.LOCATOR_DM_TYPE == ((InternalDistributedMember) member)
             .getVmKind()) {
           String name = member.getName();
           name = StringUtils.isNotBlank(name) ? name : member.getId();
@@ -864,18 +821,18 @@ public class DistributedSystemBridge {
    * @return a list of region names hosted on the system
    */
   public String[] listAllRegions() {
-    Iterator<DistributedRegionBridge> it = distrRegionMap.values().iterator();
     if (distrRegionMap.values().size() == 0) {
       return ManagementConstants.NO_DATA_STRING;
     }
-    String[] listOfRegions = new String[distrRegionMap.values().size()];
-    int j = 0;
+
+    List<String> listOfRegions = new ArrayList<>();
+    Iterator<DistributedRegionBridge> it = distrRegionMap.values().iterator();
     while (it.hasNext()) {
       DistributedRegionBridge bridge = it.next();
-      listOfRegions[j] = bridge.getName();
-      j++;
+      listOfRegions.add(bridge.getName());
     }
-    return listOfRegions;
+
+    return listOfRegions.toArray(new String[0]);
   }
 
   /**
@@ -904,7 +861,7 @@ public class DistributedSystemBridge {
   @SuppressWarnings("unchecked")
   public String[] shutDownAllMembers() throws Exception {
     try {
-      DM dm = cache.getDistributionManager();
+      DistributionManager dm = cache.getDistributionManager();
       Set<InternalDistributedMember> members = ShutdownAllRequest.send(dm, 0);
       String[] shutDownMembers = new String[members.size()];
       int j = 0;
@@ -926,10 +883,15 @@ public class DistributedSystemBridge {
    * @return Array of PersistentMemberDetails (which contains host, directory and disk store id)
    */
   public PersistentMemberDetails[] listMissingDiskStores() {
-    PersistentMemberDetails[] missingDiskStores = null;
+    PersistentMemberDetails[] missingDiskStores = new PersistentMemberDetails[0];
+
+    // No need to try and send anything if we're a Loner
+    if (dm.isLoner()) {
+      return missingDiskStores;
+    }
 
     Set<PersistentID> persistentMemberSet = MissingPersistentIDsRequest.send(dm);
-    if (persistentMemberSet != null && persistentMemberSet.size() > 0) {
+    if (persistentMemberSet != null) {
       missingDiskStores = new PersistentMemberDetails[persistentMemberSet.size()];
       int j = 0;
       for (PersistentID id : persistentMemberSet) {
@@ -1011,7 +973,7 @@ public class DistributedSystemBridge {
     if (distrRegionMap.get(distributedRegionMBeanName) != null) {
       return distributedRegionMBeanName;
     } else {
-      throw new Exception(ManagementStrings.DISTRIBUTED_REGION_MBEAN_NOT_FOUND_IN_DS.toString());
+      throw new Exception("DistributedRegionMBean Not Found In Distributed System");
     }
   }
 
@@ -1026,12 +988,9 @@ public class DistributedSystemBridge {
       RegionMXBean bean = service.getMBeanInstance(regionMBeanName, RegionMXBean.class);
       if (bean != null) {
         return regionMBeanName;
-      } else {
-        throw new Exception(ManagementStrings.REGION_MBEAN_NOT_FOUND_IN_DS.toString());
       }
-    } else {
-      throw new Exception(ManagementStrings.REGION_MBEAN_NOT_FOUND_IN_DS.toString());
     }
+    throw new Exception("RegionMBean Not Found In Distributed System");
   }
 
   public ObjectName[] fetchRegionObjectNames(ObjectName memberMBeanName) throws Exception {
@@ -1048,13 +1007,12 @@ public class DistributedSystemBridge {
       ObjectName[] objNames = new ObjectName[list.size()];
       return list.toArray(objNames);
     } else {
-      throw new Exception(ManagementStrings.MEMBER_MBEAN_NOT_FOUND_IN_DS.toString());
+      throw new Exception("Member MBean Not Found In Distributed System");
     }
   }
 
   public ObjectName[] listDistributedRegionObjectNames() {
-    List<ObjectName> list = new ArrayList<>();
-    list.addAll(distrRegionMap.keySet());
+    List<ObjectName> list = new ArrayList<>(distrRegionMap.keySet());
     ObjectName[] objNames = new ObjectName[list.size()];
     return list.toArray(objNames);
   }
@@ -1071,7 +1029,7 @@ public class DistributedSystemBridge {
       if (bean != null) {
         return serverName;
       } else {
-        throw new Exception(ManagementStrings.CACHE_SERVER_MBEAN_NOT_FOUND_IN_DS.toString());
+        throw new Exception("Cache Server MBean not Found in DS");
       }
     }
   }
@@ -1090,7 +1048,7 @@ public class DistributedSystemBridge {
     if (bean != null) {
       return diskStoreName;
     } else {
-      throw new Exception(ManagementStrings.DISK_STORE_MBEAN_NOT_FOUND_IN_DS.toString());
+      throw new Exception("Disk Store MBean not Found in DS");
     }
   }
 
@@ -1100,7 +1058,7 @@ public class DistributedSystemBridge {
       return service.getDistributedLockServiceMBeanName(lockServiceName);
     } else {
       throw new Exception(
-          ManagementStrings.DISTRIBUTED_LOCK_SERVICE_MBEAN_NOT_FOUND_IN_SYSTEM.toString());
+          "Distributed Lock Service MBean not Found in DS");
     }
   }
 
@@ -1109,6 +1067,7 @@ public class DistributedSystemBridge {
     ObjectName receiverName = MBeanJMXAdapter.getGatewayReceiverMBeanName(member);
     GatewayReceiverMXBean bean =
         service.getMBeanInstance(receiverName, GatewayReceiverMXBean.class);
+
     if (bean != null) {
       return receiverName;
     } else {
@@ -1118,7 +1077,7 @@ public class DistributedSystemBridge {
         return receiverName;
       } else {
         throw new Exception(
-            ManagementStrings.GATEWAY_RECEIVER_MBEAN_NOT_FOUND_IN_SYSTEM.toString());
+            "Gateway Receiver MBean not Found in DS");
       }
     }
   }
@@ -1137,7 +1096,7 @@ public class DistributedSystemBridge {
       if (bean != null) {
         return senderName;
       } else {
-        throw new Exception(ManagementStrings.GATEWAY_SENDER_MBEAN_NOT_FOUND_IN_SYSTEM.toString());
+        throw new Exception("Gateway Sender MBean not Found in DS");
       }
     }
   }
@@ -1155,7 +1114,7 @@ public class DistributedSystemBridge {
       if (bean != null) {
         return lockServiceName;
       } else {
-        throw new Exception(ManagementStrings.LOCK_SERVICE_MBEAN_NOT_FOUND_IN_SYSTEM.toString());
+        throw new Exception("Lock Service MBean not Found in DS");
       }
     }
   }
@@ -1177,7 +1136,7 @@ public class DistributedSystemBridge {
 
   public ObjectName[] listGatewaySenderObjectNames(String member) throws Exception {
     validateMember(member);
-    DistributedMember distributedMember = BeanUtilFuncs.getDistributedMemberByNameOrId(member);
+    DistributedMember distributedMember = CliUtil.getDistributedMemberByNameOrId(member, cache);
 
     List<ObjectName> listName = null;
 
@@ -1445,12 +1404,18 @@ public class DistributedSystemBridge {
     if (mapOfGatewaySenders.values().size() > 0) {
       Map<String, Boolean> senderMap = new HashMap<>();
       for (GatewaySenderMXBean bean : mapOfGatewaySenders.values()) {
-        Integer dsId = bean.getRemoteDSId();
-        if (dsId != null) {
-          senderMap.merge(dsId.toString(), bean.isRunning(), Boolean::logicalAnd);
+        int dsId = bean.getRemoteDSId();
+        if (dsId <= -1) {
+          continue;
+        }
+        if (bean.isParallel()) {
+          senderMap.merge(String.valueOf(dsId), bean.isConnected(), Boolean::logicalAnd);
+        } else {
+          if (bean.isPrimary()) {
+            senderMap.put(String.valueOf(dsId), bean.isConnected());
+          }
         }
       }
-
       return senderMap;
     }
 
@@ -1458,14 +1423,14 @@ public class DistributedSystemBridge {
   }
 
   public String queryData(String query, String members, int limit) throws Exception {
-    Object result = QueryDataFunction.queryData(query, members, limit, false, queryResultSetLimit,
+    Object result = dataQueryEngine.queryData(query, members, limit, false, queryResultSetLimit,
         queryCollectionsDepth);
     return (String) result;
   }
 
   public byte[] queryDataForCompressedResult(String query, String members, int limit)
       throws Exception {
-    Object result = QueryDataFunction.queryData(query, members, limit, true, queryResultSetLimit,
+    Object result = dataQueryEngine.queryData(query, members, limit, true, queryResultSetLimit,
         queryCollectionsDepth);
     return (byte[]) result;
   }
@@ -1620,23 +1585,29 @@ public class DistributedSystemBridge {
 
   public void memberDeparted(InternalDistributedMember id, boolean crashed) {
     Notification notification = new Notification(JMXNotificationType.CACHE_MEMBER_DEPARTED,
-        MBeanJMXAdapter.getMemberNameOrId(id), SequenceNumber.next(), System.currentTimeMillis(),
-        ManagementConstants.CACHE_MEMBER_DEPARTED_PREFIX + MBeanJMXAdapter.getMemberNameOrId(id)
+        MBeanJMXAdapter.getMemberNameOrUniqueId(id), SequenceNumber.next(),
+        System.currentTimeMillis(),
+        ManagementConstants.CACHE_MEMBER_DEPARTED_PREFIX
+            + MBeanJMXAdapter.getMemberNameOrUniqueId(id)
             + " has crashed = " + crashed);
     systemLevelNotifEmitter.sendNotification(notification);
   }
 
   public void memberJoined(InternalDistributedMember id) {
     Notification notification = new Notification(JMXNotificationType.CACHE_MEMBER_JOINED,
-        MBeanJMXAdapter.getMemberNameOrId(id), SequenceNumber.next(), System.currentTimeMillis(),
-        ManagementConstants.CACHE_MEMBER_JOINED_PREFIX + MBeanJMXAdapter.getMemberNameOrId(id));
+        MBeanJMXAdapter.getMemberNameOrUniqueId(id), SequenceNumber.next(),
+        System.currentTimeMillis(),
+        ManagementConstants.CACHE_MEMBER_JOINED_PREFIX
+            + MBeanJMXAdapter.getMemberNameOrUniqueId(id));
     systemLevelNotifEmitter.sendNotification(notification);
   }
 
   public void memberSuspect(InternalDistributedMember id, InternalDistributedMember whoSuspected) {
     Notification notification = new Notification(JMXNotificationType.CACHE_MEMBER_SUSPECT,
-        MBeanJMXAdapter.getMemberNameOrId(id), SequenceNumber.next(), System.currentTimeMillis(),
-        ManagementConstants.CACHE_MEMBER_SUSPECT_PREFIX + MBeanJMXAdapter.getMemberNameOrId(id)
+        MBeanJMXAdapter.getMemberNameOrUniqueId(id), SequenceNumber.next(),
+        System.currentTimeMillis(),
+        ManagementConstants.CACHE_MEMBER_SUSPECT_PREFIX
+            + MBeanJMXAdapter.getMemberNameOrUniqueId(id)
             + " By : " + whoSuspected.getName());
     systemLevelNotifEmitter.sendNotification(notification);
   }

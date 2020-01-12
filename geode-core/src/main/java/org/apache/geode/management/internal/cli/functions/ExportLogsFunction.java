@@ -26,7 +26,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Arrays;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.Logger;
 
@@ -34,15 +34,14 @@ import org.apache.geode.cache.AttributesFactory;
 import org.apache.geode.cache.DataPolicy;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.Scope;
-import org.apache.geode.cache.execute.Function;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.distributed.internal.DistributionConfig;
-import org.apache.geode.internal.InternalEntity;
-import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.internal.cache.InternalCache;
+import org.apache.geode.internal.cache.InternalCacheForClientAccess;
 import org.apache.geode.internal.cache.InternalRegionArguments;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.log4j.LogLevel;
+import org.apache.geode.internal.cache.execute.InternalFunction;
+import org.apache.geode.logging.internal.log4j.LogLevel;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.management.internal.cli.commands.ExportLogsCommand;
 import org.apache.geode.management.internal.cli.util.ExportLogsCacheWriter;
 import org.apache.geode.management.internal.cli.util.LogExporter;
@@ -56,7 +55,7 @@ import org.apache.geode.management.internal.configuration.domain.Configuration;
  *
  * The function only extracts .log and .gfs files under server's working directory
  */
-public class ExportLogsFunction implements Function, InternalEntity {
+public class ExportLogsFunction implements InternalFunction {
   private static final Logger logger = LogService.getLogger();
 
   public static final String EXPORT_LOGS_REGION = "__exportLogsRegion";
@@ -123,7 +122,8 @@ public class ExportLogsFunction implements Function, InternalEntity {
   public static Region createOrGetExistingExportLogsRegion(boolean isInitiatingMember,
       InternalCache cache) throws IOException, ClassNotFoundException {
 
-    Region exportLogsRegion = cache.getRegion(EXPORT_LOGS_REGION);
+    InternalCacheForClientAccess cacheForClientAccess = cache.getCacheForProcessingClientRequests();
+    Region exportLogsRegion = cacheForClientAccess.getInternalRegion(EXPORT_LOGS_REGION);
     if (exportLogsRegion == null) {
       AttributesFactory<String, Configuration> regionAttrsFactory = new AttributesFactory<>();
       regionAttrsFactory.setDataPolicy(DataPolicy.EMPTY);
@@ -135,14 +135,16 @@ public class ExportLogsFunction implements Function, InternalEntity {
       InternalRegionArguments internalArgs = new InternalRegionArguments();
       internalArgs.setIsUsedForMetaRegion(true);
       exportLogsRegion =
-          cache.createVMRegion(EXPORT_LOGS_REGION, regionAttrsFactory.create(), internalArgs);
+          cacheForClientAccess.createInternalRegion(EXPORT_LOGS_REGION, regionAttrsFactory.create(),
+              internalArgs);
     }
 
     return exportLogsRegion;
   }
 
   public static void destroyExportLogsRegion(InternalCache cache) {
-    Region exportLogsRegion = cache.getRegion(EXPORT_LOGS_REGION);
+    Region exportLogsRegion =
+        cache.getCacheForProcessingClientRequests().getInternalRegion(EXPORT_LOGS_REGION);
     if (exportLogsRegion == null) {
       return;
     }

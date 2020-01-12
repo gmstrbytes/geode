@@ -14,66 +14,25 @@
  */
 package org.apache.geode.management.internal.cli.commands;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doReturn;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
-import static org.mockito.Mockito.when;
 
 import java.util.Collections;
 
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 
-import org.apache.geode.distributed.internal.ClusterConfigurationService;
-import org.apache.geode.management.cli.Result;
-import org.apache.geode.management.internal.cli.exceptions.EntityNotFoundException;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
-import org.apache.geode.management.internal.cli.shell.Gfsh;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.management.cli.GfshCommand;
+import org.apache.geode.management.internal.exceptions.EntityNotFoundException;
 
-@Category(UnitTest.class)
 public class GfshCommandJUnitTest {
 
   private GfshCommand command;
-  private Gfsh gfsh;
-  private ClusterConfigurationService clusterConfigurationService;
 
   @Before
   public void before() throws Exception {
     command = spy(GfshCommand.class);
-    gfsh = mock(Gfsh.class);
-    clusterConfigurationService = mock(ClusterConfigurationService.class);
-  }
-
-  @Test
-  public void isConnectedAndReady() throws Exception {
-    when(command.getGfsh()).thenReturn(null);
-    assertThat(command.isConnectedAndReady()).isFalse();
-
-    when(command.getGfsh()).thenReturn(gfsh);
-    when(gfsh.isConnectedAndReady()).thenReturn(false);
-    assertThat(command.isConnectedAndReady()).isFalse();
-
-    when(command.getGfsh()).thenReturn(gfsh);
-    when(gfsh.isConnectedAndReady()).thenReturn(true);
-    assertThat(command.isConnectedAndReady()).isTrue();
-  }
-
-  @Test
-  public void persistClusterConfiguration() throws Exception {
-    when(command.getSharedConfiguration()).thenReturn(null);
-    Result result = ResultBuilder.createInfoResult("info");
-    Runnable runnable = mock(Runnable.class);
-
-    command.persistClusterConfiguration(result, runnable);
-    assertThat(result.failedToPersist()).isTrue();
-
-    when(command.getSharedConfiguration()).thenReturn(clusterConfigurationService);
-    command.persistClusterConfiguration(result, runnable);
-    assertThat(result.failedToPersist()).isFalse();
   }
 
   @Test

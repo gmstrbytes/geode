@@ -14,7 +14,6 @@
  */
 package org.apache.geode.management.internal.cli.remote;
 
-import java.io.IOException;
 import java.lang.reflect.Method;
 import java.util.Collections;
 import java.util.List;
@@ -25,15 +24,15 @@ import org.springframework.shell.core.Parser;
 import org.springframework.shell.event.ParseResult;
 import org.springframework.util.StringUtils;
 
-import org.apache.geode.annotations.TestingOnly;
+import org.apache.geode.annotations.VisibleForTesting;
+import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.security.SecurityService;
-import org.apache.geode.internal.security.SecurityServiceFactory;
 import org.apache.geode.management.cli.CliMetaData;
 import org.apache.geode.management.cli.CommandProcessingException;
-import org.apache.geode.management.cli.Result;
 import org.apache.geode.management.internal.cli.CommandManager;
+import org.apache.geode.management.internal.cli.GfshParseResult;
 import org.apache.geode.management.internal.cli.GfshParser;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.management.internal.cli.util.CommentSkipHelper;
 import org.apache.geode.management.internal.security.ResourceOperation;
 import org.apache.geode.security.ResourcePermission;
@@ -50,20 +49,15 @@ public class OnlineCommandProcessor {
 
   private final SecurityService securityService;
 
-  @TestingOnly
-  public OnlineCommandProcessor() throws ClassNotFoundException, IOException {
-    this(new Properties(), SecurityServiceFactory.create());
-  }
-
-  public OnlineCommandProcessor(Properties cacheProperties, SecurityService securityService)
-      throws ClassNotFoundException, IOException {
-    this(cacheProperties, securityService, new CommandExecutor());
-  }
-
-  @TestingOnly
   public OnlineCommandProcessor(Properties cacheProperties, SecurityService securityService,
-      CommandExecutor commandExecutor) {
-    this.gfshParser = new GfshParser(new CommandManager(cacheProperties));
+      InternalCache cache) {
+    this(cacheProperties, securityService, new CommandExecutor(), cache);
+  }
+
+  @VisibleForTesting
+  public OnlineCommandProcessor(Properties cacheProperties, SecurityService securityService,
+      CommandExecutor commandExecutor, InternalCache cache) {
+    this.gfshParser = new GfshParser(new CommandManager(cacheProperties, cache));
     this.executor = commandExecutor;
     this.securityService = securityService;
   }
@@ -88,15 +82,11 @@ public class OnlineCommandProcessor {
     throw new IllegalStateException("Command String should not be null.");
   }
 
-  public Result executeCommand(String command) {
+  public ResultModel executeCommand(String command) {
     return executeCommand(command, Collections.emptyMap(), null);
   }
 
-  public Result executeCommand(String command, Map<String, String> env) {
-    return executeCommand(command, env, null);
-  }
-
-  public Result executeCommand(String command, Map<String, String> env,
+  public ResultModel executeCommand(String command, Map<String, String> env,
       List<String> stagedFilePaths) {
     CommentSkipHelper commentSkipper = new CommentSkipHelper();
     String commentLessLine = commentSkipper.skipComments(command);
@@ -111,7 +101,7 @@ public class OnlineCommandProcessor {
     ParseResult parseResult = parseCommand(commentLessLine);
 
     if (parseResult == null) {
-      return ResultBuilder.createParsingErrorResult(command);
+      return ResultModel.createError("Could not parse command string. " + command);
     }
 
     Method method = parseResult.getMethod();
@@ -123,13 +113,14 @@ public class OnlineCommandProcessor {
           resourceOperation.target(), ResourcePermission.ALL);
     }
 
-    // this command processor does not exeucte command that needs fileData passed from client
+    // this command processor does not execute commands that need fileData passed from client
     CliMetaData metaData = method.getAnnotation(CliMetaData.class);
     if (metaData != null && metaData.isFileUploaded() && stagedFilePaths == null) {
-      return ResultBuilder
-          .createUserErrorResult(command + " can not be executed only from server side");
+      return ResultModel
+          .createError(command + " can not be executed only from server side");
     }
 
-    return (Result) commandExecutor.execute(parseResult);
+    // we can do a direct cast because this only process online commands
+    return (ResultModel) commandExecutor.execute((GfshParseResult) parseResult);
   }
 }

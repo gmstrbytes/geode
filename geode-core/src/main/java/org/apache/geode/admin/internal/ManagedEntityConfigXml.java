@@ -16,11 +16,15 @@ package org.apache.geode.admin.internal;
 
 import java.io.InputStream;
 
-import org.xml.sax.*;
+import org.xml.sax.EntityResolver;
+import org.xml.sax.ErrorHandler;
+import org.xml.sax.InputSource;
+import org.xml.sax.SAXException;
+import org.xml.sax.SAXNotRecognizedException;
+import org.xml.sax.SAXParseException;
 
 import org.apache.geode.distributed.ConfigurationProperties;
 import org.apache.geode.internal.ClassPathLoader;
-import org.apache.geode.internal.i18n.LocalizedStrings;
 
 /**
  * The abstract superclass of classes that convert XML into a
@@ -110,31 +114,26 @@ abstract class ManagedEntityConfigXml implements EntityResolver, ErrorHandler {
    * Given a public id, attempt to resolve it to a DTD. Returns an <code>InputSoure</code> for the
    * DTD.
    */
+  @Override
   public InputSource resolveEntity(String publicId, String systemId) throws SAXException {
 
     if (publicId == null || systemId == null) {
-      throw new SAXException(LocalizedStrings.ManagedEntityConfigXml_PUBLIC_ID_0_SYSTEM_ID_1
-          .toLocalizedString(new Object[] {publicId, systemId}));
+      throw new SAXException(String.format("Public Id: %s System Id: %s",
+          new Object[] {publicId, systemId}));
     }
 
     // Figure out the location for the publicId.
     String location = DTD_LOCATION;
 
     InputSource result;
-    // if (location != null) (cannot be null)
     {
       InputStream stream = ClassPathLoader.getLatest().getResourceAsStream(getClass(), location);
       if (stream != null) {
         result = new InputSource(stream);
       } else {
         throw new SAXNotRecognizedException(
-            LocalizedStrings.ManagedEntityConfigXml_DTD_NOT_FOUND_0.toLocalizedString(location));
+            String.format("DTD not found: %s", location));
       }
-
-      // } else {
-      // throw new
-      // SAXNotRecognizedException(LocalizedStrings.ManagedEntityConfigXml_COULD_NOT_FIND_DTD_FOR_0_1.toLocalizedString(new
-      // Object[] {publicId, systemId}));
     }
 
     return result;
@@ -143,6 +142,7 @@ abstract class ManagedEntityConfigXml implements EntityResolver, ErrorHandler {
   /**
    * Warnings are ignored
    */
+  @Override
   public void warning(SAXParseException ex) throws SAXException {
 
   }
@@ -150,9 +150,10 @@ abstract class ManagedEntityConfigXml implements EntityResolver, ErrorHandler {
   /**
    * Throws a {@link org.apache.geode.cache.CacheXmlException}
    */
+  @Override
   public void error(SAXParseException ex) throws SAXException {
     IllegalArgumentException ex2 = new IllegalArgumentException(
-        LocalizedStrings.ManagedEntityConfigXml_ERROR_WHILE_PARSING_XML.toLocalizedString());
+        "Error while parsing XML.");
     ex2.initCause(ex);
     throw ex2;
   }
@@ -160,9 +161,10 @@ abstract class ManagedEntityConfigXml implements EntityResolver, ErrorHandler {
   /**
    * Throws a {@link org.apache.geode.cache.CacheXmlException}
    */
+  @Override
   public void fatalError(SAXParseException ex) throws SAXException {
     IllegalArgumentException ex2 = new IllegalArgumentException(
-        LocalizedStrings.ManagedEntityConfigXml_FATAL_ERROR_WHILE_PARSING_XML.toLocalizedString());
+        "Fatal error while parsing XML.");
     ex2.initCause(ex);
     throw ex2;
   }

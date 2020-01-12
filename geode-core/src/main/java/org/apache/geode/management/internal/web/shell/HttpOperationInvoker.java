@@ -32,8 +32,9 @@ import org.springframework.http.MediaType;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.annotations.Immutable;
 import org.apache.geode.internal.util.IOUtils;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.management.DistributedSystemMXBean;
 import org.apache.geode.management.internal.MBeanJMXAdapter;
 import org.apache.geode.management.internal.ManagementConstants;
@@ -51,8 +52,6 @@ import org.apache.geode.management.internal.web.shell.support.HttpMBeanProxyFact
  * @see org.apache.geode.management.internal.cli.shell.Gfsh
  * @see org.apache.geode.management.internal.cli.shell.OperationInvoker
  * @see org.apache.geode.management.internal.web.shell.HttpOperationInvoker
- * @see org.springframework.http.client.SimpleClientHttpRequestFactory
- * @see org.springframework.web.client.RestTemplate
  * @since GemFire 8.0
  */
 @SuppressWarnings("unused")
@@ -60,6 +59,7 @@ public class HttpOperationInvoker implements OperationInvoker {
 
   protected static final long DEFAULT_INITIAL_DELAY = TimeUnit.SECONDS.toMillis(1);
   protected static final long DEFAULT_PERIOD = TimeUnit.MILLISECONDS.toMillis(2000);
+  @Immutable
   protected static final TimeUnit DEFAULT_TIME_UNIT = TimeUnit.MILLISECONDS;
   protected static final String CMD_QUERY_PARAMETER = "cmd";
   protected static final String COMMANDS_URI = "/management/commands";
@@ -291,9 +291,8 @@ public class HttpOperationInvoker implements OperationInvoker {
    *
    * @return a proxy instance of the GemFire Manager's DistributedSystem MXBean.
    * @see #getMBeanProxy(javax.management.ObjectName, Class)
-   * @see org.apache.geode.management.DistributedSystemMXBean
-   * @see org.apache.geode.management.internal.MBeanJMXAdapter#getDistributedSystemName()
    */
+  @Override
   public DistributedSystemMXBean getDistributedSystemMXBean() {
     return getMBeanProxy(MBeanJMXAdapter.getDistributedSystemName(), DistributedSystemMXBean.class);
   }
@@ -309,6 +308,7 @@ public class HttpOperationInvoker implements OperationInvoker {
    * @see javax.management.ObjectName
    * @see org.apache.geode.management.internal.web.shell.support.HttpMBeanProxyFactory
    */
+  @Override
   public <T> T getMBeanProxy(final ObjectName objectName, final Class<T> mbeanInterface) {
     return HttpMBeanProxyFactory.createMBeanProxy(this, objectName, mbeanInterface);
   }
@@ -331,7 +331,7 @@ public class HttpOperationInvoker implements OperationInvoker {
       final String[] signatures) {
     final URI link = HttpRequester.createURI(baseUrl, "/mbean/operation");
 
-    MultiValueMap<String, Object> content = new LinkedMultiValueMap<String, Object>();
+    MultiValueMap<String, Object> content = new LinkedMultiValueMap<>();
 
     content.add("resourceName", resourceName);
     content.add("operationName", operationName);
@@ -402,16 +402,27 @@ public class HttpOperationInvoker implements OperationInvoker {
 
   @Override
   public String toString() {
-    return String.format("GemFire Manager HTTP service @ %1$s", httpRequester);
+    return String.format("GemFire Manager HTTP service @ %1$s", baseUrl);
   }
 
+  @Override
+  public String getRemoteVersion() {
+    final URI link = HttpRequester.createURI(baseUrl, "/version/release");
+    return httpRequester.get(link, String.class);
+  }
+
+  @Override
+  public String getRemoteGeodeSerializationVersion() {
+    final URI link = HttpRequester.createURI(baseUrl, "/version/geodeSerializationVersion");
+    return httpRequester.get(link, String.class);
+  }
 
   /**
    * Processes the requested command. Sends the command to the GemFire Manager for remote processing
    * (execution).
    *
    * @param command the command requested/entered by the user to be processed.
-   * @return the result of the command execution.
+   * @return the result of the command execution, either a json string of ResultModel or a Path
    */
   @Override
   public Object processCommand(final CommandRequest command) {

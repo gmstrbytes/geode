@@ -74,6 +74,21 @@ public class GatewaySenderMBean extends NotificationBroadcasterSupport
   }
 
   @Override
+  public float getLRUEvictionsRate() {
+    return bridge.getLRUEvictionsRate();
+  }
+
+  @Override
+  public long getEntriesOverflowedToDisk() {
+    return bridge.getEntriesOverflowedToDisk();
+  }
+
+  @Override
+  public long getBytesOverflowedToDisk() {
+    return bridge.getBytesOverflowedToDisk();
+  }
+
+  @Override
   public String[] getGatewayEventFilters() {
     return bridge.getGatewayEventFilters();
   }
@@ -194,6 +209,7 @@ public class GatewaySenderMBean extends NotificationBroadcasterSupport
     return bridge.isParallel();
   }
 
+  @Override
   public String getGatewayReceiver() {
     return bridge.getGatewayReceiver();
   }
@@ -213,6 +229,6 @@ public class GatewaySenderMBean extends NotificationBroadcasterSupport
 
   @Override
   public int getEventsExceedingAlertThreshold() {
-    return 0;
+    return bridge.getEventsExceedingAlertThreshold();
   }
 }

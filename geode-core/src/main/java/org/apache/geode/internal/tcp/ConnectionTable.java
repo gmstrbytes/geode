@@ -26,35 +26,32 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.SynchronousQueue;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.SystemFailure;
+import org.apache.geode.alerting.internal.spi.AlertingAction;
+import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.DistributedSystemDisconnectedException;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.distributed.internal.membership.MembershipManager;
-import org.apache.geode.distributed.internal.membership.gms.mgr.GMSMembershipManager;
+import org.apache.geode.distributed.internal.membership.adapter.GMSMembershipManager;
+import org.apache.geode.distributed.internal.membership.gms.api.Membership;
 import org.apache.geode.internal.Assert;
 import org.apache.geode.internal.SystemTimer;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.LoggingThreadGroup;
-import org.apache.geode.internal.logging.log4j.AlertAppender;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
+import org.apache.geode.internal.logging.CoreLoggingExecutors;
+import org.apache.geode.internal.net.BufferPool;
 import org.apache.geode.internal.net.SocketCloser;
+import org.apache.geode.logging.internal.executors.LoggingExecutors;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * <p>
@@ -68,11 +65,13 @@ public class ConnectionTable {
   private static final Logger logger = LogService.getLogger();
 
   /** warning when descriptor limit reached */
+  @MakeNotStatic
   private static boolean ulimitWarningIssued;
 
   /**
    * true if the current thread wants non-shared resources
    */
+  @MakeNotStatic
   private static ThreadLocal threadWantsOwnResources = new ThreadLocal();
 
   /**
@@ -86,7 +85,7 @@ public class ConnectionTable {
    * synchronized because of static cleanup.
    */
   // ThreadLocal<Map>
-  private final ThreadLocal threadOrderedConnMap;
+  protected final ThreadLocal<Map> threadOrderedConnMap;
 
   /**
    * List of thread-owned ordered connection maps, for cleanup
@@ -128,6 +127,8 @@ public class ConnectionTable {
    */
   private final TCPConduit owner;
 
+  private final BufferPool bufferPool;
+
   /**
    * true if this table is no longer in use
    */
@@ -151,6 +152,7 @@ public class ConnectionTable {
    *
    * TODO this assumes no more than one instance is created at a time?
    */
+  @MakeNotStatic
   private static final AtomicReference lastInstance = new AtomicReference();
 
   /**
@@ -177,20 +179,11 @@ public class ConnectionTable {
    * Returns true if calling thread owns its own communication resources.
    */
   boolean threadOwnsResources() {
-    DM d = getDM();
+    DistributionManager d = getDM();
     if (d != null) {
-      return d.getSystem().threadOwnsResources() && !AlertAppender.isThreadAlerting();
+      return d.getSystem().threadOwnsResources() && !AlertingAction.isThreadAlerting();
     }
     return false;
-
-    // Boolean b = getThreadOwnsResourcesRegistration();
-    // if (b == null) {
-    // // thread does not have a preference so return default
-    // return !this.owner.shareSockets;
-    // return false;
-    // } else {
-    // return b.booleanValue();
-    // }
   }
 
   public static Boolean getThreadOwnsResourcesRegistration() {
@@ -211,42 +204,17 @@ public class ConnectionTable {
     this.threadConnectionMap = new ConcurrentHashMap();
     this.p2pReaderThreadPool = createThreadPoolForIO(conduit.getDM().getSystem().isShareSockets());
     this.socketCloser = new SocketCloser();
+    this.bufferPool = new BufferPool(owner.getStats());
   }
 
   private Executor createThreadPoolForIO(boolean conserveSockets) {
-    Executor executor = null;
-    final ThreadGroup connectionRWGroup =
-        LoggingThreadGroup.createThreadGroup("P2P Reader Threads", logger);
     if (conserveSockets) {
-      executor = new Executor() {
-        @Override
-        public void execute(Runnable command) {
-          Thread th = new Thread(connectionRWGroup, command);
-          th.setDaemon(true);
-          th.start();
-        }
-      };
+      return LoggingExecutors.newThreadOnEachExecute("SharedP2PReader");
     } else {
-      BlockingQueue synchronousQueue = new SynchronousQueue();
-      ThreadFactory tf = new ThreadFactory() {
-        public Thread newThread(final Runnable command) {
-          Thread thread = new Thread(connectionRWGroup, command);
-          thread.setDaemon(true);
-          return thread;
-        }
-      };
-      executor = new ThreadPoolExecutor(1, Integer.MAX_VALUE, READER_POOL_KEEP_ALIVE_TIME,
-          TimeUnit.SECONDS, synchronousQueue, tf);
+      return CoreLoggingExecutors.newThreadPoolWithSynchronousFeed("UnsharedP2PReader", 1,
+          Integer.MAX_VALUE, READER_POOL_KEEP_ALIVE_TIME);
     }
-    return executor;
   }
-
-  /** conduit sends connected() after establishing the server socket */
-  // protected void connected() {
-  // /* NOMUX: if (TCPConduit.useNIO) {
-  // inputMuxManager.connected();
-  // }*/
-  // }
 
   /** conduit calls acceptConnection after an accept */
   protected void acceptConnection(Socket sock, PeerConnectionFactory peerConnectionFactory)
@@ -264,15 +232,13 @@ public class ConnectionTable {
     } catch (IOException ex) {
       // check for shutdown...
       this.owner.getCancelCriterion().checkCancelInProgress(ex);
-      logger.warn(LocalizedMessage.create(
-          LocalizedStrings.ConnectionTable_FAILED_TO_ACCEPT_CONNECTION_FROM_0_BECAUSE_1,
+      logger.warn(String.format("Failed to accept connection from %s because: %s",
           new Object[] {(connAddress != null ? connAddress : "unavailable address"), ex}));
       throw ex;
     } catch (ConnectionException ex) {
       // check for shutdown...
       this.owner.getCancelCriterion().checkCancelInProgress(ex);
-      logger.warn(LocalizedMessage.create(
-          LocalizedStrings.ConnectionTable_FAILED_TO_ACCEPT_CONNECTION_FROM_0_BECAUSE_1,
+      logger.warn(String.format("Failed to accept connection from %s because: %s",
           new Object[] {(connAddress != null ? connAddress : "unavailable address"), ex}));
       throw ex;
     } finally {
@@ -282,7 +248,7 @@ public class ConnectionTable {
 
       if (connection != null && !finishedConnecting) {
         // we must be throwing from checkCancelInProgress so close the connection
-        closeCon(LocalizedStrings.ConnectionTable_CANCEL_AFTER_ACCEPT.toLocalizedString(),
+        closeCon("cancel after accept",
             connection);
         connection = null;
       }
@@ -292,8 +258,7 @@ public class ConnectionTable {
       synchronized (this.receivers) {
         this.owner.getStats().incReceivers();
         if (this.closed) {
-          closeCon(LocalizedStrings.ConnectionTable_CONNECTION_TABLE_NO_LONGER_IN_USE
-              .toLocalizedString(), connection);
+          closeCon("Connection table no longer in use", connection);
           return;
         }
         // If connection.stopped is false, any connection cleanup thread will not yet have acquired
@@ -324,7 +289,6 @@ public class ConnectionTable {
    * @param ackSAThreshold the ms ack-severe_alert-threshold, or zero
    * @return the Connection, or null if someone else already created or closed it
    * @throws IOException if unable to connect
-   * @throws DistributedSystemDisconnectedException
    */
   private Connection handleNewPendingConnection(DistributedMember id, boolean sharedResource,
       boolean preserveOrder, Map m, PendingConnection pc, long startTime, long ackThreshold,
@@ -364,7 +328,7 @@ public class ConnectionTable {
         // someone closed our pending connection
         // so cleanup the connection we created
         con.requestClose(
-            LocalizedStrings.ConnectionTable_PENDING_CONNECTION_CANCELLED.toLocalizedString());
+            "pending connection cancelled");
         con = null;
       } else {
         if (e instanceof Connection) {
@@ -375,7 +339,7 @@ public class ConnectionTable {
             // so cleanup the connection we created
             if (con != null) {
               con.requestClose(
-                  LocalizedStrings.ConnectionTable_PENDING_CONNECTION_CLOSED.toLocalizedString());
+                  "pending connection closed");
               con = null;
             }
           } else {
@@ -386,8 +350,7 @@ public class ConnectionTable {
             // The above assertion was commented out to try the
             // following with bug 32680
             if (con != null) {
-              con.requestClose(LocalizedStrings.ConnectionTable_SOMEONE_ELSE_CREATED_THE_CONNECTION
-                  .toLocalizedString());
+              con.requestClose("someone else created the connection");
             }
             con = newCon;
           }
@@ -414,7 +377,6 @@ public class ConnectionTable {
    * @param ackSATimeout the ms ack-severe-alert-threshold, or zero
    * @return the new Connection, or null if an error
    * @throws IOException if unable to create the connection
-   * @throws DistributedSystemDisconnectedException
    */
   private Connection getSharedConnection(DistributedMember id, boolean scheduleTimeout,
       boolean preserveOrder, long startTime, long ackTimeout, long ackSATimeout)
@@ -442,6 +404,9 @@ public class ConnectionTable {
     } // synchronized
 
     if (pc != null) {
+      if (logger.isDebugEnabled()) {
+        logger.debug("created PendingConnection {}", pc);
+      }
       result = handleNewPendingConnection(id, true /* fixes bug 43386 */, preserveOrder, m, pc,
           startTime, ackTimeout, ackSATimeout);
       if (!preserveOrder && scheduleTimeout) {
@@ -450,7 +415,7 @@ public class ConnectionTable {
     } else { // we have existing connection
       if (mEntry instanceof PendingConnection) {
 
-        if (AlertAppender.isThreadAlerting()) {
+        if (AlertingAction.isThreadAlerting()) {
           // do not change the text of this exception - it is looked for in exception handlers
           throw new IOException("Cannot form connection to alert listener " + id);
         }
@@ -482,7 +447,6 @@ public class ConnectionTable {
    * @param ackSATimeout the ms ack-severe-alert-threshold, or zero
    * @return the connection, or null if an error
    * @throws IOException if the connection could not be created
-   * @throws DistributedSystemDisconnectedException
    */
   Connection getThreadOwnedConnection(DistributedMember id, long startTime, long ackTimeout,
       long ackSATimeout) throws IOException, DistributedSystemDisconnectedException {
@@ -497,7 +461,7 @@ public class ConnectionTable {
         if (this.closed) {
           owner.getCancelCriterion().checkCancelInProgress(null);
           throw new DistributedSystemDisconnectedException(
-              LocalizedStrings.ConnectionTable_CONNECTION_TABLE_IS_CLOSED.toLocalizedString());
+              "Connection table is closed");
         }
         // check for stale references and remove them.
         for (Iterator it = this.threadConnMaps.iterator(); it.hasNext();) {
@@ -534,7 +498,7 @@ public class ConnectionTable {
     if (this.threadConnectionMap == null) {
       // This instance is being destroyed; fail the operation
       closeCon(
-          LocalizedStrings.ConnectionTable_CONNECTION_TABLE_BEING_DESTROYED.toLocalizedString(),
+          "Connection table being destroyed",
           result);
       return null;
     }
@@ -600,8 +564,7 @@ public class ConnectionTable {
           cause = e;
         }
         throw new DistributedSystemDisconnectedException(
-            LocalizedStrings.ConnectionTable_THE_DISTRIBUTED_SYSTEM_IS_SHUTTING_DOWN
-                .toLocalizedString(),
+            "The distributed system is shutting down",
             cause);
       }
     }
@@ -617,7 +580,6 @@ public class ConnectionTable {
    * @param ackSATimeout the ms ack-severe-alert-threshold, or zero
    * @return the new Connection, or null if a problem
    * @throws java.io.IOException if the connection could not be created
-   * @throws DistributedSystemDisconnectedException
    */
   protected Connection get(DistributedMember id, boolean preserveOrder, long startTime,
       long ackTimeout, long ackSATimeout)
@@ -625,7 +587,7 @@ public class ConnectionTable {
     if (this.closed) {
       this.owner.getCancelCriterion().checkCancelInProgress(null);
       throw new DistributedSystemDisconnectedException(
-          LocalizedStrings.ConnectionTable_CONNECTION_TABLE_IS_CLOSED.toLocalizedString());
+          "Connection table is closed");
     }
     Connection result = null;
     boolean threadOwnsResources = threadOwnsResources();
@@ -644,8 +606,8 @@ public class ConnectionTable {
   protected synchronized void fileDescriptorsExhausted() {
     if (!ulimitWarningIssued) {
       ulimitWarningIssued = true;
-      logger.fatal(LocalizedMessage.create(
-          LocalizedStrings.ConnectionTable_OUT_OF_FILE_DESCRIPTORS_USING_SHARED_CONNECTION));
+      logger.fatal(
+          "This process is out of file descriptors.This will hamper communications and slow down the system.Any conserve-sockets setting is now being ignored.Please consider raising the descriptor limit.This alert is only issued once per process.");
       InternalDistributedSystem.getAnyInstance().setShareSockets(true);
       threadWantsOwnResources = new ThreadLocal();
     }
@@ -653,6 +615,10 @@ public class ConnectionTable {
 
   protected TCPConduit getConduit() {
     return owner;
+  }
+
+  public BufferPool getBufferPool() {
+    return bufferPool;
   }
 
   public boolean isClosed() {
@@ -704,7 +670,7 @@ public class ConnectionTable {
     synchronized (this.orderedConnectionMap) {
       for (Iterator it = this.orderedConnectionMap.values().iterator(); it.hasNext();) {
         closeCon(
-            LocalizedStrings.ConnectionTable_CONNECTION_TABLE_BEING_DESTROYED.toLocalizedString(),
+            "Connection table being destroyed",
             it.next());
       }
       this.orderedConnectionMap.clear();
@@ -712,7 +678,7 @@ public class ConnectionTable {
     synchronized (this.unorderedConnectionMap) {
       for (Iterator it = this.unorderedConnectionMap.values().iterator(); it.hasNext();) {
         closeCon(
-            LocalizedStrings.ConnectionTable_CONNECTION_TABLE_BEING_DESTROYED.toLocalizedString(),
+            "Connection table being destroyed",
             it.next());
       }
       this.unorderedConnectionMap.clear();
@@ -728,8 +694,7 @@ public class ConnectionTable {
           if (m != null) {
             synchronized (m) {
               for (Iterator mit = m.values().iterator(); mit.hasNext();) {
-                closeCon(LocalizedStrings.ConnectionTable_CONNECTION_TABLE_BEING_DESTROYED
-                    .toLocalizedString(), mit.next());
+                closeCon("Connection table being destroyed", mit.next());
               }
             }
           }
@@ -775,7 +740,7 @@ public class ConnectionTable {
         Connection con = (Connection) it.next();
         if (!beingSick || con.preserveOrder) {
           closeCon(
-              LocalizedStrings.ConnectionTable_CONNECTION_TABLE_BEING_DESTROYED.toLocalizedString(),
+              "Connection table being destroyed",
               con, beingSick);
           it.remove();
         }
@@ -1036,7 +1001,7 @@ public class ConnectionTable {
           Connection c = (Connection) me.getValue();
           removeFromThreadConMap(this.threadConnectionMap, stub, c);
           it.remove();
-          closeCon(LocalizedStrings.ConnectionTable_THREAD_FINALIZATION.toLocalizedString(), c);
+          closeCon("thread finalization", c);
         } // while
       } // synchronized m
     }
@@ -1123,7 +1088,7 @@ public class ConnectionTable {
     }
   }
 
-  protected DM getDM() {
+  protected DistributionManager getDM() {
     return this.owner.getDM();
   }
 
@@ -1213,9 +1178,8 @@ public class ConnectionTable {
      * @param ackTimeout the ms ack-wait-threshold, or zero
      * @param ackSATimeout the ms ack-severe-alert-threshold, or zero
      * @return the new connection
-     * @throws IOException
      */
-    public synchronized Connection waitForConnect(MembershipManager mgr, long startTime,
+    public synchronized Connection waitForConnect(Membership mgr, long startTime,
         long ackTimeout, long ackSATimeout) throws IOException {
       if (connectingThread == Thread.currentThread()) {
         throw new ReenteredConnectException("This thread is already trying to connect");
@@ -1230,9 +1194,11 @@ public class ConnectionTable {
         targetMember = this.id;
       }
 
+      int attempt = 0;
       for (;;) {
-        if (!this.pending)
+        if (!this.pending) {
           break;
+        }
         getConduit().getCancelCriterion().checkCancelInProgress(null);
 
         // wait a little bit...
@@ -1255,15 +1221,15 @@ public class ConnectionTable {
         long now = System.currentTimeMillis();
         if (!severeAlertIssued && ackSATimeout > 0 && startTime + ackTimeout < now) {
           if (startTime + ackTimeout + ackSATimeout < now) {
-            logger.fatal(LocalizedMessage.create(
-                LocalizedStrings.ConnectionTable_UNABLE_TO_FORM_A_TCPIP_CONNECTION_TO_0_IN_OVER_1_SECONDS,
-                new Object[] {targetMember, (ackSATimeout + ackTimeout) / 1000}));
+            if (targetMember != null) {
+              logger.fatal("Unable to form a TCP/IP connection to {} in over {} seconds",
+                  targetMember, (ackSATimeout + ackTimeout) / 1000);
+            }
             severeAlertIssued = true;
           } else if (!suspected) {
-            logger.warn(LocalizedMessage.create(
-                LocalizedStrings.ConnectionTable_UNABLE_TO_FORM_A_TCPIP_CONNECTION_TO_0_IN_OVER_1_SECONDS,
-                new Object[] {this.id, (ackTimeout) / 1000}));
-            ((GMSMembershipManager) mgr).suspectMember(targetMember,
+            logger.warn("Unable to form a TCP/IP connection to %s in over %s seconds",
+                this.id, (ackTimeout) / 1000);
+            ((GMSMembershipManager) mgr).suspectMember((InternalDistributedMember) targetMember,
                 "Unable to form a TCP/IP connection in a reasonable amount of time");
             suspected = true;
           }
@@ -1274,7 +1240,8 @@ public class ConnectionTable {
         e = m.get(this.id);
         // }
         if (e == this) {
-          if (logger.isDebugEnabled()) {
+          attempt += 1;
+          if (logger.isDebugEnabled() && (attempt % 20 == 1)) {
             logger.debug("Waiting for pending connection to complete: {} connection to {}; {}",
                 ((this.preserveOrder) ? "ordered" : "unordered"), this.id, this);
           }
@@ -1301,6 +1268,10 @@ public class ConnectionTable {
       } // for
       return this.conn;
 
+    }
+
+    public String toString() {
+      return super.toString() + " created by " + connectingThread.getName();
     }
   }
 

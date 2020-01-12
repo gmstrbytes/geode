@@ -15,54 +15,74 @@
 
 package org.apache.geode.management.internal.cli.commands;
 
+import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
+import org.apache.logging.log4j.Logger;
 import org.springframework.shell.core.annotation.CliCommand;
 import org.springframework.shell.core.annotation.CliOption;
 
+import org.apache.geode.annotations.VisibleForTesting;
+import org.apache.geode.cache.configuration.CacheConfig;
+import org.apache.geode.cache.configuration.DeclarableType;
 import org.apache.geode.cache.wan.GatewaySender.OrderPolicy;
 import org.apache.geode.distributed.DistributedMember;
+import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
+import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.management.DistributedSystemMXBean;
 import org.apache.geode.management.cli.CliMetaData;
 import org.apache.geode.management.cli.ConverterHint;
-import org.apache.geode.management.cli.Result;
+import org.apache.geode.management.cli.SingleGfshCommand;
 import org.apache.geode.management.internal.cli.AbstractCliAroundInterceptor;
 import org.apache.geode.management.internal.cli.GfshParseResult;
 import org.apache.geode.management.internal.cli.functions.CliFunctionResult;
 import org.apache.geode.management.internal.cli.functions.GatewaySenderCreateFunction;
 import org.apache.geode.management.internal.cli.functions.GatewaySenderFunctionArgs;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.cli.result.CommandResult;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
-import org.apache.geode.management.internal.configuration.domain.XmlEntity;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.management.internal.security.ResourceOperation;
 import org.apache.geode.security.ResourcePermission;
 
-public class CreateGatewaySenderCommand implements GfshCommand {
+public class CreateGatewaySenderCommand extends SingleGfshCommand {
+  private static final Logger logger = LogService.getLogger();
+  private static final int MBEAN_CREATION_WAIT_TIME = 10000;
+
   @CliCommand(value = CliStrings.CREATE_GATEWAYSENDER, help = CliStrings.CREATE_GATEWAYSENDER__HELP)
   @CliMetaData(relatedTopic = CliStrings.TOPIC_GEODE_WAN,
       interceptor = "org.apache.geode.management.internal.cli.commands.CreateGatewaySenderCommand$Interceptor")
   @ResourceOperation(resource = ResourcePermission.Resource.CLUSTER,
       operation = ResourcePermission.Operation.MANAGE, target = ResourcePermission.Target.GATEWAY)
-  public Result createGatewaySender(@CliOption(key = {CliStrings.GROUP, CliStrings.GROUPS},
-      optionContext = ConverterHint.MEMBERGROUP,
-      help = CliStrings.CREATE_GATEWAYSENDER__GROUP__HELP) String[] onGroups,
+  public ResultModel createGatewaySender(
+
+      @CliOption(key = {CliStrings.GROUP, CliStrings.GROUPS},
+          optionContext = ConverterHint.MEMBERGROUP,
+          help = CliStrings.CREATE_GATEWAYSENDER__GROUP__HELP) String[] onGroups,
 
       @CliOption(key = {CliStrings.MEMBER, CliStrings.MEMBERS},
           optionContext = ConverterHint.MEMBERIDNAME,
           help = CliStrings.CREATE_GATEWAYSENDER__MEMBER__HELP) String[] onMember,
 
-      @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__ID, mandatory = true,
+      @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__ID,
+          mandatory = true,
           help = CliStrings.CREATE_GATEWAYSENDER__ID__HELP) String id,
 
-      @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__REMOTEDISTRIBUTEDSYSTEMID, mandatory = true,
+      @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__REMOTEDISTRIBUTEDSYSTEMID,
+          mandatory = true,
           help = CliStrings.CREATE_GATEWAYSENDER__REMOTEDISTRIBUTEDSYSTEMID__HELP) Integer remoteDistributedSystemId,
 
-      @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__PARALLEL, specifiedDefaultValue = "true",
+      @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__PARALLEL,
+          specifiedDefaultValue = "true",
           unspecifiedDefaultValue = "false",
           help = CliStrings.CREATE_GATEWAYSENDER__PARALLEL__HELP) boolean parallel,
 
-      @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__MANUALSTART,
+      // Users must avoid this feature, it might cause data loss and other issues during startup.
+      @Deprecated @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__MANUALSTART,
+          unspecifiedDefaultValue = "false",
           help = CliStrings.CREATE_GATEWAYSENDER__MANUALSTART__HELP) Boolean manualStart,
 
       @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__SOCKETBUFFERSIZE,
@@ -72,6 +92,8 @@ public class CreateGatewaySenderCommand implements GfshCommand {
           help = CliStrings.CREATE_GATEWAYSENDER__SOCKETREADTIMEOUT__HELP) Integer socketReadTimeout,
 
       @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__ENABLEBATCHCONFLATION,
+          specifiedDefaultValue = "true",
+          unspecifiedDefaultValue = "false",
           help = CliStrings.CREATE_GATEWAYSENDER__ENABLEBATCHCONFLATION__HELP) Boolean enableBatchConflation,
 
       @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__BATCHSIZE,
@@ -81,12 +103,16 @@ public class CreateGatewaySenderCommand implements GfshCommand {
           help = CliStrings.CREATE_GATEWAYSENDER__BATCHTIMEINTERVAL__HELP) Integer batchTimeInterval,
 
       @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__ENABLEPERSISTENCE,
+          specifiedDefaultValue = "true",
+          unspecifiedDefaultValue = "false",
           help = CliStrings.CREATE_GATEWAYSENDER__ENABLEPERSISTENCE__HELP) Boolean enablePersistence,
 
       @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__DISKSTORENAME,
           help = CliStrings.CREATE_GATEWAYSENDER__DISKSTORENAME__HELP) String diskStoreName,
 
       @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__DISKSYNCHRONOUS,
+          specifiedDefaultValue = "true",
+          unspecifiedDefaultValue = "true",
           help = CliStrings.CREATE_GATEWAYSENDER__DISKSYNCHRONOUS__HELP) Boolean diskSynchronous,
 
       @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__MAXQUEUEMEMORY,
@@ -107,58 +133,154 @@ public class CreateGatewaySenderCommand implements GfshCommand {
       @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__GATEWAYTRANSPORTFILTER,
           help = CliStrings.CREATE_GATEWAYSENDER__GATEWAYTRANSPORTFILTER__HELP) String[] gatewayTransportFilter) {
 
-    GatewaySenderFunctionArgs gatewaySenderFunctionArgs =
-        new GatewaySenderFunctionArgs(id, remoteDistributedSystemId, parallel, manualStart,
+    CacheConfig.GatewaySender configuration =
+        buildConfiguration(id, remoteDistributedSystemId, parallel, manualStart,
             socketBufferSize, socketReadTimeout, enableBatchConflation, batchSize,
             batchTimeInterval, enablePersistence, diskStoreName, diskSynchronous, maxQueueMemory,
             alertThreshold, dispatcherThreads, orderPolicy == null ? null : orderPolicy.name(),
             gatewayEventFilters, gatewayTransportFilter);
 
+    GatewaySenderFunctionArgs gatewaySenderFunctionArgs =
+        new GatewaySenderFunctionArgs(configuration);
     Set<DistributedMember> membersToCreateGatewaySenderOn = getMembers(onGroups, onMember);
+
+    // Don't allow sender to be created if all members are not the current version.
+    if (!verifyAllCurrentVersion(membersToCreateGatewaySenderOn)) {
+      return ResultModel.createError(
+          CliStrings.CREATE_GATEWAYSENDER__MSG__CAN_NOT_CREATE_DIFFERENT_VERSIONS);
+    }
 
     List<CliFunctionResult> gatewaySenderCreateResults =
         executeAndGetFunctionResult(GatewaySenderCreateFunction.INSTANCE, gatewaySenderFunctionArgs,
             membersToCreateGatewaySenderOn);
 
-    CommandResult result = ResultBuilder.buildResult(gatewaySenderCreateResults);
-    XmlEntity xmlEntity = findXmlEntity(gatewaySenderCreateResults);
+    ResultModel resultModel = ResultModel.createMemberStatusResult(gatewaySenderCreateResults);
+    resultModel.setConfigObject(configuration);
 
-    // no xml needs to be updated, simply return
-    if (xmlEntity == null) {
-      return result;
+    if (!waitForGatewaySenderMBeanCreation(id, membersToCreateGatewaySenderOn)) {
+      resultModel.addInfo()
+          .addLine("Did not complete waiting for GatewaySenderMBean proxy creation");
     }
 
-    // has xml but unable to persist to cluster config, need to print warning message and return
-    if (onMember != null || getSharedConfiguration() == null) {
-      result.setCommandPersisted(false);
-      return result;
+    return resultModel;
+  }
+
+  /*
+   * Wait for up tp 3 seconds for the proxy MBeans to be created.
+   */
+  @VisibleForTesting
+  boolean waitForGatewaySenderMBeanCreation(String id,
+      Set<DistributedMember> membersToCreateGatewaySenderOn) {
+    DistributedSystemMXBean dsMXBean = getManagementService().getDistributedSystemMXBean();
+
+    return poll(MBEAN_CREATION_WAIT_TIME, TimeUnit.MILLISECONDS,
+        () -> membersToCreateGatewaySenderOn.stream()
+            .allMatch(m -> gatewaySenderBeanExists(dsMXBean, m.getName(), id)));
+  }
+
+  static boolean gatewaySenderBeanExists(DistributedSystemMXBean dsMXBean, String member,
+      String id) {
+    try {
+      // This throws a vanilla Exception if this call does not find anything
+      dsMXBean.fetchGatewaySenderObjectName(member, id);
+      return true;
+    } catch (Exception e) {
+      if (!e.getMessage().toLowerCase().contains("not found")) {
+        logger.warn("Unable to retrieve GatewaySender ObjectName for member: {}, id: {} - {}",
+            member, id, e.getMessage());
+      }
+    }
+    return false;
+  }
+
+  @Override
+  public boolean updateConfigForGroup(String group, CacheConfig config, Object configObject) {
+    config.getGatewaySenders().add((CacheConfig.GatewaySender) configObject);
+    return true;
+  }
+
+  private boolean verifyAllCurrentVersion(Set<DistributedMember> members) {
+    return members.stream().allMatch(
+        member -> ((InternalDistributedMember) member).getVersionObject().equals(Version.CURRENT));
+  }
+
+  private CacheConfig.GatewaySender buildConfiguration(String id, Integer remoteDSId,
+      Boolean parallel,
+      Boolean manualStart,
+      Integer socketBufferSize,
+      Integer socketReadTimeout,
+      Boolean enableBatchConflation,
+      Integer batchSize,
+      Integer batchTimeInterval,
+      Boolean enablePersistence,
+      String diskStoreName,
+      Boolean diskSynchronous,
+      Integer maxQueueMemory,
+      Integer alertThreshold,
+      Integer dispatcherThreads,
+      String orderPolicy,
+      String[] gatewayEventFilters,
+      String[] gatewayTransportFilters) {
+    CacheConfig.GatewaySender sender = new CacheConfig.GatewaySender();
+    sender.setId(id);
+    sender.setRemoteDistributedSystemId(int2string(remoteDSId));
+    sender.setParallel(parallel);
+    sender.setManualStart(manualStart);
+    sender.setSocketBufferSize(int2string(socketBufferSize));
+    sender.setSocketReadTimeout(int2string(socketReadTimeout));
+    sender.setEnableBatchConflation(enableBatchConflation);
+    sender.setBatchSize(int2string(batchSize));
+    sender.setBatchTimeInterval(int2string(batchTimeInterval));
+    sender.setEnablePersistence(enablePersistence);
+    sender.setDiskStoreName(diskStoreName);
+    sender.setDiskSynchronous(diskSynchronous);
+    sender.setMaximumQueueMemory(int2string(maxQueueMemory));
+    sender.setAlertThreshold(int2string(alertThreshold));
+    sender.setDispatcherThreads(int2string(dispatcherThreads));
+    sender.setOrderPolicy(orderPolicy);
+    if (gatewayEventFilters != null) {
+      sender.getGatewayEventFilters().addAll((stringsToDeclarableTypes(gatewayEventFilters)));
+    }
+    if (gatewayTransportFilters != null) {
+      sender.getGatewayTransportFilters().addAll(stringsToDeclarableTypes(gatewayTransportFilters));
     }
 
-    // update cluster config
-    getSharedConfiguration().addXmlEntity(xmlEntity, onGroups);
-    return result;
+    return sender;
+  }
+
+  private List<DeclarableType> stringsToDeclarableTypes(String[] objects) {
+    return Arrays.stream(objects).map(fullyQualifiedClassName -> {
+      DeclarableType thisFilter = new DeclarableType();
+      thisFilter.setClassName(fullyQualifiedClassName);
+      return thisFilter;
+    }).collect(Collectors.toList());
+  }
+
+  private String int2string(Integer i) {
+    return Optional.ofNullable(i).map(String::valueOf).orElse(null);
   }
 
   public static class Interceptor extends AbstractCliAroundInterceptor {
     @Override
-    public Result preExecution(GfshParseResult parseResult) {
-      Integer dispatcherThreads =
-          (Integer) parseResult.getParamValue(CliStrings.CREATE_GATEWAYSENDER__DISPATCHERTHREADS);
-      OrderPolicy orderPolicy =
-          (OrderPolicy) parseResult.getParamValue(CliStrings.CREATE_GATEWAYSENDER__ORDERPOLICY);
+    public ResultModel preExecution(GfshParseResult parseResult) {
       Boolean parallel =
           (Boolean) parseResult.getParamValue(CliStrings.CREATE_GATEWAYSENDER__PARALLEL);
+      OrderPolicy orderPolicy =
+          (OrderPolicy) parseResult.getParamValue(CliStrings.CREATE_GATEWAYSENDER__ORDERPOLICY);
+      Integer dispatcherThreads =
+          (Integer) parseResult.getParamValue(CliStrings.CREATE_GATEWAYSENDER__DISPATCHERTHREADS);
+
       if (dispatcherThreads != null && dispatcherThreads > 1 && orderPolicy == null) {
-        return ResultBuilder.createUserErrorResult(
+        return ResultModel.createError(
             "Must specify --order-policy when --dispatcher-threads is larger than 1.");
       }
 
       if (parallel && orderPolicy == OrderPolicy.THREAD) {
-        return ResultBuilder.createUserErrorResult(
+        return ResultModel.createError(
             "Parallel Gateway Sender can not be created with THREAD OrderPolicy");
       }
 
-      return ResultBuilder.createInfoResult("");
+      return ResultModel.createInfo("");
     }
   }
 }

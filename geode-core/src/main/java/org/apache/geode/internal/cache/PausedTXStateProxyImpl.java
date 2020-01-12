@@ -19,7 +19,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 
-import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.CommitConflictException;
 import org.apache.geode.cache.EntryNotFoundException;
 import org.apache.geode.cache.Region.Entry;
@@ -40,12 +39,12 @@ public class PausedTXStateProxyImpl implements TXStateProxy {
   }
 
   @Override
-  public TXRegionState readRegion(LocalRegion r) {
+  public TXRegionState readRegion(InternalRegion r) {
     return null;
   }
 
   @Override
-  public TXRegionState writeRegion(LocalRegion r) {
+  public TXRegionState writeRegion(InternalRegion r) {
     return null;
   }
 
@@ -90,12 +89,12 @@ public class PausedTXStateProxyImpl implements TXStateProxy {
   }
 
   @Override
-  public Cache getCache() {
+  public InternalCache getCache() {
     return null;
   }
 
   @Override
-  public Collection<LocalRegion> getRegions() {
+  public Collection<InternalRegion> getRegions() {
     return null;
   }
 
@@ -111,7 +110,7 @@ public class PausedTXStateProxyImpl implements TXStateProxy {
   @Override
   public Object getDeserializedValue(KeyInfo keyInfo, LocalRegion localRegion, boolean updateStats,
       boolean disableCopyOnRead, boolean preferCD, EntryEventImpl clientEvent,
-      boolean returnTombstones, boolean retainResult) {
+      boolean returnTombstones, boolean retainResult, boolean createIfAbsent) {
     return null;
   }
 
@@ -121,12 +120,12 @@ public class PausedTXStateProxyImpl implements TXStateProxy {
   }
 
   @Override
-  public TXRegionState txWriteRegion(LocalRegion localRegion, KeyInfo entryKey) {
+  public TXRegionState txWriteRegion(InternalRegion internalRegion, KeyInfo entryKey) {
     return null;
   }
 
   @Override
-  public TXRegionState txReadRegion(LocalRegion localRegion) {
+  public TXRegionState txReadRegion(InternalRegion internalRegion) {
     return null;
   }
 
@@ -326,11 +325,11 @@ public class PausedTXStateProxyImpl implements TXStateProxy {
 
   @Override
   public void postPutAll(DistributedPutAllOperation putallOp, VersionedObjectList successfulPuts,
-      LocalRegion region) {}
+      InternalRegion reg) {}
 
   @Override
   public void postRemoveAll(DistributedRemoveAllOperation op, VersionedObjectList successfulOps,
-      LocalRegion region) {}
+      InternalRegion reg) {}
 
   @Override
   public Entry accessEntry(KeyInfo keyInfo, LocalRegion localRegion) {
@@ -391,14 +390,6 @@ public class PausedTXStateProxyImpl implements TXStateProxy {
   public void setJCATransaction() {}
 
   @Override
-  public void setSynchronizationRunnable(TXSynchronizationRunnable sync) {}
-
-  @Override
-  public TXSynchronizationRunnable getSynchronizationRunnable() {
-    return null;
-  }
-
-  @Override
   public void suspend() {}
 
   @Override
@@ -419,4 +410,8 @@ public class PausedTXStateProxyImpl implements TXStateProxy {
   @Override
   public void updateProxyServer(InternalDistributedMember proxy) {}
 
+  @Override
+  public InternalDistributedMember getOnBehalfOfClientMember() {
+    return null;
+  }
 }

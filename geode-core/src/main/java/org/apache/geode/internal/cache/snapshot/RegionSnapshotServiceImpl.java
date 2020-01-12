@@ -14,7 +14,7 @@
  */
 package org.apache.geode.internal.cache.snapshot;
 
-import static org.apache.geode.distributed.internal.InternalDistributedSystem.getLoggerI18n;
+import static org.apache.geode.distributed.internal.InternalDistributedSystem.getLogger;
 
 import java.io.File;
 import java.io.IOException;
@@ -30,6 +30,7 @@ import java.util.concurrent.Future;
 
 import org.apache.logging.log4j.LogManager;
 
+import org.apache.geode.annotations.Immutable;
 import org.apache.geode.cache.DataPolicy;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.client.PoolManager;
@@ -47,19 +48,18 @@ import org.apache.geode.cache.snapshot.SnapshotOptions;
 import org.apache.geode.cache.snapshot.SnapshotOptions.SnapshotFormat;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.internal.DistributionConfig;
-import org.apache.geode.distributed.internal.InternalDistributedSystem;
-import org.apache.geode.internal.DSCODE;
-import org.apache.geode.internal.cache.CachePerfStats;
+import org.apache.geode.internal.InternalEntity;
 import org.apache.geode.internal.cache.CachedDeserializable;
 import org.apache.geode.internal.cache.CachedDeserializableFactory;
-import org.apache.geode.internal.cache.GemFireCacheImpl;
+import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.LocalDataSet;
 import org.apache.geode.internal.cache.LocalRegion;
 import org.apache.geode.internal.cache.Token;
+import org.apache.geode.internal.cache.execute.InternalFunction;
 import org.apache.geode.internal.cache.snapshot.GFSnapshot.GFSnapshotImporter;
 import org.apache.geode.internal.cache.snapshot.GFSnapshot.SnapshotWriter;
 import org.apache.geode.internal.cache.snapshot.SnapshotPacket.SnapshotRecord;
-import org.apache.geode.internal.i18n.LocalizedStrings;
+import org.apache.geode.internal.serialization.DSCODE;
 
 /**
  * Provides an implementation for region snapshots.
@@ -77,6 +77,7 @@ public class RegionSnapshotServiceImpl<K, V> implements RegionSnapshotService<K,
   static final int BUFFER_SIZE = Integer.getInteger(
       DistributionConfig.GEMFIRE_PREFIX + "RegionSnapshotServiceImpl.BUFFER_SIZE", 1024 * 1024);
 
+  @Immutable
   static final SnapshotFileMapper LOCAL_MAPPER = new SnapshotFileMapper() {
     private static final long serialVersionUID = 1L;
 
@@ -206,8 +207,8 @@ public class RegionSnapshotServiceImpl<K, V> implements RegionSnapshotService<K,
       throws IOException, ClassNotFoundException {
     final LocalRegion local = getLocalRegion(region);
 
-    if (getLoggerI18n().infoEnabled())
-      getLoggerI18n().info(LocalizedStrings.Snapshot_IMPORT_BEGIN_0, region.getName());
+    if (getLogger().infoEnabled())
+      getLogger().info(String.format("Importing region %s", region.getName()));
     if (snapshot.isDirectory()) {
       File[] snapshots =
           snapshot.listFiles((File f) -> f.getName().endsWith(SNAPSHOT_FILE_EXTENSION));
@@ -232,12 +233,12 @@ public class RegionSnapshotServiceImpl<K, V> implements RegionSnapshotService<K,
       throws IOException, ClassNotFoundException {
     long count = 0;
     long bytes = 0;
-    long start = CachePerfStats.getStatTime();
+    long start = local.getCachePerfStats().getTime();
 
     // Would be interesting to use a PriorityQueue ordered on isDone()
     // but this is probably close enough in practice.
     LinkedList<Future<?>> puts = new LinkedList<>();
-    GFSnapshotImporter in = new GFSnapshotImporter(snapshot);
+    GFSnapshotImporter in = new GFSnapshotImporter(snapshot, local.getCache().getPdxRegistry());
 
     try {
       int bufferSize = 0;
@@ -259,13 +260,13 @@ public class RegionSnapshotServiceImpl<K, V> implements RegionSnapshotService<K,
           // If the underlying object is a byte[], we can't wrap it in a
           // CachedDeserializable. Somewhere along the line the header bytes
           // get lost and we start seeing serialization problems.
-          if (data.length > 0 && data[0] == DSCODE.BYTE_ARRAY) {
+          if (data.length > 0 && data[0] == DSCODE.BYTE_ARRAY.toByte()) {
             // It would be faster to use System.arraycopy() directly but since
             // length field is variable it's probably safest and simplest to
             // keep the logic in the InternalDataSerializer.
             val = record.getValueObject();
           } else {
-            val = (V) CachedDeserializableFactory.create(record.getValue());
+            val = (V) CachedDeserializableFactory.create(record.getValue(), local.getCache());
           }
         }
 
@@ -282,9 +283,10 @@ public class RegionSnapshotServiceImpl<K, V> implements RegionSnapshotService<K,
             }
 
             final Map<K, V> copy = new HashMap<>(buffer);
-            Future<?> f = GemFireCacheImpl.getExisting("Importing region from snapshot")
-                .getDistributionManager().getWaitingThreadPool().submit((Runnable) () -> local
-                    .basicImportPutAll(copy, !options.shouldInvokeCallbacks()));
+            Future<?> f = local.getCache().getDistributionManager().getExecutors()
+                .getWaitingThreadPool().submit(
+                    (Runnable) () -> local.basicImportPutAll(copy,
+                        !options.shouldInvokeCallbacks()));
 
             puts.addLast(f);
             buffer.clear();
@@ -303,9 +305,10 @@ public class RegionSnapshotServiceImpl<K, V> implements RegionSnapshotService<K,
         puts.removeFirst().get();
       }
 
-      if (getLoggerI18n().infoEnabled()) {
-        getLoggerI18n().info(LocalizedStrings.Snapshot_IMPORT_END_0_1_2_3,
-            new Object[] {count, bytes, region.getName(), snapshot.getAbsolutePath()});
+      if (getLogger().infoEnabled()) {
+        getLogger().info(String.format(
+            "Snapshot import of %s entries (%s bytes) in region %s from file %s is complete",
+            new Object[] {count, bytes, region.getName(), snapshot.getAbsolutePath()}));
       }
 
     } catch (InterruptedException e) {
@@ -340,25 +343,28 @@ public class RegionSnapshotServiceImpl<K, V> implements RegionSnapshotService<K,
     }
     directory.mkdirs();
     LocalRegion local = getLocalRegion(region);
-    Exporter<K, V> exp = createExporter(region, options);
+    Exporter<K, V> exp = createExporter(local.getCache(), region, options);
 
-    if (getLoggerI18n().fineEnabled()) {
-      getLoggerI18n().fine("Writing to snapshot " + snapshot.getAbsolutePath());
+    if (getLogger().fineEnabled()) {
+      getLogger().fine("Writing to snapshot " + snapshot.getAbsolutePath());
     }
 
     long count = 0;
-    long start = CachePerfStats.getStatTime();
-    SnapshotWriter writer = GFSnapshot.create(snapshot, region.getFullPath());
+    long start = local.getCachePerfStats().getTime();
+    SnapshotWriter writer =
+        GFSnapshot.create(snapshot, region.getFullPath(), (InternalCache) region.getCache());
     try {
-      if (getLoggerI18n().infoEnabled())
-        getLoggerI18n().info(LocalizedStrings.Snapshot_EXPORT_BEGIN_0, region.getName());
+      if (getLogger().infoEnabled())
+        getLogger().info(String.format("Exporting region %s", region.getName()));
 
       SnapshotWriterSink sink = new SnapshotWriterSink(writer);
       count = exp.export(region, sink, options);
 
-      if (getLoggerI18n().infoEnabled()) {
-        getLoggerI18n().info(LocalizedStrings.Snapshot_EXPORT_END_0_1_2_3, new Object[] {count,
-            sink.getBytesWritten(), region.getName(), snapshot.getAbsolutePath()});
+      if (getLogger().infoEnabled()) {
+        getLogger().info(String.format(
+            "Snapshot export of %s entries (%s bytes) in region %s to file %s is complete",
+            new Object[] {count,
+                sink.getBytesWritten(), region.getName(), snapshot.getAbsolutePath()}));
       }
 
     } finally {
@@ -394,12 +400,13 @@ public class RegionSnapshotServiceImpl<K, V> implements RegionSnapshotService<K,
     return true;
   }
 
-  static <K, V> Exporter<K, V> createExporter(Region<?, ?> region, SnapshotOptions<K, V> options) {
+  static <K, V> Exporter<K, V> createExporter(InternalCache cache, Region<?, ?> region,
+      SnapshotOptions<K, V> options) {
     String pool = region.getAttributes().getPoolName();
     if (pool != null) {
       return new ClientExporter<>(PoolManager.find(pool));
 
-    } else if (InternalDistributedSystem.getAnyInstance().isLoner()
+    } else if (cache.getInternalDistributedSystem().isLoner()
         || region.getAttributes().getDataPolicy().equals(DataPolicy.NORMAL)
         || region.getAttributes().getDataPolicy().equals(DataPolicy.PRELOADED)
         || region instanceof LocalDataSet || (options.isParallelMode()
@@ -502,7 +509,7 @@ public class RegionSnapshotServiceImpl<K, V> implements RegionSnapshotService<K,
     }
   }
 
-  private static class ParallelExportFunction<K, V> implements Function {
+  private static class ParallelExportFunction<K, V> implements InternalFunction {
     @Override
     public boolean hasResult() {
       return true;
@@ -518,7 +525,7 @@ public class RegionSnapshotServiceImpl<K, V> implements RegionSnapshotService<K,
             local.getCache().getDistributedSystem().getDistributedMember(), args.getFile());
 
         if (f == null || f.isDirectory()) {
-          throw new IOException(LocalizedStrings.Snapshot_INVALID_EXPORT_FILE.toLocalizedString(f));
+          throw new IOException(String.format("File is invalid or is a directory: %s", f));
         }
 
         local.getSnapshotService().save(f, args.getFormat(), args.getOptions());
@@ -545,7 +552,7 @@ public class RegionSnapshotServiceImpl<K, V> implements RegionSnapshotService<K,
     }
   }
 
-  private static class ParallelImportFunction<K, V> implements Function {
+  private static class ParallelImportFunction<K, V> implements Function, InternalEntity {
     @Override
     public boolean hasResult() {
       return true;

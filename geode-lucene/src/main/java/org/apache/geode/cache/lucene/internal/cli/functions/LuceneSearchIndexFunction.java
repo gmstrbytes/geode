@@ -20,9 +20,7 @@ import java.util.List;
 import java.util.Set;
 
 import org.apache.geode.cache.Cache;
-import org.apache.geode.cache.CacheFactory;
 import org.apache.geode.cache.execute.Function;
-import org.apache.geode.cache.execute.FunctionAdapter;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.cache.lucene.LuceneQuery;
 import org.apache.geode.cache.lucene.LuceneQueryException;
@@ -35,6 +33,7 @@ import org.apache.geode.cache.lucene.internal.cli.LuceneIndexInfo;
 import org.apache.geode.cache.lucene.internal.cli.LuceneQueryInfo;
 import org.apache.geode.cache.lucene.internal.cli.LuceneSearchResults;
 import org.apache.geode.internal.InternalEntity;
+import org.apache.geode.internal.cache.execute.InternalFunction;
 
 /**
  * The LuceneSearchIndexFunction class is a function used to collect the information on a particular
@@ -50,14 +49,16 @@ import org.apache.geode.internal.InternalEntity;
  * @see LuceneIndexInfo
  */
 @SuppressWarnings("unused")
-public class LuceneSearchIndexFunction<K, V> implements InternalEntity, Function {
+public class LuceneSearchIndexFunction<K, V> implements InternalFunction {
 
   private static final long serialVersionUID = 163818919780803222L;
 
+  @Override
   public String getId() {
     return LuceneSearchIndexFunction.class.getName();
   }
 
+  @Override
   public void execute(final FunctionContext context) {
     Set<LuceneSearchResults> result = new HashSet<>();
     final Cache cache = context.getCache();
@@ -84,9 +85,7 @@ public class LuceneSearchIndexFunction<K, V> implements InternalEntity, Function
                       searchResult.getValue().toString(), searchResult.getScore())));
         }
       }
-      if (result != null) {
-        context.getResultSender().lastResult(result);
-      }
+      context.getResultSender().lastResult(result);
     } catch (LuceneQueryException e) {
       result.add(new LuceneSearchResults(true, e.getRootCause().getMessage()));
       context.getResultSender().lastResult(result);

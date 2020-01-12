@@ -14,7 +14,11 @@
  */
 package org.apache.geode.distributed.internal.membership.gms.messenger;
 
-import java.io.*;
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
+import java.io.ObjectInput;
+import java.io.ObjectOutput;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;
@@ -24,8 +28,8 @@ import org.jgroups.stack.IpAddress;
 import org.jgroups.util.UUID;
 
 import org.apache.geode.distributed.internal.DistributionConfig;
-import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.distributed.internal.membership.gms.GMSMember;
+import org.apache.geode.distributed.internal.membership.gms.api.MemberData;
+import org.apache.geode.distributed.internal.membership.gms.api.MemberIdentifier;
 import org.apache.geode.internal.net.SocketCreator;
 
 /**
@@ -49,24 +53,14 @@ public class JGAddress extends UUID {
   // Used only by Externalization
   public JGAddress() {}
 
-  public JGAddress(InternalDistributedMember idm) {
+  public JGAddress(MemberIdentifier mbr) {
     super();
-    GMSMember mbr = (GMSMember) idm.getNetMember();
-    this.mostSigBits = mbr.getUuidMSBs();
-    this.leastSigBits = mbr.getUuidLSBs();
-    this.ip_addr = idm.getInetAddress();
-    this.port = idm.getPort();
-    this.vmViewId = idm.getVmViewId();
-  }
-
-
-  public JGAddress(GMSMember mbr) {
-    super();
-    this.mostSigBits = mbr.getUuidMSBs();
-    this.leastSigBits = mbr.getUuidLSBs();
     this.ip_addr = mbr.getInetAddress();
-    this.port = mbr.getPort();
-    this.vmViewId = mbr.getVmViewId();
+    this.port = mbr.getMembershipPort();
+    MemberData memberData = mbr.getMemberData();
+    this.mostSigBits = memberData.getUuidMostSignificantBits();
+    this.leastSigBits = memberData.getUuidLeastSignificantBits();
+    this.vmViewId = memberData.getVmViewId();
   }
 
 

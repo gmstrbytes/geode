@@ -18,13 +18,10 @@ package org.apache.geode.internal.cache.control;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.internal.cache.control.InternalResourceManager.ResourceType;
 
-/**
- *
- */
 public interface ResourceEvent {
-  public ResourceType getType();
+  ResourceType getType();
 
-  public boolean isLocal();
+  boolean isLocal();
 
-  public DistributedMember getMember();
+  DistributedMember getMember();
 }

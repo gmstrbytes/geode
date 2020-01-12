@@ -17,21 +17,18 @@ package org.apache.geode.internal.cache.partitioned;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
-import java.util.Set;
 
 import org.apache.geode.DataSerializer;
 import org.apache.geode.cache.CacheException;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
+import org.apache.geode.distributed.internal.OperationExecutors;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.i18n.LogWriterI18n;
-import org.apache.geode.internal.Assert;
 import org.apache.geode.internal.cache.PartitionedRegion;
-import org.apache.geode.internal.cache.PartitionedRegionDataStore;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
 
 /**
  * A message sent to a data store telling that data store to globally destroy the region on behalf
@@ -62,17 +59,18 @@ public class DestroyRegionOnDataStoreMessage extends PartitionMessage {
    */
   public static void send(InternalDistributedMember recipient, PartitionedRegion r,
       Object callbackArg) {
-    DM dm = r.getDistributionManager();
+    DistributionManager dm = r.getDistributionManager();
     ReplyProcessor21 rp = new ReplyProcessor21(dm, recipient);
     int procId = rp.getProcessorId();
     DestroyRegionOnDataStoreMessage m =
         new DestroyRegionOnDataStoreMessage(recipient, r.getPRId(), rp, callbackArg);
+    m.setTransactionDistributed(r.getCache().getTxManager().isDistributed());
     r.getDistributionManager().putOutgoing(m);
     rp.waitForRepliesUninterruptibly();
   }
 
   @Override
-  protected boolean operateOnPartitionedRegion(DistributionManager dm, PartitionedRegion pr,
+  protected boolean operateOnPartitionedRegion(ClusterDistributionManager dm, PartitionedRegion pr,
       long startTime) throws CacheException {
 
     // This call has come to an uninitialized region.
@@ -82,8 +80,9 @@ public class DestroyRegionOnDataStoreMessage extends PartitionMessage {
 
 
     org.apache.logging.log4j.Logger logger = pr.getLogger();
-    if (logger.isTraceEnabled(LogMarker.DM)) {
-      logger.trace("DestroyRegionOnDataStore operateOnRegion: " + pr.getFullPath());
+    if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+      logger.trace(LogMarker.DM_VERBOSE,
+          "DestroyRegionOnDataStore operateOnRegion: " + pr.getFullPath());
     }
     pr.destroyRegion(callbackArg);
     return true;
@@ -91,22 +90,25 @@ public class DestroyRegionOnDataStoreMessage extends PartitionMessage {
 
   @Override
   public int getProcessorType() {
-    return DistributionManager.WAITING_POOL_EXECUTOR;
+    return OperationExecutors.WAITING_POOL_EXECUTOR;
   }
 
+  @Override
   public int getDSFID() {
     return PR_DESTROY_ON_DATA_STORE_MESSAGE;
   }
 
   @Override
-  public void fromData(final DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(final DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     callbackArg = DataSerializer.readObject(in);
   }
 
   @Override
-  public void toData(final DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(final DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     DataSerializer.writeObject(callbackArg, out);
   }
 }

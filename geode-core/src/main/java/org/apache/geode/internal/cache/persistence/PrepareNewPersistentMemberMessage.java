@@ -14,6 +14,8 @@
  */
 package org.apache.geode.internal.cache.persistence;
 
+import static org.apache.geode.internal.cache.LocalRegion.InitializationLevel.ANY_INIT;
+
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
@@ -25,10 +27,9 @@ import org.apache.geode.CancelException;
 import org.apache.geode.DataSerializer;
 import org.apache.geode.SystemFailure;
 import org.apache.geode.cache.Cache;
-import org.apache.geode.cache.CacheFactory;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.RegionDestroyedException;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.HighPriorityDistributionMessage;
 import org.apache.geode.distributed.internal.MessageWithReply;
@@ -38,15 +39,15 @@ import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.cache.DistributedRegion;
-import org.apache.geode.internal.cache.GemFireCacheImpl;
+import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.LocalRegion;
+import org.apache.geode.internal.cache.LocalRegion.InitializationLevel;
 import org.apache.geode.internal.cache.PartitionedRegionHelper;
 import org.apache.geode.internal.cache.partitioned.Bucket;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
-/**
- *
- */
 public class PrepareNewPersistentMemberMessage extends HighPriorityDistributionMessage
     implements MessageWithReply {
 
@@ -69,9 +70,10 @@ public class PrepareNewPersistentMemberMessage extends HighPriorityDistributionM
     this.processorId = processorId;
   }
 
-  public static void send(Set<InternalDistributedMember> members, DM dm, String regionPath,
-      PersistentMemberID oldId, PersistentMemberID newId) throws ReplyException {
-    ReplyProcessor21 processor = new ReplyProcessor21(dm, members);
+  public static void send(Set<InternalDistributedMember> members, DistributionManager dm,
+      String regionPath, PersistentMemberID oldId, PersistentMemberID newId) throws ReplyException {
+    InternalCache cache = dm.getExistingCache();
+    ReplyProcessor21 processor = new ReplyProcessor21(dm, members, cache.getCancelCriterion());
     PrepareNewPersistentMemberMessage msg =
         new PrepareNewPersistentMemberMessage(regionPath, oldId, newId, processor.getProcessorId());
     msg.setRecipients(members);
@@ -80,19 +82,19 @@ public class PrepareNewPersistentMemberMessage extends HighPriorityDistributionM
   }
 
   @Override
-  protected void process(DistributionManager dm) {
-    int oldLevel = // Set thread local flag to allow entrance through initialization Latch
-        LocalRegion.setThreadInitLevelRequirement(LocalRegion.ANY_INIT);
+  protected void process(ClusterDistributionManager dm) {
+    final InitializationLevel oldLevel = LocalRegion.setThreadInitLevelRequirement(ANY_INIT);
 
     PersistentMemberState state = null;
     PersistentMemberID myId = null;
     ReplyException exception = null;
+    boolean sendReply = true;
     try {
       // get the region from the path, but do NOT wait on initialization,
       // otherwise we could have a distributed deadlock
 
       Cache cache = dm.getExistingCache();
-      Region region = cache.getRegion(this.regionPath);
+      Region region = cache.getRegion(getRegionPath());
       PersistenceAdvisor persistenceAdvisor = null;
       if (region instanceof DistributedRegion) {
         persistenceAdvisor = ((DistributedRegion) region).getPersistenceAdvisor();
@@ -109,9 +111,14 @@ public class PrepareNewPersistentMemberMessage extends HighPriorityDistributionM
       }
 
     } catch (RegionDestroyedException e) {
-      logger.debug("<RegionDestroyed> {}", this);
+      if (logger.isDebugEnabled()) {
+        logger.debug("<RegionDestroyed> {}", this);
+      }
     } catch (CancelException e) {
-      logger.debug("<CancelException> {}", this);
+      if (logger.isDebugEnabled()) {
+        logger.debug("<CancelException> {}", this);
+      }
+      sendReply = false;
     } catch (VirtualMachineError e) {
       SystemFailure.initiateFailure(e);
       throw e;
@@ -120,23 +127,35 @@ public class PrepareNewPersistentMemberMessage extends HighPriorityDistributionM
       exception = new ReplyException(t);
     } finally {
       LocalRegion.setThreadInitLevelRequirement(oldLevel);
-      ReplyMessage replyMsg = new ReplyMessage();
+      ReplyMessage replyMsg = createReplyMessage();
       replyMsg.setRecipient(getSender());
       replyMsg.setProcessorId(processorId);
       if (exception != null) {
         replyMsg.setException(exception);
       }
-      dm.putOutgoing(replyMsg);
+      if (sendReply) {
+        dm.putOutgoing(replyMsg);
+      }
     }
   }
 
+  ReplyMessage createReplyMessage() {
+    return new ReplyMessage();
+  }
+
+  String getRegionPath() {
+    return regionPath;
+  }
+
+  @Override
   public int getDSFID() {
     return PREPARE_NEW_PERSISTENT_MEMBER_REQUEST;
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     regionPath = DataSerializer.readString(in);
     processorId = in.readInt();
     boolean hasOldId = in.readBoolean();
@@ -149,8 +168,9 @@ public class PrepareNewPersistentMemberMessage extends HighPriorityDistributionM
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     DataSerializer.writeString(regionPath, out);
     out.writeInt(processorId);
     out.writeBoolean(oldId != null);

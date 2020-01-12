@@ -18,6 +18,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import org.apache.geode.annotations.internal.MakeNotStatic;
+
 /**
  * Used by tests to get notifications about the lifecycle of a MemoryAllocatorImpl.
  *
@@ -31,7 +33,7 @@ public interface LifecycleListener {
    *
    * @param allocator the instance that has just been created
    */
-  public void afterCreate(MemoryAllocatorImpl allocator);
+  void afterCreate(MemoryAllocatorImpl allocator);
 
   /**
    * Callback is invoked after reopening an existing MemoryAllocatorImpl for reuse.
@@ -41,7 +43,7 @@ public interface LifecycleListener {
    *
    * @param allocator the instance that has just been reopened for reuse
    */
-  public void afterReuse(MemoryAllocatorImpl allocator);
+  void afterReuse(MemoryAllocatorImpl allocator);
 
   /**
    * Callback is invoked before closing the MemoryAllocatorImpl
@@ -51,7 +53,7 @@ public interface LifecycleListener {
    *
    * @param allocator the instance that is about to be closed
    */
-  public void beforeClose(MemoryAllocatorImpl allocator);
+  void beforeClose(MemoryAllocatorImpl allocator);
 
   static void invokeBeforeClose(MemoryAllocatorImpl allocator) {
     for (Iterator<LifecycleListener> iter = lifecycleListeners.iterator(); iter.hasNext();) {
@@ -79,7 +81,7 @@ public interface LifecycleListener {
    *
    * @param listener the instance to remove
    */
-  public static void removeLifecycleListener(LifecycleListener listener) {
+  static void removeLifecycleListener(LifecycleListener listener) {
     lifecycleListeners.remove(listener);
   }
 
@@ -88,13 +90,13 @@ public interface LifecycleListener {
    *
    * @param listener the instance to add
    */
-  public static void addLifecycleListener(LifecycleListener listener) {
+  static void addLifecycleListener(LifecycleListener listener) {
     LifecycleListener.lifecycleListeners.add(listener);
   }
 
   /**
    * Following should be private but java 8 does not support that.
    */
-  static final List<LifecycleListener> lifecycleListeners =
-      new CopyOnWriteArrayList<LifecycleListener>();
+  @MakeNotStatic
+  List<LifecycleListener> lifecycleListeners = new CopyOnWriteArrayList<LifecycleListener>();
 }

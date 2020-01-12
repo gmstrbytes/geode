@@ -342,10 +342,12 @@ public class MemberMBean extends NotificationBroadcasterSupport implements Membe
     return bridge.getLockTimeout();
   }
 
+  @Override
   public int getProcessId() {
     return bridge.getProcessId();
   }
 
+  @Override
   public String status() {
     return bridge.status();
   }
@@ -353,6 +355,16 @@ public class MemberMBean extends NotificationBroadcasterSupport implements Membe
   @Override
   public String getVersion() {
     return bridge.getVersion();
+  }
+
+  @Override
+  public String getReleaseVersion() {
+    return bridge.getReleaseVersion();
+  }
+
+  @Override
+  public String getGeodeReleaseVersion() {
+    return bridge.getGeodeReleaseVersion();
   }
 
   @Override
@@ -471,6 +483,7 @@ public class MemberMBean extends NotificationBroadcasterSupport implements Membe
     return bridge.getMember();
   }
 
+  @Override
   public String[] getGroups() {
     return bridge.getGroups();
   }

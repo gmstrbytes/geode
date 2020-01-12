@@ -15,7 +15,10 @@
 
 package org.apache.geode.cache;
 
-import org.apache.geode.DataSerializable;
+import java.util.Optional;
+
+import org.apache.geode.cache.configuration.EnumActionDestroyOverflow;
+import org.apache.geode.cache.configuration.RegionAttributesType;
 import org.apache.geode.cache.control.ResourceManager;
 import org.apache.geode.cache.util.ObjectSizer;
 import org.apache.geode.internal.cache.EvictionAttributesImpl;
@@ -34,7 +37,7 @@ import org.apache.geode.internal.cache.EvictionAttributesImpl;
  * @since GemFire 5.0
  */
 @SuppressWarnings("serial")
-public abstract class EvictionAttributes implements DataSerializable {
+public abstract class EvictionAttributes {
   /**
    * The default maximum for {@linkplain EvictionAlgorithm#LRU_ENTRY entry LRU}. Currently
    * <code>900</code> entries.
@@ -84,8 +87,7 @@ public abstract class EvictionAttributes implements DataSerializable {
    */
   public static EvictionAttributes createLRUEntryAttributes() {
     return new EvictionAttributesImpl().setAlgorithm(EvictionAlgorithm.LRU_ENTRY)
-        .setAction(EvictionAction.DEFAULT_EVICTION_ACTION)
-        .internalSetMaximum(DEFAULT_ENTRIES_MAXIMUM);
+        .setAction(EvictionAction.DEFAULT_EVICTION_ACTION).setMaximum(DEFAULT_ENTRIES_MAXIMUM);
   }
 
   /**
@@ -101,7 +103,7 @@ public abstract class EvictionAttributes implements DataSerializable {
    */
   public static EvictionAttributes createLRUEntryAttributes(int maximumEntries) {
     return new EvictionAttributesImpl().setAlgorithm(EvictionAlgorithm.LRU_ENTRY)
-        .setAction(EvictionAction.DEFAULT_EVICTION_ACTION).internalSetMaximum(maximumEntries);
+        .setAction(EvictionAction.DEFAULT_EVICTION_ACTION).setMaximum(maximumEntries);
   }
 
   /**
@@ -116,7 +118,7 @@ public abstract class EvictionAttributes implements DataSerializable {
    */
   public static EvictionAttributes createLRUEntryAttributes(EvictionAction evictionAction) {
     return new EvictionAttributesImpl().setAlgorithm(EvictionAlgorithm.LRU_ENTRY)
-        .setAction(evictionAction).internalSetMaximum(DEFAULT_ENTRIES_MAXIMUM);
+        .setAction(evictionAction).setMaximum(DEFAULT_ENTRIES_MAXIMUM);
   }
 
   /**
@@ -132,7 +134,7 @@ public abstract class EvictionAttributes implements DataSerializable {
   public static EvictionAttributes createLRUEntryAttributes(int maximumEntries,
       EvictionAction evictionAction) {
     return new EvictionAttributesImpl().setAlgorithm(EvictionAlgorithm.LRU_ENTRY)
-        .setAction(evictionAction).internalSetMaximum(maximumEntries);
+        .setAction(evictionAction).setMaximum(maximumEntries);
   }
 
   /**
@@ -241,7 +243,7 @@ public abstract class EvictionAttributes implements DataSerializable {
    * determined by monitoring the size of entries added and evicted. Capacity is specified in terms
    * of megabytes. GemFire uses an efficient algorithm to determine the amount of space a region
    * entry occupies in the JVM. However, this algorithm may not yield optimal results for all kinds
-   * of data. The user may provide his or her own algorithm for determining the size of objects by
+   * of data. The user may provide their own algorithm for determining the size of objects by
    * implementing an {@link ObjectSizer}.
    * <p/>
    * <p/>
@@ -275,8 +277,8 @@ public abstract class EvictionAttributes implements DataSerializable {
    */
   public static EvictionAttributes createLRUMemoryAttributes() {
     return new EvictionAttributesImpl().setAlgorithm(EvictionAlgorithm.LRU_MEMORY)
-        .setAction(EvictionAction.DEFAULT_EVICTION_ACTION)
-        .internalSetMaximum(DEFAULT_MEMORY_MAXIMUM).setObjectSizer(ObjectSizer.DEFAULT);
+        .setAction(EvictionAction.DEFAULT_EVICTION_ACTION).setMaximum(DEFAULT_MEMORY_MAXIMUM)
+        .setObjectSizer(ObjectSizer.DEFAULT);
   }
 
   /**
@@ -299,7 +301,7 @@ public abstract class EvictionAttributes implements DataSerializable {
    */
   public static EvictionAttributes createLRUMemoryAttributes(int maximumMegabytes) {
     return new EvictionAttributesImpl().setAlgorithm(EvictionAlgorithm.LRU_MEMORY)
-        .setAction(EvictionAction.DEFAULT_EVICTION_ACTION).internalSetMaximum(maximumMegabytes)
+        .setAction(EvictionAction.DEFAULT_EVICTION_ACTION).setMaximum(maximumMegabytes)
         .setObjectSizer(null);
   }
 
@@ -324,7 +326,7 @@ public abstract class EvictionAttributes implements DataSerializable {
   public static EvictionAttributes createLRUMemoryAttributes(int maximumMegabytes,
       ObjectSizer sizer) {
     return new EvictionAttributesImpl().setAlgorithm(EvictionAlgorithm.LRU_MEMORY)
-        .setAction(EvictionAction.DEFAULT_EVICTION_ACTION).internalSetMaximum(maximumMegabytes)
+        .setAction(EvictionAction.DEFAULT_EVICTION_ACTION).setMaximum(maximumMegabytes)
         .setObjectSizer(sizer);
   }
 
@@ -350,7 +352,7 @@ public abstract class EvictionAttributes implements DataSerializable {
   public static EvictionAttributes createLRUMemoryAttributes(int maximumMegabytes,
       ObjectSizer sizer, EvictionAction evictionAction) {
     return new EvictionAttributesImpl().setAlgorithm(EvictionAlgorithm.LRU_MEMORY)
-        .setAction(evictionAction).internalSetMaximum(maximumMegabytes).setObjectSizer(sizer);
+        .setAction(evictionAction).setMaximum(maximumMegabytes).setObjectSizer(sizer);
   }
 
   /**
@@ -374,7 +376,7 @@ public abstract class EvictionAttributes implements DataSerializable {
   public static EvictionAttributes createLRUMemoryAttributes(ObjectSizer sizer) {
     return new EvictionAttributesImpl().setAlgorithm(EvictionAlgorithm.LRU_MEMORY)
         .setAction(EvictionAction.DEFAULT_EVICTION_ACTION).setObjectSizer(sizer)
-        .internalSetMaximum(DEFAULT_MEMORY_MAXIMUM);
+        .setMaximum(DEFAULT_MEMORY_MAXIMUM);
   }
 
   /**
@@ -399,7 +401,7 @@ public abstract class EvictionAttributes implements DataSerializable {
   public static EvictionAttributes createLRUMemoryAttributes(ObjectSizer sizer,
       EvictionAction evictionAction) {
     return new EvictionAttributesImpl().setAlgorithm(EvictionAlgorithm.LRU_MEMORY)
-        .setAction(evictionAction).setObjectSizer(sizer).internalSetMaximum(DEFAULT_MEMORY_MAXIMUM);
+        .setAction(evictionAction).setObjectSizer(sizer).setMaximum(DEFAULT_MEMORY_MAXIMUM);
   }
 
   /**
@@ -424,7 +426,15 @@ public abstract class EvictionAttributes implements DataSerializable {
 
   /**
    * The unit of this value is determined by the definition of the {@link EvictionAlgorithm} set by
-   * one of the creation methods e.g. {@link EvictionAttributes#createLRUEntryAttributes()}
+   * one of the creation methods e.g. {@link EvictionAttributes#createLRUEntryAttributes()}.
+   * <ul>
+   * <li>If the algorithm is LRU_ENTRY then the unit is entries.
+   * <li>If the algorithm is LRU_MEMORY then the unit is megabytes.
+   * <li>If the algorithm is LRU_HEAP then the unit is undefined and this method always returns
+   * zero.
+   * Note, in geode 1.4 and earlier, this method would throw UnsupportedOperationException for
+   * LRU_HEAP.
+   * </ul>
    *
    * @return maximum value used by the {@link EvictionAlgorithm} which determines when the
    *         {@link EvictionAction} is performed.
@@ -443,12 +453,13 @@ public abstract class EvictionAttributes implements DataSerializable {
       return false;
     }
     final EvictionAttributes other = (EvictionAttributes) obj;
-    if (!this.getAlgorithm().equals(other.getAlgorithm())
-        || !this.getAction().equals(other.getAction())) {
+    if (!getAlgorithm().equals(other.getAlgorithm())) {
       return false;
     }
-    // LRUHeap doesn't support maximum
-    if (!this.getAlgorithm().isLRUHeap() && this.getMaximum() != other.getMaximum()) {
+    if (!getAction().equals(other.getAction())) {
+      return false;
+    }
+    if (getMaximum() != other.getMaximum()) {
       return false;
     }
     return true;
@@ -456,11 +467,7 @@ public abstract class EvictionAttributes implements DataSerializable {
 
   @Override
   public int hashCode() {
-    if (getAlgorithm().isLRUHeap()) {
-      return getAlgorithm().hashCode();
-    } else {
-      return this.getAlgorithm().hashCode() ^ this.getMaximum();
-    }
+    return this.getAlgorithm().hashCode() ^ this.getMaximum();
   }
 
   @Override
@@ -487,7 +494,7 @@ public abstract class EvictionAttributes implements DataSerializable {
   public static EvictionAttributes createLIFOEntryAttributes(int maximumEntries,
       EvictionAction evictionAction) {
     return new EvictionAttributesImpl().setAlgorithm(EvictionAlgorithm.LIFO_ENTRY)
-        .setAction(evictionAction).internalSetMaximum(maximumEntries);
+        .setAction(evictionAction).setMaximum(maximumEntries);
   }
 
   /**
@@ -498,7 +505,45 @@ public abstract class EvictionAttributes implements DataSerializable {
   public static EvictionAttributes createLIFOMemoryAttributes(int maximumMegabytes,
       EvictionAction evictionAction) {
     return new EvictionAttributesImpl().setAlgorithm(EvictionAlgorithm.LIFO_MEMORY)
-        .setAction(evictionAction).internalSetMaximum(maximumMegabytes).setObjectSizer(null);
+        .setAction(evictionAction).setMaximum(maximumMegabytes).setObjectSizer(null);
+  }
+
+  public RegionAttributesType.EvictionAttributes convertToConfigEvictionAttributes() {
+    RegionAttributesType.EvictionAttributes configAttributes =
+        new RegionAttributesType.EvictionAttributes();
+    EnumActionDestroyOverflow action = EnumActionDestroyOverflow.fromValue(this.getAction()
+        .toString());
+    EvictionAlgorithm algorithm = getAlgorithm();
+    Optional<String> objectSizerClass = Optional.ofNullable(getObjectSizer())
+        .map(c -> c.getClass().toString());
+    Integer maximum = getMaximum();
+
+    if (algorithm.isLRUHeap()) {
+      RegionAttributesType.EvictionAttributes.LruHeapPercentage heapPercentage =
+          new RegionAttributesType.EvictionAttributes.LruHeapPercentage();
+      heapPercentage.setAction(action);
+      objectSizerClass.ifPresent(o -> heapPercentage.setClassName(o));
+      configAttributes.setLruHeapPercentage(heapPercentage);
+    } else if (algorithm.isLRUMemory()) {
+      RegionAttributesType.EvictionAttributes.LruMemorySize memorySize =
+          new RegionAttributesType.EvictionAttributes.LruMemorySize();
+      memorySize.setAction(action);
+      objectSizerClass.ifPresent(o -> memorySize.setClassName(o));
+      memorySize.setMaximum(maximum.toString());
+      configAttributes.setLruMemorySize(memorySize);
+    } else {
+      RegionAttributesType.EvictionAttributes.LruEntryCount entryCount =
+          new RegionAttributesType.EvictionAttributes.LruEntryCount();
+      entryCount.setAction(action);
+      entryCount.setMaximum(maximum.toString());
+      configAttributes.setLruEntryCount(entryCount);
+    }
+
+    return configAttributes;
+  }
+
+  public boolean isNoEviction() {
+    return getAction() == EvictionAction.NONE;
   }
 
 }

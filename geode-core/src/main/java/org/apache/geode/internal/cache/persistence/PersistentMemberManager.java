@@ -24,17 +24,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.cache.persistence.RevokedPersistentDataException;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.MembershipListener;
 import org.apache.geode.distributed.internal.ProfileListener;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
-/**
- *
- */
 public class PersistentMemberManager {
   private static final Logger logger = LogService.getLogger();
 
@@ -53,8 +48,8 @@ public class PersistentMemberManager {
     cancelRevoke(pattern);
     synchronized (this) {
       if (revokedMembers.put(pattern, TOKEN) == null) {
-        logger.info(LocalizedMessage.create(LocalizedStrings.PersistenceAdvisorImpl_MEMBER_REVOKED,
-            pattern));
+        logger.info("The following persistent member has been revoked: {}",
+            pattern);
         for (MemberRevocationListener listener : revocationListeners) {
           listener.revoked(pattern);
         }
@@ -76,15 +71,17 @@ public class PersistentMemberManager {
       for (PersistentMemberPattern pattern : pendingRevokes.keySet()) {
         if (listener.matches(pattern)) {
           throw new RevokedPersistentDataException(
-              LocalizedStrings.PersistentMemberManager_Member_0_is_already_revoked
-                  .toLocalizedString(pattern));
+              String.format(
+                  "The persistent member id %s has been revoked in this distributed system. You cannot recover from disk files which have been revoked.",
+                  pattern));
         }
       }
       for (PersistentMemberPattern pattern : revokedMembers.keySet()) {
         if (listener.matches(pattern)) {
           throw new RevokedPersistentDataException(
-              LocalizedStrings.PersistentMemberManager_Member_0_is_already_revoked
-                  .toLocalizedString(pattern));
+              String.format(
+                  "The persistent member id %s has been revoked in this distributed system. You cannot recover from disk files which have been revoked.",
+                  pattern));
         }
       }
       for (PersistentMemberPattern pattern : recoveredRevokedMembers) {
@@ -132,20 +129,6 @@ public class PersistentMemberManager {
     }
   }
 
-  /**
-   * Returns a set of the persistent ids that are running on this member.
-   */
-  public Set<PersistentMemberID> getPersistentIDs() {
-    synchronized (this) {
-      Set<PersistentMemberID> localData = new HashSet<PersistentMemberID>();
-      for (MemberRevocationListener listener : revocationListeners) {
-        String regionPath = listener.getRegionPath();
-        listener.addPersistentIDs(localData);
-      }
-      return localData;
-    }
-  }
-
   public boolean isRevoked(String regionPath, PersistentMemberID id) {
     for (PersistentMemberPattern member : revokedMembers.keySet()) {
       if (member.matches(id)) {
@@ -164,7 +147,7 @@ public class PersistentMemberManager {
    * @return true if this member is not currently running the chosen disk store. false if the revoke
    *         should be aborted because the disk store is already running.
    */
-  public boolean prepareRevoke(PersistentMemberPattern pattern, DM dm,
+  public boolean prepareRevoke(PersistentMemberPattern pattern, DistributionManager dm,
       InternalDistributedMember sender) {
     if (logger.isDebugEnabled()) {
       logger.debug("Preparing revoke if pattern {}", pattern);
@@ -207,47 +190,44 @@ public class PersistentMemberManager {
     }
   }
 
-  public static interface MemberRevocationListener {
-    public void revoked(PersistentMemberPattern pattern);
-
-    /**
-     * Add the persistent id(s) of this listener to the passed in set.
-     */
-    public void addPersistentIDs(Set<PersistentMemberID> localData);
+  public interface MemberRevocationListener {
+    void revoked(PersistentMemberPattern pattern);
 
     /**
      * Return true if this is a listener for a resource that matches the persistent member pattern
      * in question.
      */
-    public boolean matches(PersistentMemberPattern pattern);
+    boolean matches(PersistentMemberPattern pattern);
 
     /**
      * Return the set of member ids which this resource knows are missing
      */
-    public Set<PersistentMemberID> getMissingMemberIds();
+    Set<PersistentMemberID> getMissingMemberIds();
 
-    public String getRegionPath();
+    String getRegionPath();
   }
 
   public class PendingRevokeListener implements MembershipListener {
     InternalDistributedMember sender;
     private PersistentMemberPattern pattern;
-    private DM dm;
+    private DistributionManager dm;
 
     public PendingRevokeListener(PersistentMemberPattern pattern, InternalDistributedMember sender,
-        DM dm) {
+        DistributionManager dm) {
       this.dm = dm;
       this.pattern = pattern;
       this.sender = sender;
     }
 
     @Override
-    public void memberJoined(InternalDistributedMember id) {
+    public void memberJoined(DistributionManager distributionManager,
+        InternalDistributedMember id) {
 
     }
 
     @Override
-    public void memberDeparted(InternalDistributedMember id, boolean crashed) {
+    public void memberDeparted(DistributionManager distributionManager,
+        InternalDistributedMember id, boolean crashed) {
       if (id.equals(sender)) {
         cancelRevoke(pattern);
       }
@@ -255,12 +235,12 @@ public class PersistentMemberManager {
     }
 
     @Override
-    public void memberSuspect(InternalDistributedMember id, InternalDistributedMember whoSuspected,
-        String reason) {}
+    public void memberSuspect(DistributionManager distributionManager, InternalDistributedMember id,
+        InternalDistributedMember whoSuspected, String reason) {}
 
     @Override
-    public void quorumLost(Set<InternalDistributedMember> failures,
-        List<InternalDistributedMember> remaining) {}
+    public void quorumLost(DistributionManager distributionManager,
+        Set<InternalDistributedMember> failures, List<InternalDistributedMember> remaining) {}
 
     public void remove() {
       dm.removeAllMembershipListener(this);

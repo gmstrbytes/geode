@@ -26,7 +26,6 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.http.converter.HttpMessageNotWritableException;
 import org.springframework.util.StreamUtils;
 
-import org.apache.geode.internal.lang.ObjectUtils;
 import org.apache.geode.internal.util.IOUtils;
 
 /**
@@ -50,22 +49,13 @@ public class SerializableObjectHttpMessageConverter
     super(MediaType.APPLICATION_OCTET_STREAM, MediaType.ALL);
   }
 
-  /*
-   * @Override public boolean canRead(final Class<?> clazz, final MediaType mediaType) { return
-   * canRead(mediaType); }
-   */
-
   @Override
   protected boolean supports(final Class<?> type) {
     if (logger.isTraceEnabled()) {
       logger.trace(String.format("%1$s.supports(%2$s)", getClass().getName(), type.getName()),
           new Throwable());
     }
-    /*
-     * logger.warn(String.format("%1$s.supports(%2$s)", getClass().getName(), type.getName()));
-     * final StringWriter writer = new StringWriter(); new Throwable().printStackTrace(new
-     * PrintWriter(writer)); logger.warn(writer.toString());
-     */
+
     return (type != null && Serializable.class.isAssignableFrom(type));
   }
 
@@ -73,8 +63,9 @@ public class SerializableObjectHttpMessageConverter
   protected Serializable readInternal(final Class<? extends Serializable> type,
       final HttpInputMessage inputMessage) throws IOException, HttpMessageNotReadableException {
     try {
+      ClassLoader classLoader = type.getClassLoader();
       return type.cast(IOUtils.deserializeObject(IOUtils.toByteArray(inputMessage.getBody()),
-          ObjectUtils.defaultIfNull(type.getClassLoader(), getClass().getClassLoader())));
+          classLoader != null ? classLoader : getClass().getClassLoader()));
     } catch (ClassNotFoundException e) {
       throw new HttpMessageNotReadableException(
           String.format("Unable to convert the HTTP message body into an Object of type (%1$s)",

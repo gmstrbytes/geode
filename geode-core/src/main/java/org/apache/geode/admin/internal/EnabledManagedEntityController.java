@@ -14,7 +14,12 @@
  */
 package org.apache.geode.admin.internal;
 
-import static org.apache.geode.distributed.ConfigurationProperties.*;
+import static org.apache.geode.distributed.ConfigurationProperties.CLUSTER_SSL_CIPHERS;
+import static org.apache.geode.distributed.ConfigurationProperties.CLUSTER_SSL_ENABLED;
+import static org.apache.geode.distributed.ConfigurationProperties.CLUSTER_SSL_PROTOCOLS;
+import static org.apache.geode.distributed.ConfigurationProperties.CLUSTER_SSL_REQUIRE_AUTHENTICATION;
+import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.net.InetAddressUtils.isLocalHost;
 
 import java.io.File;
 import java.util.Iterator;
@@ -28,10 +33,8 @@ import org.apache.geode.admin.ManagedEntity;
 import org.apache.geode.admin.ManagedEntityConfig;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.internal.ProcessOutputReader;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.LoggingThreadGroup;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
+import org.apache.geode.logging.internal.executors.LoggingThread;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * Implements the actual administration (starting, stopping, etc.) of GemFire
@@ -49,10 +52,6 @@ import org.apache.geode.internal.logging.log4j.LocalizedMessage;
 class EnabledManagedEntityController implements ManagedEntityController {
   private static final Logger logger = LogService.getLogger();
 
-  // /** A lock to ensure that only entity is managed at a time. See bug
-  // * 31374. */
-  // private static Object startStopLock = new Object();
-
   /** Known strings found in output indicating error. */
   private static final String[] ERROR_OUTPUTS = new String[] {"No such file or directory",
       "The system cannot find the file specified.", "Access is denied.", "cannot open", "ERROR"};
@@ -65,11 +64,6 @@ class EnabledManagedEntityController implements ManagedEntityController {
 
   ////////////////////// Instance Fields //////////////////////
 
-  /**
-   * The thread group in which threads launched by this system controller reside.
-   */
-  private final ThreadGroup threadGroup;
-
   /** System to which the managed entities belong */
   private final AdminDistributedSystem system;
 
@@ -81,8 +75,6 @@ class EnabledManagedEntityController implements ManagedEntityController {
    */
   EnabledManagedEntityController(AdminDistributedSystem system) {
     this.system = system;
-    this.threadGroup =
-        LoggingThreadGroup.createThreadGroup("ManagedEntityController threads", logger);
   }
 
   ///////////////////// Instance Methods /////////////////////
@@ -117,35 +109,29 @@ class EnabledManagedEntityController implements ManagedEntityController {
      */
     if (command == null || command.length() == 0) {
       throw new IllegalArgumentException(
-          LocalizedStrings.ManagedEntityController_EXECUTION_COMMAND_IS_EMPTY.toLocalizedString());
+          "Execution command is empty");
     }
 
     File workingDir = new File(entity.getEntityConfig().getWorkingDirectory());
-    logger.info(LocalizedMessage.create(
-        LocalizedStrings.ManagedEntityController_EXECUTING_REMOTE_COMMAND_0_IN_DIRECTORY_1,
-        new Object[] {command, workingDir}));
+    logger.info("Executing remote command: {} in directory {}",
+        command, workingDir);
     Process p = null;
     try {
       p = Runtime.getRuntime().exec(command, null /* env */, workingDir);
 
     } catch (java.io.IOException e) {
-      logger.fatal(LocalizedMessage
-          .create(LocalizedStrings.ManagedEntityController_WHILE_EXECUTING_0, command), e);
+      logger.fatal("While executing " + command, e);
       return null;
     }
 
     final ProcessOutputReader pos = new ProcessOutputReader(p);
     int retCode = pos.getExitCode();
     final String output = pos.getOutput();
-    logger.info(
-        LocalizedMessage.create(LocalizedStrings.ManagedEntityController_RESULT_OF_EXECUTING_0_IS_1,
-            new Object[] {command, Integer.valueOf(retCode)}));
-    logger.info(LocalizedMessage.create(LocalizedStrings.ManagedEntityController_OUTPUT_OF_0_IS_1,
-        new Object[] {command, output}));
+    logger.info("Result of executing {} is {}", command, Integer.valueOf(retCode));
+    logger.info("Output of {} is {}", command, output);
 
     if (retCode != 0 || outputIsError(output)) {
-      logger.warn(LocalizedMessage
-          .create(LocalizedStrings.ManagedEntityController_REMOTE_EXECUTION_OF_0_FAILED, command));
+      logger.warn("Remote execution of {} failed.", command);
       return null;
     }
 
@@ -166,11 +152,6 @@ class EnabledManagedEntityController implements ManagedEntityController {
     }
   }
 
-  // /** Returns true if the path is on Windows. */
-  // private boolean pathIsWindows(File path) {
-  // return pathIsWindows(path.toString());
-  // }
-
   /** Returns true if the path is on Windows. */
   private boolean pathIsWindows(String path) {
     if (path != null && path.length() > 1) {
@@ -189,7 +170,7 @@ class EnabledManagedEntityController implements ManagedEntityController {
   private String arrangeRemoteCommand(InternalManagedEntity entity, String cmd) {
 
     String host = entity.getEntityConfig().getHost();
-    if (InetAddressUtil.isLocalHost(host)) {
+    if (isLocalHost(host)) {
       // No arranging necessary
       return cmd;
     }
@@ -201,8 +182,9 @@ class EnabledManagedEntityController implements ManagedEntityController {
 
     if (prefix == null || prefix.length() <= 0) {
       throw new IllegalStateException(
-          LocalizedStrings.ManagedEntityController_A_REMOTE_COMMAND_MUST_BE_SPECIFIED_TO_OPERATE_ON_A_MANAGED_ENTITY_ON_HOST_0
-              .toLocalizedString(host));
+          String.format(
+              "A remote command must be specified to operate on a managed entity on host %s",
+              host));
     }
 
     int hostIdx = prefix.indexOf(HOST);
@@ -220,7 +202,7 @@ class EnabledManagedEntityController implements ManagedEntityController {
         end = prefix.substring(hostIdx + HOST.length());
       }
       prefix = start + host + end;
-      cmdIdx = prefix.indexOf(CMD); // recalculate;
+      cmdIdx = prefix.indexOf(CMD); // recalculate
     }
 
     if (cmdIdx >= 0) {
@@ -248,11 +230,11 @@ class EnabledManagedEntityController implements ManagedEntityController {
    *
    * @param executable The name of the executable that resides in <code>$GEMFIRE/bin</code>.
    */
+  @Override
   public String getProductExecutable(InternalManagedEntity entity, String executable) {
     String productDirectory = entity.getEntityConfig().getProductDirectory();
     String path = null;
     File productDir = new File(productDirectory);
-    // if (productDir != null) (cannot be null)
     {
       path = productDir.getPath();
       if (!endsWithSeparator(path)) {
@@ -260,9 +242,6 @@ class EnabledManagedEntityController implements ManagedEntityController {
       }
       path += "bin" + File.separator;
     }
-    // else {
-    // path = "";
-    // }
 
     String bat = "";
     if (pathIsWindows(path)) {
@@ -275,6 +254,7 @@ class EnabledManagedEntityController implements ManagedEntityController {
    * Builds optional SSL command-line arguments. Returns null if SSL is not enabled for the
    * distributed system.
    */
+  @Override
   public String buildSSLArguments(DistributedSystemConfig config) {
     Properties sslProps = buildSSLProperties(config, true);
     if (sslProps == null)
@@ -320,32 +300,29 @@ class EnabledManagedEntityController implements ManagedEntityController {
   /**
    * Starts a managed entity.
    */
+  @Override
   public void start(final InternalManagedEntity entity) {
     final String command = arrangeRemoteCommand(entity, entity.getStartCommand());
-    Thread start = new Thread(this.threadGroup, new Runnable() {
-      public void run() {
-        execute(command, entity);
-      }
-    }, "Start " + entity.getEntityType());
+    Thread start = new LoggingThread("Start " + entity.getEntityType(),
+        false, () -> execute(command, entity));
     start.start();
   }
 
   /**
    * Stops a managed entity.
    */
+  @Override
   public void stop(final InternalManagedEntity entity) {
     final String command = arrangeRemoteCommand(entity, entity.getStopCommand());
-    Thread stop = new Thread(this.threadGroup, new Runnable() {
-      public void run() {
-        execute(command, entity);
-      }
-    }, "Stop " + entity.getEntityType());
+    Thread stop = new LoggingThread("Stop " + entity.getEntityType(),
+        false, () -> execute(command, entity));
     stop.start();
   }
 
   /**
    * Returns whether or not a managed entity is running
    */
+  @Override
   public boolean isRunning(InternalManagedEntity entity) {
     final String command = arrangeRemoteCommand(entity, entity.getIsRunningCommand());
     String output = execute(command, entity);
@@ -359,8 +336,8 @@ class EnabledManagedEntityController implements ManagedEntityController {
 
     } else {
       throw new IllegalStateException(
-          LocalizedStrings.ManagedEntityController_COULD_NOT_DETERMINE_IF_MANAGED_ENTITY_WAS_RUNNING_0
-              .toLocalizedString(output));
+          String.format("Could not determine if managed entity was running: %s",
+              output));
     }
   }
 
@@ -368,6 +345,7 @@ class EnabledManagedEntityController implements ManagedEntityController {
    * Returns the contents of a locator's log file. Other APIs are used to get the log file of
    * managed entities that are also system members.
    */
+  @Override
   public String getLog(DistributionLocatorImpl locator) {
     String command = arrangeRemoteCommand(locator, locator.getLogCommand());
     return execute(command, locator);

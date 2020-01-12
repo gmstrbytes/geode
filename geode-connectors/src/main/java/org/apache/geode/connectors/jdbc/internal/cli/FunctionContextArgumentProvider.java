@@ -14,14 +14,6 @@
  */
 package org.apache.geode.connectors.jdbc.internal.cli;
 
-import static org.apache.geode.connectors.jdbc.internal.xml.ElementType.CONNECTION_SERVICE;
-import static org.apache.geode.connectors.jdbc.internal.xml.JdbcConnectorServiceXmlGenerator.PREFIX;
-import static org.apache.geode.connectors.jdbc.internal.xml.JdbcConnectorServiceXmlParser.NAME;
-import static org.apache.geode.connectors.jdbc.internal.xml.JdbcConnectorServiceXmlParser.NAMESPACE;
-import static org.apache.geode.internal.cache.xmlcache.CacheXml.CACHE;
-
-import java.io.Serializable;
-
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.connectors.jdbc.internal.JdbcConnectorService;
 import org.apache.geode.internal.cache.InternalCache;
@@ -31,7 +23,7 @@ import org.apache.geode.management.internal.configuration.domain.XmlEntity;
 /**
  * Provides JDBC command dependencies provided in the FunctionContext
  */
-class FunctionContextArgumentProvider implements Serializable {
+class FunctionContextArgumentProvider {
 
   static InternalCache getCacheFromContext(FunctionContext<?> context) {
     return (InternalCache) context.getCache();
@@ -45,26 +37,25 @@ class FunctionContextArgumentProvider implements Serializable {
   /**
    * Returns the JdbcConnectorService
    */
-  JdbcConnectorService getJdbcConnectorService(FunctionContext<?> context) {
+  static JdbcConnectorService getJdbcConnectorService(FunctionContext<?> context) {
     return getCacheFromContext(context).getService(JdbcConnectorService.class);
   }
 
   /**
    * Returns the name of the distributed member or its id if it has no name
    */
-  String getMember(FunctionContext<?> context) {
+  static String getMember(FunctionContext<?> context) {
     return getMemberFromContext(context);
   }
 
   /**
    * Returns XmlEntity for JdbcConnectorServiceXmlGenerator snippet of cache xml
    */
-  XmlEntity createXmlEntity(FunctionContext<?> context) {
-    return new XmlEntity(createCacheProvider(context), CACHE, PREFIX, NAMESPACE,
-        CONNECTION_SERVICE.getTypeName(), NAME, CONNECTION_SERVICE.getTypeName());
+  static XmlEntity createXmlEntity(FunctionContext<?> context) {
+    return null;
   }
 
-  private XmlEntity.CacheProvider createCacheProvider(FunctionContext<?> context) {
+  private static XmlEntity.CacheProvider createCacheProvider(FunctionContext<?> context) {
     return () -> getCacheFromContext(context);
   }
 }

@@ -25,7 +25,7 @@ import org.apache.geode.DataSerializer;
 import org.apache.geode.SystemFailure;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.LockServiceDestroyedException;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.MessageWithReply;
@@ -35,8 +35,10 @@ import org.apache.geode.distributed.internal.ReplyMessage;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.locks.DLockGrantor.DLockGrantToken;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.logging.LogService;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * Queries the grantor for current leasing information of a lock.
@@ -59,7 +61,8 @@ public class DLockQueryProcessor extends ReplyProcessor21 {
    * @return the query reply or null if there was no reply due to membership change
    */
   static DLockQueryReplyMessage query(final InternalDistributedMember grantor,
-      final String serviceName, final Object objectName, final boolean lockBatch, final DM dm) {
+      final String serviceName, final Object objectName, final boolean lockBatch,
+      final DistributionManager dm) {
     DLockQueryProcessor processor = new DLockQueryProcessor(dm, grantor, serviceName);
 
     DLockQueryMessage msg = new DLockQueryMessage();
@@ -81,7 +84,7 @@ public class DLockQueryProcessor extends ReplyProcessor21 {
     try {
       processor.waitForRepliesUninterruptibly();
     } catch (ReplyException e) {
-      e.handleAsUnexpected();
+      e.handleCause();
     }
 
     if (processor.reply == null) {
@@ -98,7 +101,8 @@ public class DLockQueryProcessor extends ReplyProcessor21 {
    * @param grantor the member to query for lock leasing info
    * @param serviceName the name of the lock service
    */
-  private DLockQueryProcessor(DM dm, InternalDistributedMember grantor, String serviceName) {
+  private DLockQueryProcessor(DistributionManager dm, InternalDistributedMember grantor,
+      String serviceName) {
     super(dm, grantor);
   }
 
@@ -111,8 +115,8 @@ public class DLockQueryProcessor extends ReplyProcessor21 {
   public void process(DistributionMessage msg) {
     try {
       DLockQueryReplyMessage myReply = (DLockQueryReplyMessage) msg;
-      if (logger.isTraceEnabled(LogMarker.DLS)) {
-        logger.trace(LogMarker.DLS, "Handling: {}", myReply);
+      if (logger.isTraceEnabled(LogMarker.DLS_VERBOSE)) {
+        logger.trace(LogMarker.DLS_VERBOSE, "Handling: {}", myReply);
       }
       this.reply = myReply;
     } finally {
@@ -152,7 +156,7 @@ public class DLockQueryProcessor extends ReplyProcessor21 {
      * Processes this message - invoked on the node that is the lock grantor.
      */
     @Override
-    protected void process(final DistributionManager dm) {
+    protected void process(final ClusterDistributionManager dm) {
       boolean failed = true;
       ReplyException replyException = null;
       try {
@@ -178,8 +182,8 @@ public class DLockQueryProcessor extends ReplyProcessor21 {
       } finally {
         if (failed) {
           // above code failed so now ensure reply is sent
-          if (logger.isTraceEnabled(LogMarker.DLS)) {
-            logger.trace(LogMarker.DLS, "DLockQueryMessage.process failed for <{}>", this);
+          if (logger.isTraceEnabled(LogMarker.DLS_VERBOSE)) {
+            logger.trace(LogMarker.DLS_VERBOSE, "DLockQueryMessage.process failed for <{}>", this);
           }
           DLockQueryReplyMessage replyMsg = new DLockQueryReplyMessage();
           replyMsg.setProcessorId(this.processorId);
@@ -197,7 +201,7 @@ public class DLockQueryProcessor extends ReplyProcessor21 {
     }
 
     /** Process locally without using messaging or executor */
-    protected void processLocally(final DM dm) {
+    protected void processLocally(final DistributionManager dm) {
       this.svc = DLockService.getInternalServiceNamed(this.serviceName);
       basicProcess(dm, true); // don't use executor
     }
@@ -208,12 +212,13 @@ public class DLockQueryProcessor extends ReplyProcessor21 {
      * <p>
      * this.svc and this.grantor must be set before calling this method.
      */
-    private void executeBasicProcess(final DM dm) {
+    private void executeBasicProcess(final DistributionManager dm) {
       final DLockQueryMessage msg = this;
-      dm.getWaitingThreadPool().execute(new Runnable() {
+      dm.getExecutors().getWaitingThreadPool().execute(new Runnable() {
+        @Override
         public void run() {
-          if (logger.isTraceEnabled(LogMarker.DLS)) {
-            logger.trace(LogMarker.DLS, "[executeBasicProcess] {}", msg);
+          if (logger.isTraceEnabled(LogMarker.DLS_VERBOSE)) {
+            logger.trace(LogMarker.DLS_VERBOSE, "[executeBasicProcess] {}", msg);
           }
           basicProcess(dm, true);
         }
@@ -225,10 +230,10 @@ public class DLockQueryProcessor extends ReplyProcessor21 {
      * <p>
      * this.svc and this.grantor must be set before calling this method.
      */
-    protected void basicProcess(final DM dm, final boolean waitForGrantor) {
-      final boolean isDebugEnabled_DLS = logger.isTraceEnabled(LogMarker.DLS);
+    protected void basicProcess(final DistributionManager dm, final boolean waitForGrantor) {
+      final boolean isDebugEnabled_DLS = logger.isTraceEnabled(LogMarker.DLS_VERBOSE);
       if (isDebugEnabled_DLS) {
-        logger.trace(LogMarker.DLS, "[basicProcess] {}", this);
+        logger.trace(LogMarker.DLS_VERBOSE, "[basicProcess] {}", this);
       }
       final DLockQueryReplyMessage replyMsg = new DLockQueryReplyMessage();
       replyMsg.setProcessorId(this.processorId);
@@ -278,12 +283,11 @@ public class DLockQueryProcessor extends ReplyProcessor21 {
         }
 
         replyMsg.replyCode = DLockQueryReplyMessage.OK;
-      } catch (LockGrantorDestroyedException ignore) {
-      } catch (LockServiceDestroyedException ignore) {
+      } catch (LockGrantorDestroyedException | LockServiceDestroyedException ignore) {
       } catch (RuntimeException e) {
         replyMsg.setException(new ReplyException(e));
         if (isDebugEnabled_DLS) {
-          logger.trace(LogMarker.DLS, "[basicProcess] caught RuntimeException", e);
+          logger.trace(LogMarker.DLS_VERBOSE, "[basicProcess] caught RuntimeException", e);
         }
       } catch (VirtualMachineError err) {
         SystemFailure.initiateFailure(err);
@@ -299,7 +303,7 @@ public class DLockQueryProcessor extends ReplyProcessor21 {
         SystemFailure.checkFailure();
         replyMsg.setException(new ReplyException(e));
         if (isDebugEnabled_DLS) {
-          logger.trace(LogMarker.DLS, "[basicProcess] caught Error", e);
+          logger.trace(LogMarker.DLS_VERBOSE, "[basicProcess] caught Error", e);
         }
       } finally {
         if (dm.getId().equals(getSender())) {
@@ -311,13 +315,15 @@ public class DLockQueryProcessor extends ReplyProcessor21 {
       }
     }
 
+    @Override
     public int getDSFID() {
       return DLOCK_QUERY_MESSAGE;
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       DataSerializer.writeString(this.serviceName, out);
       DataSerializer.writeObject(this.objectName, out);
       out.writeBoolean(this.lockBatch);
@@ -325,8 +331,9 @@ public class DLockQueryProcessor extends ReplyProcessor21 {
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.serviceName = DataSerializer.readString(in);
       this.objectName = DataSerializer.readObject(in);
       this.lockBatch = in.readBoolean();
@@ -431,8 +438,9 @@ public class DLockQueryProcessor extends ReplyProcessor21 {
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.replyCode = in.readInt();
       if (this.replyCode == OK) {
         InternalDistributedMember lessee =
@@ -446,8 +454,9 @@ public class DLockQueryProcessor extends ReplyProcessor21 {
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       out.writeInt(this.replyCode);
       if (this.replyCode == OK) {
         if (this.lesseeThread == null) {

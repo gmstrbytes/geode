@@ -24,7 +24,11 @@ import org.apache.logging.log4j.Logger;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.Term;
-import org.apache.lucene.search.*;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.Query;
+import org.apache.lucene.search.ScoreDoc;
+import org.apache.lucene.search.SearcherManager;
+import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.AlreadyClosedException;
 
 import org.apache.geode.cache.Region;
@@ -36,8 +40,7 @@ import org.apache.geode.distributed.DistributedLockService;
 import org.apache.geode.distributed.LockNotHeldException;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.internal.cache.BucketRegion;
-import org.apache.geode.internal.cache.DistributedRegion;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * A repository that writes to a single lucene index writer
@@ -170,6 +173,7 @@ public class IndexRepositoryImpl implements IndexRepository {
     }
   }
 
+  @Override
   public IndexWriter getWriter() {
     return writer;
   }

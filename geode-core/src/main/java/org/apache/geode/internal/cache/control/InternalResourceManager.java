@@ -14,25 +14,29 @@
  */
 package org.apache.geode.internal.cache.control;
 
+
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.CancelCriterion;
 import org.apache.geode.InternalGemFireError;
+import org.apache.geode.annotations.internal.MutableForTesting;
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.control.RebalanceFactory;
@@ -41,18 +45,17 @@ import org.apache.geode.cache.control.ResourceManager;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.internal.DistributionAdvisor.Profile;
 import org.apache.geode.distributed.internal.DistributionConfig;
-import org.apache.geode.distributed.internal.OverflowQueueWithDMStats;
-import org.apache.geode.distributed.internal.SerialQueuedExecutorWithDMStats;
+import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.internal.ClassPathLoader;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.control.ResourceAdvisor.ResourceManagerProfile;
 import org.apache.geode.internal.cache.partitioned.LoadProbe;
 import org.apache.geode.internal.cache.partitioned.SizedBasedLoadProbe;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.LoggingThreadGroup;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
+import org.apache.geode.internal.logging.CoreLoggingExecutors;
+import org.apache.geode.internal.monitoring.ThreadsMonitoring;
+import org.apache.geode.logging.internal.executors.LoggingExecutors;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * Implementation of ResourceManager with additional internal-only methods.
@@ -64,6 +67,8 @@ public class InternalResourceManager implements ResourceManager {
 
   final int MAX_RESOURCE_MANAGER_EXE_THREADS =
       Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "resource.manager.threads", 1);
+
+  private final Collection<CompletableFuture<Void>> startupTasks = new ArrayList<>();
 
   public enum ResourceType {
     HEAP_MEMORY(0x1), OFFHEAP_MEMORY(0x2), MEMORY(0x3), ALL(0xFFFFFFFF);
@@ -95,9 +100,10 @@ public class InternalResourceManager implements ResourceManager {
 
   private final Map<ResourceType, ResourceMonitor> resourceMonitors;
 
+  @MutableForTesting
   private static ResourceObserver observer = new ResourceObserverAdapter();
 
-  private static String PR_LOAD_PROBE_CLASS =
+  private static final String PR_LOAD_PROBE_CLASS =
       System.getProperty(DistributionConfig.GEMFIRE_PREFIX + "ResourceManager.PR_LOAD_PROBE_CLASS",
           SizedBasedLoadProbe.class.getName());
 
@@ -116,22 +122,8 @@ public class InternalResourceManager implements ResourceManager {
 
     // Create a new executor that other classes may use for handling resource
     // related tasks
-    final ThreadGroup threadGroup =
-        LoggingThreadGroup.createThreadGroup("ResourceManagerThreadGroup", logger);
-
-    ThreadFactory tf = new ThreadFactory() {
-      AtomicInteger ai = new AtomicInteger();
-
-      @Override
-      public Thread newThread(Runnable r) {
-        int tId = ai.getAndIncrement();
-        Thread thread = new Thread(threadGroup, r, "ResourceManagerRecoveryThread " + tId);
-        thread.setDaemon(true);
-        return thread;
-      }
-    };
-
-    this.scheduledExecutor = new ScheduledThreadPoolExecutor(MAX_RESOURCE_MANAGER_EXE_THREADS, tf);
+    this.scheduledExecutor = LoggingExecutors
+        .newScheduledThreadPool("ResourceManagerRecoveryThread ", MAX_RESOURCE_MANAGER_EXE_THREADS);
 
     // Initialize the load probe
     try {
@@ -143,22 +135,11 @@ public class InternalResourceManager implements ResourceManager {
 
     // Create a new executor the resource manager and the monitors it creates
     // can use to handle dispatching of notifications.
-    final ThreadGroup listenerInvokerthrdGrp =
-        LoggingThreadGroup.createThreadGroup("ResourceListenerInvokerThreadGroup", logger);
-
-    ThreadFactory eventProcessorFactory = new ThreadFactory() {
-      @Override
-      public Thread newThread(Runnable r) {
-        Thread thread = new Thread(listenerInvokerthrdGrp, r, "Notification Handler");
-        thread.setDaemon(true);
-        thread.setPriority(Thread.MAX_PRIORITY);
-        return thread;
-      }
-    };
-    BlockingQueue<Runnable> threadQ =
-        new OverflowQueueWithDMStats(this.stats.getResourceEventQueueStatHelper());
-    this.notifyExecutor = new SerialQueuedExecutorWithDMStats(threadQ,
-        this.stats.getResourceEventPoolStatHelper(), eventProcessorFactory);
+    this.notifyExecutor =
+        CoreLoggingExecutors.newSerialThreadPoolWithFeedStatistics("Notification Handler",
+            thread -> thread.setPriority(Thread.MAX_PRIORITY), null,
+            this.stats.getResourceEventPoolStatHelper(), getThreadMonitorObj(),
+            0, this.stats.getResourceEventQueueStatHelper());
 
     // Create the monitors
     Map<ResourceType, ResourceMonitor> tempMonitors = new HashMap<ResourceType, ResourceMonitor>();
@@ -239,13 +220,13 @@ public class InternalResourceManager implements ResourceManager {
   public void deliverEventFromRemote(final ResourceEvent event) {
     assert !event.isLocal();
 
-    if (this.cache.getLoggerI18n().fineEnabled()) {
-      this.cache.getLoggerI18n()
+    if (this.cache.getLogger().fineEnabled()) {
+      this.cache.getLogger()
           .fine("New remote event to deliver for member " + event.getMember() + ": event=" + event);
     }
 
-    if (this.cache.getLoggerI18n().fineEnabled()) {
-      this.cache.getLoggerI18n()
+    if (this.cache.getLogger().fineEnabled()) {
+      this.cache.getLogger()
           .fine("Remote event to deliver for member " + event.getMember() + ":" + event);
     }
 
@@ -294,8 +275,8 @@ public class InternalResourceManager implements ResourceManager {
       this.notifyExecutor.execute(runnable);
     } catch (RejectedExecutionException ignore) {
       if (!isClosed()) {
-        this.cache.getLoggerI18n()
-            .warning(LocalizedStrings.ResourceManager_REJECTED_EXECUTION_CAUSE_NOHEAP_EVENTS);
+        this.cache.getLogger()
+            .warning("No memory events will be delivered because of RejectedExecutionException");
       }
     }
   }
@@ -367,7 +348,7 @@ public class InternalResourceManager implements ResourceManager {
     }
     executor.shutdown();
     final int secToWait = Integer
-        .getInteger(DistributionConfig.GEMFIRE_PREFIX + "prrecovery-close-timeout", 120).intValue();
+        .getInteger(DistributionConfig.GEMFIRE_PREFIX + "prrecovery-close-timeout", 5).intValue();
     try {
       executor.awaitTermination(secToWait, TimeUnit.SECONDS);
     } catch (InterruptedException x) {
@@ -375,9 +356,14 @@ public class InternalResourceManager implements ResourceManager {
       logger.debug("Failed in interrupting the Resource Manager Thread due to interrupt");
     }
     if (!executor.isTerminated()) {
-      logger.warn(LocalizedMessage.create(
-          LocalizedStrings.ResourceManager_FAILED_TO_STOP_RESOURCE_MANAGER_THREADS,
-          new Object[] {secToWait}));
+      logger.warn("Failed to stop resource manager threads in {} seconds, forcing shutdown",
+          secToWait);
+      List<Runnable> remainingTasks = executor.shutdownNow();
+      remainingTasks.forEach(runnable -> {
+        if (runnable instanceof Future) {
+          ((Future) runnable).cancel(true);
+        }
+      });
     }
   }
 
@@ -394,7 +380,6 @@ public class InternalResourceManager implements ResourceManager {
    * particular region. This observer is called even the "rebalancing" is actually redundancy
    * recovery for a particular region.
    *
-   * @param observer
    */
   public static void setResourceObserver(ResourceObserver observer) {
     if (observer == null) {
@@ -414,43 +399,38 @@ public class InternalResourceManager implements ResourceManager {
   /**
    * For testing only. Receives callbacks for resource related events.
    */
-  public static interface ResourceObserver {
+  public interface ResourceObserver {
     /**
      * Indicates that rebalancing has started on a given region.
      *
-     * @param region
      */
-    public void rebalancingStarted(Region region);
+    void rebalancingStarted(Region region);
 
     /**
      * Indicates that rebalancing has finished on a given region.
      *
-     * @param region
      */
-    public void rebalancingFinished(Region region);
+    void rebalancingFinished(Region region);
 
     /**
      * Indicates that recovery has started on a given region.
      *
-     * @param region
      */
-    public void recoveryStarted(Region region);
+    void recoveryStarted(Region region);
 
     /**
      * Indicates that recovery has finished on a given region.
      *
-     * @param region
      */
-    public void recoveryFinished(Region region);
+    void recoveryFinished(Region region);
 
     /**
      * Indicated that a membership event triggered a recovery operation, but the recovery operation
      * will not be executed because there is already an existing recovery operation waiting to
      * happen on this region.
      *
-     * @param region
      */
-    public void recoveryConflated(PartitionedRegion region);
+    void recoveryConflated(PartitionedRegion region);
 
     /**
      * Indicates that a bucket is being moved from the source member to the target member.
@@ -460,7 +440,7 @@ public class InternalResourceManager implements ResourceManager {
      * @param source the member the bucket is moving from
      * @param target the member the bucket is moving to
      */
-    public void movingBucket(Region region, int bucketId, DistributedMember source,
+    void movingBucket(Region region, int bucketId, DistributedMember source,
         DistributedMember target);
 
     /**
@@ -471,7 +451,7 @@ public class InternalResourceManager implements ResourceManager {
      * @param source the member the bucket primary is moving from
      * @param target the member the bucket primary is moving to
      */
-    public void movingPrimary(Region region, int bucketId, DistributedMember source,
+    void movingPrimary(Region region, int bucketId, DistributedMember source,
         DistributedMember target);
   }
 
@@ -625,5 +605,36 @@ public class InternalResourceManager implements ResourceManager {
   @Override
   public float getEvictionHeapPercentage() {
     return getHeapMonitor().getEvictionThreshold();
+  }
+
+  private ThreadsMonitoring getThreadMonitorObj() {
+    DistributionManager distributionManager = this.cache.getDistributionManager();
+    if (distributionManager != null) {
+      return distributionManager.getThreadMonitoring();
+    } else {
+      return null;
+    }
+  }
+
+  /**
+   * Adds a task that represents an asynchronous action during startup
+   *
+   * @param startupTask the CompletableFuture startup task
+   */
+  public void addStartupTask(CompletableFuture<Void> startupTask) {
+    Objects.requireNonNull(startupTask);
+    startupTasks.add(startupTask);
+  }
+
+  /**
+   * Clears the startup tasks and returns a CompletableFuture that completes when all of the startup
+   * tasks complete.
+   *
+   * @return a CompletableFuture that completes when all of the startup tasks complete
+   */
+  public CompletableFuture<Void> allOfStartupTasks() {
+    CompletableFuture[] completableFutures = startupTasks.toArray(new CompletableFuture[0]);
+    startupTasks.clear();
+    return CompletableFuture.allOf(completableFutures);
   }
 }

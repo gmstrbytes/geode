@@ -34,7 +34,7 @@ import java.util.stream.Stream;
 import org.apache.commons.io.FileUtils;
 import org.apache.logging.log4j.Logger;
 
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.management.internal.configuration.utils.ZipUtils;
 
 /**
@@ -161,7 +161,7 @@ public class LogExporter {
           break;
         }
         if (result == LogFilter.LineFilterResult.LINE_ACCEPTED) {
-          size += line.length() + File.separator.length();
+          size += line.length() + System.lineSeparator().length();
         }
       }
     }
@@ -169,7 +169,7 @@ public class LogExporter {
   }
 
   List<Path> findLogFiles(Path workingDir) throws IOException {
-    Predicate<Path> logFileSelector = (Path file) -> file.toString().toLowerCase().endsWith(".log");
+    Predicate<Path> logFileSelector = (Path file) -> file.toString().toLowerCase().contains(".log");
     return findFiles(workingDir, logFileSelector);
   }
 

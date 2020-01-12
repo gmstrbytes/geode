@@ -14,7 +14,12 @@
  */
 package org.apache.geode.management.internal.cli.functions;
 
-import static org.apache.geode.internal.lang.SystemUtils.*;
+import static org.apache.geode.internal.lang.SystemUtils.getOsArchitecture;
+import static org.apache.geode.internal.lang.SystemUtils.getOsName;
+import static org.apache.geode.internal.lang.SystemUtils.getOsVersion;
+import static org.apache.geode.internal.lang.SystemUtils.isLinux;
+import static org.apache.geode.internal.lang.SystemUtils.isMacOSX;
+import static org.apache.geode.internal.lang.SystemUtils.isSolaris;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -26,12 +31,12 @@ import java.util.List;
 
 import org.apache.logging.log4j.Logger;
 
-import org.apache.geode.cache.execute.Function;
+import org.apache.geode.annotations.Immutable;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.distributed.DistributedSystem;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
-import org.apache.geode.internal.InternalEntity;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.cache.execute.InternalFunction;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.management.internal.cli.CliUtil;
 import org.apache.geode.management.internal.cli.CliUtil.DeflaterInflaterData;
 import org.apache.geode.management.internal.cli.GfshParser;
@@ -43,10 +48,11 @@ import org.apache.geode.management.internal.cli.i18n.CliStrings;
  * @since GemFire 7.0
  */
 @SuppressWarnings({"serial"})
-public class NetstatFunction implements Function, InternalEntity {
+public class NetstatFunction implements InternalFunction {
   private static final Logger logger = LogService.getLogger();
   private static final long serialVersionUID = 1L;
 
+  @Immutable
   public static final NetstatFunction INSTANCE = new NetstatFunction();
 
   private static final String ID = NetstatFunction.class.getName();
@@ -106,13 +112,11 @@ public class NetstatFunction implements Function, InternalEntity {
   }
 
   private static void addNetstatDefaultOptions(final List<String> cmdOptionsList) {
+    cmdOptionsList.add("-v");
+    cmdOptionsList.add("-a");
+    cmdOptionsList.add("-n");
     if (isLinux()) {
-      cmdOptionsList.add("-v");
-      cmdOptionsList.add("-a");
       cmdOptionsList.add("-e");
-    } else {
-      cmdOptionsList.add("-v");
-      cmdOptionsList.add("-a");
     }
   }
 
@@ -154,8 +158,12 @@ public class NetstatFunction implements Function, InternalEntity {
         .append(" output ###################").append(lineSeparator);
 
     if (isLinux() || isMacOSX() || isSolaris()) {
+      List<String> cmdOptionsList = new ArrayList<>();
+      cmdOptionsList.add(LSOF_COMMAND);
+      cmdOptionsList.add("-n");
+      cmdOptionsList.add("-P");
 
-      ProcessBuilder procBuilder = new ProcessBuilder(LSOF_COMMAND);
+      ProcessBuilder procBuilder = new ProcessBuilder(cmdOptionsList);
       try {
         Process lsof = procBuilder.start();
         InputStreamReader reader = new InputStreamReader(lsof.getInputStream());

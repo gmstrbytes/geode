@@ -15,11 +15,13 @@
 package org.apache.geode.internal.offheap;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.Assert.*;
-import static org.mockito.Mockito.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataInput;
+import java.io.DataOutput;
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.IOException;
@@ -46,41 +48,44 @@ import java.util.Vector;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
-import org.junit.runner.RunWith;
-import org.powermock.api.mockito.PowerMockito;
-import org.powermock.core.classloader.annotations.PowerMockIgnore;
-import org.powermock.core.classloader.annotations.PrepareForTest;
-import org.powermock.modules.junit4.PowerMockRunner;
 
+import org.apache.geode.DataSerializable;
 import org.apache.geode.DataSerializer;
 import org.apache.geode.Instantiator;
-import org.apache.geode.cache.CacheClosedException;
 import org.apache.geode.distributed.internal.ReplyMessage;
-import org.apache.geode.internal.DSCODE;
-import org.apache.geode.internal.DSFIDFactory;
-import org.apache.geode.internal.DataSerializableFixedID;
 import org.apache.geode.internal.DataSerializableJUnitTest.DataSerializableImpl;
 import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.InternalInstantiator;
 import org.apache.geode.internal.admin.remote.ShutdownAllResponse;
-import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.internal.cache.execute.data.CustId;
-import org.apache.geode.pdx.internal.EnumInfo;
-import org.apache.geode.pdx.internal.PdxType;
-import org.apache.geode.pdx.internal.TypeRegistry;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.internal.serialization.DSCODE;
+import org.apache.geode.internal.serialization.DSFIDSerializerImpl;
+import org.apache.geode.internal.serialization.DataSerializableFixedID;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.internal.serialization.Version;
 
 /**
  * Tests the DataType support for off-heap MemoryInspector.
  */
-@Category(UnitTest.class)
-@RunWith(PowerMockRunner.class)
-@PowerMockIgnore("*.UnitTest")
-@PrepareForTest({InternalInstantiator.class, Instantiator.class, DataSerializer.class,
-    GemFireCacheImpl.class, DSFIDFactory.class})
 public class DataTypeJUnitTest {
+  @BeforeClass
+  public static void beforeClass() {
+    Instantiator.register(new Instantiator(CustId.class, (short) 1) {
+      @Override
+      public DataSerializable newInstance() {
+        return new CustId();
+      }
+    });
+  }
+
+  @AfterClass
+  public static void afterClass() {
+    InternalInstantiator.unregister(CustId.class, (short) 1);
+  }
 
   @Test
   public void testDataSerializableFixedIDByte() throws IOException {
@@ -91,7 +96,9 @@ public class DataTypeJUnitTest {
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
     assertEquals(
-        "org.apache.geode.internal.DataSerializableFixedID:" + ReplyMessage.class.getName(), type);
+        "org.apache.geode.internal.serialization.DataSerializableFixedID:"
+            + ReplyMessage.class.getName(),
+        type);
   }
 
   @Test
@@ -103,37 +110,55 @@ public class DataTypeJUnitTest {
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
     assertEquals(
-        "org.apache.geode.internal.DataSerializableFixedID:" + ShutdownAllResponse.class.getName(),
+        "org.apache.geode.internal.serialization.DataSerializableFixedID:"
+            + ShutdownAllResponse.class
+                .getName(),
         type);
   }
 
   @Test
   public void testDataSerializableFixedIDInt() throws IOException, ClassNotFoundException {
-    Integer someDSFIDInt = new Integer(1);
+    assertFalse(
+        ((DSFIDSerializerImpl) InternalDataSerializer.getDSFIDSerializer()).getDsfidmap2()
+            .containsKey(DummyIntDataSerializableFixedID.INT_SIZE_id));
+    InternalDataSerializer.getDSFIDSerializer().registerDSFID(
+        DummyIntDataSerializableFixedID.INT_SIZE_id,
+        DummyIntDataSerializableFixedID.class);
+    assertTrue(
+        ((DSFIDSerializerImpl) InternalDataSerializer.getDSFIDSerializer()).getDsfidmap2()
+            .containsKey(DummyIntDataSerializableFixedID.INT_SIZE_id));
 
-    PowerMockito.mockStatic(DSFIDFactory.class);
-    when(DSFIDFactory.create(eq(someDSFIDInt), any())).thenReturn(someDSFIDInt);
-    DSFIDFactory.create(someDSFIDInt, null);
+    try {
+      DummyIntDataSerializableFixedID dummyObj = new DummyIntDataSerializableFixedID();
 
-    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-    DataOutputStream out = new DataOutputStream(baos);
-    DataSerializer.writeByte(DSCODE.DS_FIXED_ID_INT, out);
-    DataSerializer.writeInteger(someDSFIDInt, out);
-    byte[] bytes = baos.toByteArray();
-    String type = DataType.getDataType(bytes);
-    assertEquals("org.apache.geode.internal.DataSerializableFixedID:" + Integer.class.getName(),
-        type);
+      ByteArrayOutputStream baos = new ByteArrayOutputStream();
+      DataOutputStream out = new DataOutputStream(baos);
+      DataSerializer.writeObject(dummyObj, out);
+      byte[] bytes = baos.toByteArray();
+
+      String type = DataType.getDataType(bytes);
+      assertEquals("org.apache.geode.internal.serialization.DataSerializableFixedID:"
+          + DummyIntDataSerializableFixedID.class.getName(),
+          type);
+    } finally {
+      ((DSFIDSerializerImpl) InternalDataSerializer.getDSFIDSerializer()).getDsfidmap2()
+          .remove(DummyIntDataSerializableFixedID.INT_SIZE_id);
+      assertFalse(
+          ((DSFIDSerializerImpl) InternalDataSerializer.getDSFIDSerializer()).getDsfidmap2()
+              .containsKey(DummyIntDataSerializableFixedID.INT_SIZE_id));
+    }
   }
 
   @Test
   public void testDataSerializableFixedIDClass() throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    DataSerializer.writeByte(DSCODE.DS_NO_FIXED_ID, out);
+    DataSerializer.writeByte(DSCODE.DS_NO_FIXED_ID.toByte(), out);
     DataSerializer.writeClass(Integer.class, out);
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
-    assertEquals("org.apache.geode.internal.DataSerializableFixedID:" + Integer.class.getName(),
+    assertEquals("org.apache.geode.internal.serialization.DataSerializableFixedID:"
+        + Integer.class.getName(),
         type);
   }
 
@@ -591,7 +616,7 @@ public class DataTypeJUnitTest {
   public void testBooleanType() throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.BOOLEAN_TYPE);
+    out.writeByte(DSCODE.BOOLEAN_TYPE.toByte());
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
     assertEquals("java.lang.Boolean.class", type);
@@ -601,7 +626,7 @@ public class DataTypeJUnitTest {
   public void testCharacterType() throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.CHARACTER_TYPE);
+    out.writeByte(DSCODE.CHARACTER_TYPE.toByte());
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
     assertEquals("java.lang.Character.class", type);
@@ -611,7 +636,7 @@ public class DataTypeJUnitTest {
   public void testByteType() throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.BYTE_TYPE);
+    out.writeByte(DSCODE.BYTE_TYPE.toByte());
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
     assertEquals("java.lang.Byte.class", type);
@@ -621,7 +646,7 @@ public class DataTypeJUnitTest {
   public void testShortType() throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.SHORT_TYPE);
+    out.writeByte(DSCODE.SHORT_TYPE.toByte());
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
     assertEquals("java.lang.Short.class", type);
@@ -631,7 +656,7 @@ public class DataTypeJUnitTest {
   public void testIntegerType() throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.INTEGER_TYPE);
+    out.writeByte(DSCODE.INTEGER_TYPE.toByte());
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
     assertEquals("java.lang.Integer.class", type);
@@ -641,7 +666,7 @@ public class DataTypeJUnitTest {
   public void testLongType() throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.LONG_TYPE);
+    out.writeByte(DSCODE.LONG_TYPE.toByte());
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
     assertEquals("java.lang.Long.class", type);
@@ -651,7 +676,7 @@ public class DataTypeJUnitTest {
   public void testFloatType() throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.FLOAT_TYPE);
+    out.writeByte(DSCODE.FLOAT_TYPE.toByte());
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
     assertEquals("java.lang.Float.class", type);
@@ -661,7 +686,7 @@ public class DataTypeJUnitTest {
   public void testDoubleType() throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.DOUBLE_TYPE);
+    out.writeByte(DSCODE.DOUBLE_TYPE.toByte());
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
     assertEquals("java.lang.Double.class", type);
@@ -671,7 +696,7 @@ public class DataTypeJUnitTest {
   public void testVoidType() throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.VOID_TYPE);
+    out.writeByte(DSCODE.VOID_TYPE.toByte());
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
     assertEquals("java.lang.Void.class", type);
@@ -684,7 +709,7 @@ public class DataTypeJUnitTest {
     byte someUserClassId = 1;
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.USER_CLASS);
+    out.writeByte(DSCODE.USER_CLASS.toByte());
     out.writeByte(someUserClassId);
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
@@ -696,7 +721,7 @@ public class DataTypeJUnitTest {
     short someUserClass2Id = 1;
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.USER_CLASS_2);
+    out.writeByte(DSCODE.USER_CLASS_2.toByte());
     out.writeShort(someUserClass2Id);
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
@@ -708,7 +733,7 @@ public class DataTypeJUnitTest {
     int someUserClass4Id = 1;
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.USER_CLASS_4);
+    out.writeByte(DSCODE.USER_CLASS_4.toByte());
     out.writeInt(someUserClass4Id);
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
@@ -717,19 +742,11 @@ public class DataTypeJUnitTest {
 
   @Test
   public void getDataTypeShouldReturnUserDataSeriazliable() throws IOException {
-    Instantiator mockInstantiator = PowerMockito.mock(Instantiator.class);
-    doReturn(CustId.class).when(mockInstantiator).getInstantiatedClass();
-    mockInstantiator.getInstantiatedClass();
-
     int someClassId = 1;
-
-    PowerMockito.mockStatic(InternalInstantiator.class);
-    when(InternalInstantiator.getClassId(mockInstantiator.getClass())).thenReturn(someClassId);
-    when(InternalInstantiator.getInstantiator(someClassId)).thenReturn(mockInstantiator);
 
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.USER_DATA_SERIALIZABLE);
+    out.writeByte(DSCODE.USER_DATA_SERIALIZABLE.toByte());
     out.writeByte(someClassId);
 
     byte[] bytes = baos.toByteArray();
@@ -741,19 +758,11 @@ public class DataTypeJUnitTest {
 
   @Test
   public void getDataTypeShouldReturnUserDataSeriazliable2() throws IOException {
-    Instantiator mockInstantiator = PowerMockito.mock(Instantiator.class);
-    doReturn(CustId.class).when(mockInstantiator).getInstantiatedClass();
-    mockInstantiator.getInstantiatedClass();
-
-    int someClassId = 1;
-
-    PowerMockito.mockStatic(InternalInstantiator.class);
-    when(InternalInstantiator.getClassId(mockInstantiator.getClass())).thenReturn(someClassId);
-    when(InternalInstantiator.getInstantiator(someClassId)).thenReturn(mockInstantiator);
+    short someClassId = 1;
 
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.USER_DATA_SERIALIZABLE_2);
+    out.writeByte(DSCODE.USER_DATA_SERIALIZABLE_2.toByte());
     out.writeShort(someClassId);
 
     byte[] bytes = baos.toByteArray();
@@ -765,19 +774,11 @@ public class DataTypeJUnitTest {
 
   @Test
   public void getDataTypeShouldReturnUserDataSeriazliable4() throws IOException {
-    Instantiator mockInstantiator = PowerMockito.mock(Instantiator.class);
-    doReturn(CustId.class).when(mockInstantiator).getInstantiatedClass();
-    mockInstantiator.getInstantiatedClass();
-
     int someClassId = 1;
-
-    PowerMockito.mockStatic(InternalInstantiator.class);
-    when(InternalInstantiator.getClassId(mockInstantiator.getClass())).thenReturn(someClassId);
-    when(InternalInstantiator.getInstantiator(someClassId)).thenReturn(mockInstantiator);
 
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.USER_DATA_SERIALIZABLE_4);
+    out.writeByte(DSCODE.USER_DATA_SERIALIZABLE_4.toByte());
     out.writeInt(someClassId);
 
     byte[] bytes = baos.toByteArray();
@@ -816,136 +817,54 @@ public class DataTypeJUnitTest {
   @Test
   public void getDataTypeShouldReturnPDXType() throws IOException {
     int somePdxTypeInt = 1;
-    PdxType somePdxType = mock(PdxType.class);
-    doReturn("PDXType").when(somePdxType).getClassName();
-
-    TypeRegistry mockTypeRegistry = mock(TypeRegistry.class);
-    when(mockTypeRegistry.getType(somePdxTypeInt)).thenReturn(somePdxType);
-
-    GemFireCacheImpl pdxInstance = mock(GemFireCacheImpl.class);
-    when(pdxInstance.getPdxRegistry()).thenReturn(mockTypeRegistry);
-
-    PowerMockito.mockStatic(GemFireCacheImpl.class);
-    when(GemFireCacheImpl.getForPdx(anyString())).thenReturn(pdxInstance);
-
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.PDX);
+    out.writeByte(DSCODE.PDX.toByte());
     out.writeInt(somePdxTypeInt);
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
 
-    assertThat(type).isEqualTo("org.apache.geode.pdx.PdxInstance:PDXType");
-  }
-
-  @Test
-  public void getDataTypeShouldReturnUnknownIfPDXTypeIsNull() throws IOException {
-    int somePdxTypeInt = 1;
-    PdxType somePdxType = null;
-
-    TypeRegistry mockTypeRegistry = mock(TypeRegistry.class);
-    when(mockTypeRegistry.getType(somePdxTypeInt)).thenReturn(somePdxType);
-
-    GemFireCacheImpl pdxInstance = mock(GemFireCacheImpl.class);
-    when(pdxInstance.getPdxRegistry()).thenReturn(mockTypeRegistry);
-
-    PowerMockito.mockStatic(GemFireCacheImpl.class);
-    when(GemFireCacheImpl
-        .getForPdx("PDX registry is unavailable because the Cache has been closed."))
-            .thenReturn(pdxInstance);
-
-    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-    DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.PDX);
-    out.writeInt(somePdxTypeInt);
-    byte[] bytes = baos.toByteArray();
-    String type = DataType.getDataType(bytes);
-
-    assertThat(type).isEqualTo("org.apache.geode.pdx.PdxInstance: unknown id=" + somePdxTypeInt);
-  }
-
-  @Test
-  public void getDataTypeShouldReturnPDXRegistryClosedForPDXTypeWhenCacheIsClosed()
-      throws IOException {
-    int somePdxTypeInt = 1;
-
-    PowerMockito.mockStatic(GemFireCacheImpl.class);
-    when(GemFireCacheImpl
-        .getForPdx("PDX registry is unavailable because the Cache has been closed."))
-            .thenThrow(CacheClosedException.class);
-
-    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-    DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.PDX);
-    out.writeInt(somePdxTypeInt);
-    byte[] bytes = baos.toByteArray();
-    String type = DataType.getDataType(bytes);
-
-    assertThat(type).isEqualTo("org.apache.geode.pdx.PdxInstance:PdxRegistryClosed");
+    assertThat(type).isEqualTo("pdxType:1");
   }
 
   @Test
   public void getDataTypeShouldReturnPDXEnumType() throws IOException {
     int somePdxEnumId = 1;
-    EnumInfo somePdxEnumInfo = mock(EnumInfo.class);
-    doReturn("PDXENUM").when(somePdxEnumInfo).getClassName();
-
-    TypeRegistry mockTypeRegistry = mock(TypeRegistry.class);
-    when(mockTypeRegistry.getEnumInfoById(0)).thenReturn(somePdxEnumInfo);
-
-    GemFireCacheImpl pdxInstance = mock(GemFireCacheImpl.class);
-    when(pdxInstance.getPdxRegistry()).thenReturn(mockTypeRegistry);
-
-    PowerMockito.mockStatic(GemFireCacheImpl.class);
-    when(GemFireCacheImpl
-        .getForPdx("PDX registry is unavailable because the Cache has been closed."))
-            .thenReturn(pdxInstance);
-
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.PDX_ENUM);
-    out.writeInt(somePdxEnumId);
+    InternalDataSerializer.writePdxEnumId(somePdxEnumId, out);
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
 
-    assertThat(type).isEqualTo("PdxRegistry/java.lang.Enum:PDXENUM");
-  }
-
-  @Test
-  public void getDataTypeShouldReturnPDXRegistryClosedForEnumTypeWhenCacheIsClosed()
-      throws IOException {
-    int someArrayLength = 1;
-
-    PowerMockito.mockStatic(GemFireCacheImpl.class);
-    when(GemFireCacheImpl
-        .getForPdx("PDX registry is unavailable because the Cache has been closed."))
-            .thenThrow(CacheClosedException.class);
-
-    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-    DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.PDX_ENUM);
-    out.writeInt(someArrayLength);
-    byte[] bytes = baos.toByteArray();
-    String type = DataType.getDataType(bytes);
-
-    assertThat(type).isEqualTo("PdxRegistry/java.lang.Enum:PdxRegistryClosed");
+    assertThat(type).isEqualTo("pdxEnum:1");
   }
 
   @Test
   public void getDataTypeShouldReturnGemfireEnum() throws IOException {
-    PowerMockito.mockStatic(DataSerializer.class);
-    when(DataSerializer.readString(any(DataInput.class))).thenReturn("GEMFIRE_ENUM");
-
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.GEMFIRE_ENUM);
+    out.writeByte(DSCODE.GEMFIRE_ENUM.toByte());
+    DataSerializer.writeString(DSCODE.GEMFIRE_ENUM.name(), out);
+
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
 
     assertThat(type).isEqualTo("java.lang.Enum:GEMFIRE_ENUM");
   }
 
-  // TODO:PDX_INLINE_ENUM
+  @Test
+  public void getDataTypeShouldReturnPdxInlineEnum() throws IOException {
+    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    DataOutputStream out = new DataOutputStream(baos);
+    out.writeByte(DSCODE.PDX_INLINE_ENUM.toByte());
+    DataSerializer.writeString(DSCODE.PDX_INLINE_ENUM.name(), out);
+
+    byte[] bytes = baos.toByteArray();
+    String type = DataType.getDataType(bytes);
+
+    assertThat(type).isEqualTo("java.lang.Enum:PDX_INLINE_ENUM");
+  }
+
   @Test
   public void testBigInteger() throws IOException {
     BigInteger value = BigInteger.ZERO;
@@ -983,7 +902,7 @@ public class DataTypeJUnitTest {
   public void testSQLTimestamp() throws IOException {
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(baos);
-    out.writeByte(DSCODE.TIMESTAMP);
+    out.writeByte(DSCODE.TIMESTAMP.toByte());
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
     assertEquals("java.sql.Timestamp", type);
@@ -999,5 +918,33 @@ public class DataTypeJUnitTest {
     byte[] bytes = baos.toByteArray();
     String type = DataType.getDataType(bytes);
     assertThat(type).isEqualTo("Unknown header byte: " + unknownType);
+  }
+
+  public static class DummyIntDataSerializableFixedID implements DataSerializableFixedID {
+    public DummyIntDataSerializableFixedID() {}
+
+    static final int INT_SIZE_id = 66000;
+
+    @Override
+    public int getDSFID() {
+      return INT_SIZE_id;
+    }
+
+    @Override
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+
+    }
+
+    @Override
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+
+    }
+
+    @Override
+    public Version[] getSerializationVersions() {
+      return null;
+    }
   }
 }

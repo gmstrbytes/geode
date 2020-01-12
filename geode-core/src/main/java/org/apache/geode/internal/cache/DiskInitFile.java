@@ -55,7 +55,6 @@ import org.apache.geode.CancelCriterion;
 import org.apache.geode.CancelException;
 import org.apache.geode.DataSerializer;
 import org.apache.geode.Instantiator;
-import org.apache.geode.InternalGemFireException;
 import org.apache.geode.cache.DiskAccessException;
 import org.apache.geode.cache.EvictionAction;
 import org.apache.geode.cache.EvictionAlgorithm;
@@ -66,7 +65,6 @@ import org.apache.geode.internal.HeapDataOutputStream;
 import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.InternalInstantiator;
 import org.apache.geode.internal.InternalInstantiator.InstantiatorAttributesHolder;
-import org.apache.geode.internal.Version;
 import org.apache.geode.internal.cache.persistence.CanonicalIdHolder;
 import org.apache.geode.internal.cache.persistence.DiskExceptionHandler;
 import org.apache.geode.internal.cache.persistence.DiskInitFileInterpreter;
@@ -80,9 +78,9 @@ import org.apache.geode.internal.cache.versions.DiskRegionVersionVector;
 import org.apache.geode.internal.cache.versions.RegionVersionHolder;
 import org.apache.geode.internal.cache.versions.RegionVersionVector;
 import org.apache.geode.internal.concurrent.ConcurrentHashSet;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * Does all the IF file work for a DiskStoreImpl.
@@ -446,8 +444,8 @@ public class DiskInitFile implements DiskInitFileInterpreter {
 
         this.gotEOF = parser.gotEOF();
         this.nextSeekPosition = dis.getCount();
-        if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY)) {
-          logger.trace(LogMarker.PERSIST_RECOVERY, "liveRecordCount={} totalRecordCount={}",
+        if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
+          logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE, "liveRecordCount={} totalRecordCount={}",
               this.ifLiveRecordCount, this.ifTotalRecordCount);
         }
       } finally {
@@ -462,9 +460,6 @@ public class DiskInitFile implements DiskInitFileInterpreter {
         if (drv.getMyPersistentID() != null || drv.getMyInitializingID() != null) {
           // Prepare each region we found in the init file for early recovery.
           if (drv.isBucket() || !getDiskStore().getOwnedByRegion()) {
-            if (drv.isBucket() && !drv.getActualLruAlgorithm().isNone()) {
-              drv.prlruStats = getDiskStore().getOrCreatePRLRUStats(drv);
-            }
             getDiskStore().getStats().incUncreatedRecoveredRegions(1);
             drv.setRecoveredEntryMap(RegionMapFactory.createVM(drv, getDiskStore(),
                 getDiskStore().getInternalRegionArguments()));
@@ -481,17 +476,17 @@ public class DiskInitFile implements DiskInitFileInterpreter {
     } catch (EOFException ex) {
       // ignore since a partial record write can be caused by a crash
       // throw new
-      // DiskAccessException(LocalizedStrings.Oplog_FAILED_READING_FILE_DURING_RECOVERY_FROM_0
-      // .toLocalizedString(this.ifFile.getPath()), ex, this.parent);
+      // DiskAccessException(String.format("Failed to read file during recovery from %s",
+      // this.ifFile.getPath()), ex, this.parent);
     } catch (ClassNotFoundException ex) {
       throw new DiskAccessException(
-          LocalizedStrings.Oplog_FAILED_READING_FILE_DURING_RECOVERY_FROM_0
-              .toLocalizedString(this.ifFile.getPath()),
+          String.format("Failed to read file during recovery from %s",
+              this.ifFile.getPath()),
           ex, this.parent);
     } catch (IOException ex) {
       throw new DiskAccessException(
-          LocalizedStrings.Oplog_FAILED_READING_FILE_DURING_RECOVERY_FROM_0
-              .toLocalizedString(this.ifFile.getPath()),
+          String.format("Failed to read file during recovery from %s",
+              this.ifFile.getPath()),
           ex, this.parent);
     } catch (CancelException ignore) {
       if (logger.isDebugEnabled()) {
@@ -509,6 +504,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
     return result;
   }
 
+  @Override
   public void cmnClearRegion(long drId, long clearOplogEntryId) {
     DiskRegionView drv = getDiskRegionById(drId);
     if (drv.getClearOplogEntryId() == DiskStoreImpl.INVALID_ID) {
@@ -522,6 +518,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
     }
   }
 
+  @Override
   public void cmnClearRegion(long drId,
       ConcurrentHashMap<DiskStoreID, RegionVersionHolder<DiskStoreID>> memberToVersion) {
     DiskRegionView drv = getDiskRegionById(drId);
@@ -551,6 +548,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
     }
   }
 
+  @Override
   public void cmnCreateRegion(long drId, String regName) {
     recoverDiskRegion(drId, regName);
     this.liveRegions++;
@@ -558,6 +556,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
     this.ifTotalRecordCount++;
   }
 
+  @Override
   public void cmnRegionConfig(long drId, byte lruAlgorithm, byte lruAction, int lruLimit,
       int concurrencyLevel, int initialCapacity, float loadFactor, boolean statisticsEnabled,
       boolean isBucket, EnumSet<DiskRegionFlag> flags, String partitionName, int startingBucketId,
@@ -586,14 +585,15 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       this.ifLiveRecordCount++;
       this.ifTotalRecordCount++;
     } else {
-      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY)) {
-        logger.trace(LogMarker.PERSIST_RECOVERY, "bad disk region id!");
+      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
+        logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE, "bad disk region id!");
       } else {
         throw new IllegalStateException("bad disk region id");
       }
     }
   }
 
+  @Override
   public boolean cmnPRCreate(String name, PRPersistentConfig config) {
     if (this.prMap.put(name, config) == null) {
       this.ifLiveRecordCount++;
@@ -605,10 +605,12 @@ public class DiskInitFile implements DiskInitFileInterpreter {
     return false;
   }
 
+  @Override
   public void cmnGemfireVersion(Version version) {
     this.gfversion = version;
   }
 
+  @Override
   public boolean cmnPRDestroy(String name) {
     if (this.prMap.remove(name) != null) {
       this.ifLiveRecordCount--;
@@ -626,6 +628,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
     this.ifTotalRecordCount++;
   }
 
+  @Override
   public void cmnRmMemberId(long drId, PersistentMemberID pmid) {
     DiskRegionView dr = getDiskRegionById(drId);
     if (dr != null) {
@@ -640,14 +643,15 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       this.ifLiveRecordCount--;
       this.ifTotalRecordCount++;
     } else {
-      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY)) {
-        logger.trace(LogMarker.PERSIST_RECOVERY, "bad disk region id!");
+      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
+        logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE, "bad disk region id!");
       } else {
         throw new IllegalStateException("bad disk region id");
       }
     }
   }
 
+  @Override
   public void cmnOfflineMemberId(long drId, PersistentMemberID pmid) {
     DiskRegionView dr = getDiskRegionById(drId);
     if (dr != null) {
@@ -658,14 +662,15 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       this.ifLiveRecordCount++;
       this.ifTotalRecordCount++;
     } else {
-      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY)) {
-        logger.trace(LogMarker.PERSIST_RECOVERY, "bad disk region id!");
+      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
+        logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE, "bad disk region id!");
       } else {
         throw new IllegalStateException("bad disk region id");
       }
     }
   }
 
+  @Override
   public void cmdOfflineAndEqualMemberId(long drId, PersistentMemberID pmid) {
     DiskRegionView dr = getDiskRegionById(drId);
     if (dr != null) {
@@ -684,14 +689,15 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       this.ifLiveRecordCount++;
       this.ifTotalRecordCount++;
     } else {
-      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY)) {
-        logger.trace(LogMarker.PERSIST_RECOVERY, "bad disk region id!");
+      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
+        logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE, "bad disk region id!");
       } else {
         throw new IllegalStateException("bad disk region id");
       }
     }
   }
 
+  @Override
   public void cmnOnlineMemberId(long drId, PersistentMemberID pmid) {
     DiskRegionView dr = getDiskRegionById(drId);
     if (dr != null) {
@@ -702,14 +708,15 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       this.ifLiveRecordCount++;
       this.ifTotalRecordCount++;
     } else {
-      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY)) {
-        logger.trace(LogMarker.PERSIST_RECOVERY, "bad disk region id!");
+      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
+        logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE, "bad disk region id!");
       } else {
         throw new IllegalStateException("bad disk region id");
       }
     }
   }
 
+  @Override
   public void cmnDataSerializerId(Class dsc) {
     if (dsc != null) {
       DataSerializer ds = InternalDataSerializer.register(dsc, /* dsId, */ true);
@@ -719,6 +726,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
     this.ifTotalRecordCount++;
   }
 
+  @Override
   public void cmnInstantiatorId(int id, Class c, Class ic) {
     if (c != null && ic != null) {
       InternalInstantiator.register(c, ic, id, true);
@@ -728,6 +736,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
     this.ifTotalRecordCount++;
   }
 
+  @Override
   public void cmnInstantiatorId(int id, String cn, String icn) {
     if (cn != null && icn != null) {
       InternalInstantiator.register(cn, icn, id, true);
@@ -737,24 +746,28 @@ public class DiskInitFile implements DiskInitFileInterpreter {
     this.ifTotalRecordCount++;
   }
 
+  @Override
   public void cmnCrfCreate(long oplogId) {
     this.crfIds.add(oplogId);
     this.ifLiveRecordCount++;
     this.ifTotalRecordCount++;
   }
 
+  @Override
   public void cmnDrfCreate(long oplogId) {
     this.drfIds.add(oplogId);
     this.ifLiveRecordCount++;
     this.ifTotalRecordCount++;
   }
 
+  @Override
   public void cmnKrfCreate(long oplogId) {
     this.krfIds.add(oplogId);
     this.ifLiveRecordCount++;
     this.ifTotalRecordCount++;
   }
 
+  @Override
   public boolean cmnCrfDelete(long oplogId) {
     if (this.krfIds.remove(oplogId)) {
       this.ifLiveRecordCount--;
@@ -769,6 +782,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
     }
   }
 
+  @Override
   public boolean cmnDrfDelete(long oplogId) {
     if (this.drfIds.remove(oplogId)) {
       this.ifLiveRecordCount--;
@@ -935,7 +949,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       writeIFRecord(bb, false); // don't do stats for these small records
     } catch (IOException ex) {
       DiskAccessException dae = new DiskAccessException(
-          LocalizedStrings.DiskInitFile_FAILED_INIT_FILE_WRITE_BECAUSE_0.toLocalizedString(ex),
+          String.format("Failed writing data to initialization file because: %s", ex),
           this.parent);
       if (!this.compactInProgress) {
         this.parent.handleDiskAccessException(dae);
@@ -955,7 +969,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       writeIFRecord(bb, false); // don't do stats for these small records
     } catch (IOException ex) {
       DiskAccessException dae = new DiskAccessException(
-          LocalizedStrings.DiskInitFile_FAILED_INIT_FILE_WRITE_BECAUSE_0.toLocalizedString(ex),
+          String.format("Failed writing data to initialization file because: %s", ex),
           this.parent);
       if (!this.compactInProgress) {
         this.parent.handleDiskAccessException(dae);
@@ -974,7 +988,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       writeIFRecord(bb, false); // don't do stats for these small records
     } catch (IOException ex) {
       DiskAccessException dae = new DiskAccessException(
-          LocalizedStrings.DiskInitFile_FAILED_INIT_FILE_WRITE_BECAUSE_0.toLocalizedString(ex),
+          String.format("Failed writing data to initialization file because: %s", ex),
           this.parent);
       if (!this.compactInProgress) {
         this.parent.handleDiskAccessException(dae);
@@ -998,7 +1012,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       writeIFRecord(hdos, true);
     } catch (IOException ex) {
       DiskAccessException dae = new DiskAccessException(
-          LocalizedStrings.DiskInitFile_FAILED_INIT_FILE_WRITE_BECAUSE_0.toLocalizedString(ex),
+          String.format("Failed writing data to initialization file because: %s", ex),
           this.parent);
       if (!this.compactInProgress) {
         this.parent.handleDiskAccessException(dae);
@@ -1025,7 +1039,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       writeIFRecord(hdos, true);
     } catch (IOException ex) {
       DiskAccessException dae = new DiskAccessException(
-          LocalizedStrings.DiskInitFile_FAILED_INIT_FILE_WRITE_BECAUSE_0.toLocalizedString(ex),
+          String.format("Failed writing data to initialization file because: %s", ex),
           this.parent);
       if (!this.compactInProgress) {
         this.parent.handleDiskAccessException(dae);
@@ -1049,7 +1063,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       writeIFRecord(hdos, true);
     } catch (IOException ex) {
       DiskAccessException dae = new DiskAccessException(
-          LocalizedStrings.DiskInitFile_FAILED_INIT_FILE_WRITE_BECAUSE_0.toLocalizedString(ex),
+          String.format("Failed writing data to initialization file because: %s", ex),
           this.parent);
       if (!this.compactInProgress) {
         this.parent.handleDiskAccessException(dae);
@@ -1076,7 +1090,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       writeIFRecord(bb, doStats);
     } catch (IOException ex) {
       DiskAccessException dae = new DiskAccessException(
-          LocalizedStrings.DiskInitFile_FAILED_INIT_FILE_WRITE_BECAUSE_0.toLocalizedString(ex),
+          String.format("Failed writing data to initialization file because: %s", ex),
           this.parent);
       if (!this.compactInProgress) {
         this.parent.handleDiskAccessException(dae);
@@ -1149,8 +1163,8 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       }
       this.ifTotalRecordCount++;
     } else {
-      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY)) {
-        logger.trace(LogMarker.PERSIST_RECOVERY, "bad disk region id!");
+      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
+        logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE, "bad disk region id!");
       } else {
         throw new IllegalStateException("bad disk region id");
       }
@@ -1165,8 +1179,8 @@ public class DiskInitFile implements DiskInitFileInterpreter {
     if (dr != null) {
       dr.markInitialized();
     } else {
-      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY)) {
-        logger.trace(LogMarker.PERSIST_RECOVERY, "bad disk region id!");
+      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
+        logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE, "bad disk region id!");
       } else {
         throw new IllegalStateException("bad disk region id");
       }
@@ -1179,8 +1193,8 @@ public class DiskInitFile implements DiskInitFileInterpreter {
     if (dr != null) {
       dr.markBeginDestroyRegion();
     } else {
-      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY)) {
-        logger.trace(LogMarker.PERSIST_RECOVERY, "bad disk region id!");
+      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
+        logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE, "bad disk region id!");
       } else {
         throw new IllegalStateException("bad disk region id");
       }
@@ -1219,8 +1233,8 @@ public class DiskInitFile implements DiskInitFileInterpreter {
 
       dr.markEndDestroyRegion();
     } else {
-      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY)) {
-        logger.trace(LogMarker.PERSIST_RECOVERY, "bad disk region id!");
+      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
+        logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE, "bad disk region id!");
       } else {
         throw new IllegalStateException("bad disk region id");
       }
@@ -1282,8 +1296,8 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       writeIFRecord(bb);
     } catch (IOException ex) {
       throw new DiskAccessException(
-          LocalizedStrings.DiskInitFile_FAILED_SAVING_INSTANTIATOR_TO_DISK_BECAUSE_0
-              .toLocalizedString(ex),
+          String.format("Failed saving instantiator to disk because: %s",
+              ex),
           this.parent);
     } finally {
       unlock(true);
@@ -1336,8 +1350,8 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       writeIFRecord(bb);
     } catch (IOException ex) {
       throw new DiskAccessException(
-          LocalizedStrings.DiskInitFile_FAILED_SAVING_DATA_SERIALIZER_TO_DISK_BECAUSE_0
-              .toLocalizedString(ex),
+          String.format("Failed saving data serializer to disk because: %s",
+              ex),
           this.parent);
     } finally {
       unlock(true);
@@ -1378,18 +1392,13 @@ public class DiskInitFile implements DiskInitFileInterpreter {
 
   private void writeIFRecord(ByteBuffer bb, boolean doStats) throws IOException {
     assert lock.isHeldByCurrentThread();
-    // TODO soplog - this behavior isn't right.
-    // it should throw an exception or something.
     if (this.closed) {
       throw new DiskAccessException("The disk store is closed", parent);
     }
-    // if (this.closed) {
-    // throw new DiskAccessException("Init file is closed!", parent);
-    // }
 
     this.ifRAF.write(bb.array(), 0, bb.position());
-    if (logger.isTraceEnabled(LogMarker.PERSIST_WRITES)) {
-      logger.trace(LogMarker.PERSIST_WRITES, "DiskInitFile writeIFRecord bb[0] = {}",
+    if (logger.isTraceEnabled(LogMarker.PERSIST_WRITES_VERBOSE)) {
+      logger.trace(LogMarker.PERSIST_WRITES_VERBOSE, "DiskInitFile writeIFRecord bb[0] = {}",
           bb.array()[0]);
     }
     if (doStats) {
@@ -1405,8 +1414,8 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       throw new DiskAccessException("The disk store is closed", parent);
     }
     hdos.sendTo(this.ifRAF);
-    if (logger.isTraceEnabled(LogMarker.PERSIST_WRITES)) {
-      logger.trace(LogMarker.PERSIST_WRITES, "DiskInitFile writeIFRecord HDOS");
+    if (logger.isTraceEnabled(LogMarker.PERSIST_WRITES_VERBOSE)) {
+      logger.trace(LogMarker.PERSIST_WRITES_VERBOSE, "DiskInitFile writeIFRecord HDOS");
     }
     if (doStats) {
       this.ifLiveRecordCount++;
@@ -1541,7 +1550,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       }
     } catch (IOException ex) {
       throw new DiskAccessException(
-          LocalizedStrings.DiskRegion_COULD_NOT_OPEN_0.toLocalizedString(this.ifFile.getPath()), ex,
+          String.format("Could not open %s.", this.ifFile.getPath()), ex,
           this.parent);
     }
   }
@@ -1573,7 +1582,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       }
     } catch (IOException ex) {
       throw new DiskAccessException(
-          LocalizedStrings.DiskRegion_COULD_NOT_OPEN_0.toLocalizedString(this.ifFile.getPath()), ex,
+          String.format("Could not open %s.", this.ifFile.getPath()), ex,
           this.parent);
     }
   }
@@ -1675,7 +1684,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       writeIFRecord(bb, false); // don't do stats for these small records
     } catch (IOException ex) {
       DiskAccessException dae = new DiskAccessException(
-          LocalizedStrings.DiskInitFile_FAILED_INIT_FILE_WRITE_BECAUSE_0.toLocalizedString(ex),
+          String.format("Failed writing data to initialization file because: %s", ex),
           this.parent);
       if (!this.compactInProgress) {
         this.parent.handleDiskAccessException(dae);
@@ -1695,7 +1704,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       writeIFRecord(hdos, false); // don't do stats for these small records
     } catch (IOException ex) {
       DiskAccessException dae = new DiskAccessException(
-          LocalizedStrings.DiskInitFile_FAILED_INIT_FILE_WRITE_BECAUSE_0.toLocalizedString(ex),
+          String.format("Failed writing data to initialization file because: %s", ex),
           this.parent);
       if (!this.compactInProgress) {
         this.parent.handleDiskAccessException(dae);
@@ -1732,7 +1741,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       writeIFRecord(bb, false); // don't do stats for these small records
     } catch (IOException ex) {
       DiskAccessException dae = new DiskAccessException(
-          LocalizedStrings.DiskInitFile_FAILED_INIT_FILE_WRITE_BECAUSE_0.toLocalizedString(ex),
+          String.format("Failed writing data to initialization file because: %s", ex),
           this.parent);
       if (!this.compactInProgress) {
         this.parent.handleDiskAccessException(dae);
@@ -1757,7 +1766,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       writeIFRecord(hdos, false);
     } catch (IOException ex) {
       DiskAccessException dae = new DiskAccessException(
-          LocalizedStrings.DiskInitFile_FAILED_INIT_FILE_WRITE_BECAUSE_0.toLocalizedString(ex),
+          String.format("Failed writing data to initialization file because: %s", ex),
           this.parent);
       if (!this.compactInProgress) {
         this.parent.handleDiskAccessException(dae);
@@ -1776,7 +1785,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       writeIFRecord(hdos, false);
     } catch (IOException ex) {
       DiskAccessException dae = new DiskAccessException(
-          LocalizedStrings.DiskInitFile_FAILED_INIT_FILE_WRITE_BECAUSE_0.toLocalizedString(ex),
+          String.format("Failed writing data to initialization file because: %s", ex),
           this.parent);
       if (!this.compactInProgress) {
         this.parent.handleDiskAccessException(dae);
@@ -1795,7 +1804,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       writeIFRecord(hdos, true);
     } catch (IOException ex) {
       DiskAccessException dae = new DiskAccessException(
-          LocalizedStrings.DiskInitFile_FAILED_INIT_FILE_WRITE_BECAUSE_0.toLocalizedString(ex),
+          String.format("Failed writing data to initialization file because: %s", ex),
           this.parent);
       if (!this.compactInProgress) {
         this.parent.handleDiskAccessException(dae);
@@ -1849,7 +1858,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       return hdos.toByteArray();
     } catch (IOException ex) {
       throw new DiskAccessException(
-          LocalizedStrings.DiskInitFile_FAILED_INIT_FILE_WRITE_BECAUSE_0.toLocalizedString(ex),
+          String.format("Failed writing data to initialization file because: %s", ex),
           this.parent);
     }
   }
@@ -1863,13 +1872,13 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       return result;
     } catch (IOException io) {
       throw new DiskAccessException(
-          LocalizedStrings.Oplog_FAILED_READING_FILE_DURING_RECOVERY_FROM_0
-              .toLocalizedString(this.ifFile.getPath()),
+          String.format("Failed to read file during recovery from %s",
+              this.ifFile.getPath()),
           io, this.parent);
     } catch (ClassNotFoundException cnf) {
       throw new DiskAccessException(
-          LocalizedStrings.Oplog_FAILED_READING_FILE_DURING_RECOVERY_FROM_0
-              .toLocalizedString(this.ifFile.getPath()),
+          String.format("Failed to read file during recovery from %s",
+              this.ifFile.getPath()),
           cnf, this.parent);
     }
   }
@@ -1881,13 +1890,14 @@ public class DiskInitFile implements DiskInitFileInterpreter {
     File f = new File(this.parent.getInfoFileDir().getDir(), "BACKUP" + name + IF_FILE_EXT);
     final boolean didNotExist = !f.exists();
     if (shouldExist && didNotExist) {
-      String msg = LocalizedStrings.DiskInitFile_THE_INIT_FILE_0_DOES_NOT_EXIST
-          .toLocalizedString(new Object[] {f});
+      String msg = String.format("The init file %s does not exist.",
+          new Object[] {f});
       if (!oplogs.isEmpty()) {
         Set<File> allOplogs = new LinkedHashSet(oplogs);
         msg +=
-            LocalizedStrings.DiskInitFile_IF_IT_NO_LONGER_EXISTS_DELETE_FOLLOWING_FILES_TO_CREATE_THIS_DISK_STORE_EXISTING_OPLOGS_0
-                .toLocalizedString(new Object[] {allOplogs});
+            String.format(
+                "If it no longer exists then delete the following files to be able to create this disk store. Existing oplogs are: %s",
+                new Object[] {allOplogs});
       }
       throw new IllegalStateException(msg);
     }
@@ -1910,10 +1920,12 @@ public class DiskInitFile implements DiskInitFileInterpreter {
         saveGemfireVersion(); // normal create diskstore
       }
       this.regListener = new InternalDataSerializer.RegistrationListener() {
+        @Override
         public void newInstantiator(Instantiator i) {
           saveInstantiator(i);
         }
 
+        @Override
         public void newDataSerializer(DataSerializer ds) {
           saveDataSerializer(ds);
         }
@@ -2003,7 +2015,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       writeIFRecord(hdos, false); // don't do stats for these small records
     } catch (IOException ex) {
       DiskAccessException dae = new DiskAccessException(
-          LocalizedStrings.DiskInitFile_FAILED_INIT_FILE_WRITE_BECAUSE_0.toLocalizedString(ex),
+          String.format("Failed writing data to initialization file because: %s", ex),
           this.parent);
       if (!this.compactInProgress) {
         this.parent.handleDiskAccessException(dae);
@@ -2051,8 +2063,8 @@ public class DiskInitFile implements DiskInitFileInterpreter {
         cmnEndDestroyRegion(dr);
         writeIFRecord(IFREC_END_DESTROY_REGION_ID, dr);
         if (logger.isDebugEnabled()) {
-          logger.trace(LogMarker.PERSIST_WRITES, "DiskInitFile IFREC_END_DESTROY_REGION_ID drId={}",
-              dr.getId());
+          logger.trace(LogMarker.PERSIST_WRITES_VERBOSE,
+              "DiskInitFile IFREC_END_DESTROY_REGION_ID drId={}", dr.getId());
         }
       }
     } finally {
@@ -2385,19 +2397,6 @@ public class DiskInitFile implements DiskInitFileInterpreter {
     }
   }
 
-  /**
-   * Additional flags for a disk region that are persisted in its meta-data.
-   *
-   * @since GemFire 7.0
-   */
-  public enum DiskRegionFlag {
-    /**
-     * True if this disk region has entries with versioning enabled. Depending on this flag, the
-     * appropriate RegionEntryFactory gets instantiated.
-     */
-    IS_WITH_VERSIONING
-  }
-
   Collection<DiskRegionView> getKnown() {
     lock(false);
     try {
@@ -2407,53 +2406,62 @@ public class DiskInitFile implements DiskInitFileInterpreter {
     }
   }
 
+  @Override
   public void cmnAddMyInitializingPMID(long drId, PersistentMemberID pmid) {
     cmnAddMyInitializingPMID(getDiskRegionById(drId), pmid);
 
   }
 
+  @Override
   public void cmnBeginDestroyRegion(long drId) {
     cmnBeginDestroyRegion(getDiskRegionById(drId));
   }
 
+  @Override
   public void cmnBeginPartialDestroyRegion(long drId) {
     cmnBeginPartialDestroyRegion(getDiskRegionById(drId));
   }
 
+  @Override
   public void cmnEndDestroyRegion(long drId) {
     cmnEndDestroyRegion(getDiskRegionById(drId));
   }
 
+  @Override
   public void cmnEndPartialDestroyRegion(long drId) {
     cmnEndPartialDestroyRegion(getDiskRegionById(drId));
   }
 
+  @Override
   public void cmnMarkInitialized(long drId) {
     cmnMarkInitialized(getDiskRegionById(drId));
   }
 
   @Override
   public void cmnDiskStoreID(DiskStoreID diskStoreID) {
-    if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY)) {
-      logger.trace(LogMarker.PERSIST_RECOVERY, "diskStoreId={}", diskStoreID);
+    if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
+      logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE, "diskStoreId={}", diskStoreID);
     }
     this.parent.setDiskStoreID(diskStoreID);
   }
 
+  @Override
   public boolean cmnRevokeDiskStoreId(PersistentMemberPattern revokedPattern) {
     return this.revokedMembers.add(revokedPattern);
   }
 
+  @Override
   public String getNameForError() {
     return this.parent.toString();
   }
 
+  @Override
   public boolean isClosing() {
     return parent.isClosing();
   }
 
   public void dump() {
-    if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY)) {
+    if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
       System.out.println("expectedCrfs=" + Arrays.toString(this.crfIds.toArray()));
       System.out.println("expectedDrfs=" + Arrays.toString(this.drfIds.toArray()));
       System.out.println("dataSerializerIds=" + Arrays.toString(this.dsIds.toArray()));
@@ -2463,8 +2471,6 @@ public class DiskInitFile implements DiskInitFileInterpreter {
 
   /**
    * Returns a map of region_name->(pr_buckets|replicated_region)
-   *
-   * @param regName
    */
   private Map<String, List<PlaceHolderDiskRegion>> getRegionsToDump(String regName) {
     if (regName == null) {
@@ -2518,7 +2524,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
         .entrySet()) {
       printStream.print("  ");
       List<PlaceHolderDiskRegion> regions = regionEntry.getValue();
-      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY)) {
+      if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
         for (PlaceHolderDiskRegion region : regions) {
           region.dump(printStream);
         }
@@ -2567,13 +2573,13 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       Map<DiskStoreID, String> equal = new HashMap<DiskStoreID, String>();
       for (PlaceHolderDiskRegion region : regions) {
         for (PersistentMemberID mem : region.getOnlineMembers()) {
-          online.put(mem.diskStoreId, mem.host + ":" + mem.directory);
+          online.put(mem.getDiskStoreId(), mem.getHost() + ":" + mem.getDirectory());
         }
         for (PersistentMemberID mem : region.getOfflineMembers()) {
-          offline.put(mem.diskStoreId, mem.host + ":" + mem.directory);
+          offline.put(mem.getDiskStoreId(), mem.getHost() + ":" + mem.getDirectory());
         }
         for (PersistentMemberID mem : region.getOfflineAndEqualMembers()) {
-          equal.put(mem.diskStoreId, mem.host + ":" + mem.directory);
+          equal.put(mem.getDiskStoreId(), mem.getHost() + ":" + mem.getDirectory());
         }
       }
 
@@ -2793,7 +2799,7 @@ public class DiskInitFile implements DiskInitFileInterpreter {
       writeIFRecord(bb, false); // don't do stats for these small records
     } catch (IOException ex) {
       DiskAccessException dae = new DiskAccessException(
-          LocalizedStrings.DiskInitFile_FAILED_INIT_FILE_WRITE_BECAUSE_0.toLocalizedString(ex),
+          String.format("Failed writing data to initialization file because: %s", ex),
           this.parent);
       if (!this.compactInProgress) {
         this.parent.handleDiskAccessException(dae);
@@ -2802,5 +2808,18 @@ public class DiskInitFile implements DiskInitFileInterpreter {
     } finally {
       unlock(true);
     }
+  }
+
+  /**
+   * Additional flags for a disk region that are persisted in its meta-data.
+   *
+   * @since GemFire 7.0
+   */
+  public enum DiskRegionFlag {
+    /**
+     * True if this disk region has entries with versioning enabled. Depending on this flag, the
+     * appropriate RegionEntryFactory gets instantiated.
+     */
+    IS_WITH_VERSIONING
   }
 }

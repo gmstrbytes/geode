@@ -17,7 +17,7 @@ package org.apache.geode.management.internal.cli.domain;
 
 import java.io.Serializable;
 
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 
 import org.apache.geode.cache.query.Index;
 import org.apache.geode.cache.query.IndexStatistics;
@@ -189,6 +189,7 @@ public class IndexDetails implements Comparable<IndexDetails>, Serializable {
     return this.isValid;
   }
 
+  @Override
   public int compareTo(final IndexDetails indexDetails) {
     int comparisonValue = compare(getMemberName(), indexDetails.getMemberName());
     comparisonValue = (comparisonValue != 0 ? comparisonValue

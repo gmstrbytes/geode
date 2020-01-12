@@ -29,12 +29,8 @@ import java.util.List;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 
-import org.apache.geode.i18n.StringId;
-import org.apache.geode.test.junit.categories.UnitTest;
 
-@Category(UnitTest.class)
 public class StartupStatusTest {
 
   private StartupStatusListener listener;
@@ -108,18 +104,18 @@ public class StartupStatusTest {
   @Test
   public void startup_nullStringId_throwsIllegalArgumentException() throws Exception {
     // arrange
-    StringId stringId = null;
+    String stringId = null;
     Object[] params = new Object[0];
 
     // act/assert
-    assertThatThrownBy(() -> startup(stringId, params)).isInstanceOf(IllegalArgumentException.class)
+    assertThatThrownBy(() -> startup(stringId, params)).isInstanceOf(NullPointerException.class)
         .hasMessage("Invalid msgId 'null' specified");
   }
 
   @Test
   public void startup_emptyParams() throws Exception {
     // arrange
-    StringId stringId = new StringId(1, "my string");
+    String stringId = "my string";
     Object[] params = new Object[0];
 
     // act
@@ -132,7 +128,7 @@ public class StartupStatusTest {
   @Test
   public void startup_doesNothingIfNoListener() throws Exception {
     // arrange
-    StringId stringId = new StringId(1, "my string");
+    String stringId = "my string";
     Object[] params = new Object[0];
 
     // act
@@ -146,7 +142,7 @@ public class StartupStatusTest {
   public void startup_invokesListener() throws Exception {
     // arrange
     listener = statusMessage -> statusMessageList.add(statusMessage);
-    StringId stringId = new StringId(1, "my string");
+    String stringId = "my string";
     Object[] params = new Object[0];
     setListener(listener);
 
@@ -161,8 +157,8 @@ public class StartupStatusTest {
   public void startupTwice_invokesListenerTwice() throws Exception {
     // arrange
     listener = statusMessage -> statusMessageList.add(statusMessage);
-    StringId stringIdOne = new StringId(1, "my string");
-    StringId stringIdTwo = new StringId(2, "other string");
+    String stringIdOne = "my string";
+    String stringIdTwo = "other string";
     Object[] params = new Object[0];
     setListener(listener);
 

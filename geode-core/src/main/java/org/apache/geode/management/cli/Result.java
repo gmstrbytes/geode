@@ -36,7 +36,7 @@ public interface Result {
    *
    * @since GemFire 7.0
    */
-  public enum Status {
+  enum Status {
     /**
      * Indicates that the command completed successfully.
      */
@@ -64,19 +64,19 @@ public interface Result {
   /**
    * Returns the status of a processed command.
    */
-  public Status getStatus();
+  Status getStatus();
 
   /**
    * Resets the pointer to the first line in the Result.
    */
-  public void resetToFirstLine();
+  void resetToFirstLine();
 
   /**
    * Returns whether the result has any more lines of information.
    *
    * @return True if there are more lines, false otherwise.
    */
-  public boolean hasNextLine();
+  boolean hasNextLine();
 
   /**
    * Returns the next line of information from the Result.
@@ -84,14 +84,17 @@ public interface Result {
    * @throws IndexOutOfBoundsException if this method is called more times than there are lines of
    *         information.
    */
-  public String nextLine();
+  String nextLine();
 
   /**
    * Returns whether this Result has a file as a part of the command output.
    *
    * @return True if there is a file, false otherwise.
+   * @deprecated since 1.10. file transfer in plugin commands is never supported
    */
-  public boolean hasIncomingFiles();
+  default boolean hasIncomingFiles() {
+    return false;
+  }
 
   /**
    * Save the file(s) from this Result. {@link #hasIncomingFiles()} should be used before calling
@@ -100,22 +103,40 @@ public interface Result {
    * @param directory Directory to which the file(s) should be saved.
    * @throws IOException If an error occurs while saving the file.
    * @throws RuntimeException If there is no file in the Result to save.
+   * @deprecated since 1.10. file transfer in plugin commands is never supported
    */
-  public void saveIncomingFiles(String directory) throws IOException;
+  default void saveIncomingFiles(String directory) throws IOException {}
 
   /****
    * Return whether the configuration changes due to command have been persisted to cluster
    * configuration or not.
    *
    * @return True if the command has failed to persist configuration changes , false otherwise.
+   * @deprecated since 1.10. This only affect the gfsh output line which is not api bound
    */
-  public boolean failedToPersist();
+  default boolean failedToPersist() {
+    return false;
+  }
 
   /*****
    * Sets whether the command changes have not been persisted to the cluster configuration
    *
    * @param commandPersisted true if the command changes are persisted to the cluster configuration,
    *        false otherwise.
+   *
+   * @deprecated since 1.10. This only affect the gfsh output line which is not api bound
    */
-  public void setCommandPersisted(boolean commandPersisted);
+  default void setCommandPersisted(boolean commandPersisted) {}
+
+  /**
+   * @return the string representation of the result with the specified line separator.
+   */
+  default String asString() {
+    StringBuilder builder = new StringBuilder();
+    while (this.hasNextLine()) {
+      builder.append(this.nextLine());
+    }
+    this.resetToFirstLine();
+    return builder.toString();
+  }
 }

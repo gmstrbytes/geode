@@ -14,7 +14,7 @@
  */
 package org.apache.geode.internal.cache.snapshot;
 
-import static org.apache.geode.distributed.internal.InternalDistributedSystem.getLoggerI18n;
+import static org.apache.geode.distributed.internal.InternalDistributedSystem.getLogger;
 
 import java.io.DataInput;
 import java.io.DataOutput;
@@ -22,23 +22,27 @@ import java.io.IOException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.RegionEvent;
 import org.apache.geode.cache.RegionMembershipListener;
 import org.apache.geode.cache.util.RegionMembershipListenerAdapter;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
+import org.apache.geode.distributed.internal.OperationExecutors;
 import org.apache.geode.distributed.internal.ProcessorKeeper21;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.InternalDataSerializer;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
 
 /**
  * Provides flow control using permits based on the sliding window algorithm. The sender should
  * invoke {@link #create(Region, DistributedMember, int)} while the recipient should respond with
- * {@link #sendAck(DM, DistributedMember, int, String)} or
- * {@link #sendAbort(DM, int, DistributedMember)}.
+ * {@link #sendAck(DistributionManager, DistributedMember, int, String)} or
+ * {@link #sendAbort(DistributionManager, int, DistributedMember)}.
  *
  */
 public class FlowController {
@@ -84,6 +88,7 @@ public class FlowController {
   }
 
   /** the singleton */
+  @MakeNotStatic
   private static final FlowController instance = new FlowController();
 
   public static FlowController getInstance() {
@@ -104,8 +109,8 @@ public class FlowController {
    * @param sink the data recipient
    * @param windowSize the size of the sliding window
    *
-   * @see #sendAbort(DM, int, DistributedMember)
-   * @see #sendAck(DM, DistributedMember, int, String)
+   * @see #sendAbort(DistributionManager, int, DistributedMember)
+   * @see #sendAck(DistributionManager, DistributedMember, int, String)
    */
   public <K, V> Window create(Region<K, V> region, DistributedMember sink, int windowSize) {
     WindowImpl<K, V> w = new WindowImpl<K, V>(region, sink, windowSize);
@@ -123,9 +128,10 @@ public class FlowController {
    * @param windowId the window
    * @param packetId the packet being ACK'd
    */
-  public void sendAck(DM dmgr, DistributedMember member, int windowId, String packetId) {
-    if (getLoggerI18n().fineEnabled())
-      getLoggerI18n().fine("SNP: Sending ACK for packet " + packetId + " on window " + windowId
+  public void sendAck(DistributionManager dmgr, DistributedMember member, int windowId,
+      String packetId) {
+    if (getLogger().fineEnabled())
+      getLogger().fine("SNP: Sending ACK for packet " + packetId + " on window " + windowId
           + " to member " + member);
 
     if (dmgr.getDistributionManagerId().equals(member)) {
@@ -147,9 +153,9 @@ public class FlowController {
    * @param windowId the window
    * @param member the data source
    */
-  public void sendAbort(DM dmgr, int windowId, DistributedMember member) {
-    if (getLoggerI18n().fineEnabled())
-      getLoggerI18n().fine("SNP: Sending ABORT to member " + member + " for window " + windowId);
+  public void sendAbort(DistributionManager dmgr, int windowId, DistributedMember member) {
+    if (getLogger().fineEnabled())
+      getLogger().fine("SNP: Sending ABORT to member " + member + " for window " + windowId);
 
     if (dmgr.getDistributionManagerId().equals(member)) {
       WindowImpl<?, ?> win = (WindowImpl<?, ?>) processors.retrieve(windowId);
@@ -188,8 +194,8 @@ public class FlowController {
         @Override
         public void afterRemoteRegionCrash(RegionEvent<K, V> event) {
           if (event.getDistributedMember().equals(sink)) {
-            if (getLoggerI18n().fineEnabled())
-              getLoggerI18n().fine("SNP: " + sink + " has crashed, closing window");
+            if (getLogger().fineEnabled())
+              getLogger().fine("SNP: " + sink + " has crashed, closing window");
 
             abort();
           }
@@ -243,7 +249,7 @@ public class FlowController {
    * Sent to abort message processing.
    *
    * @see Window#isAborted()
-   * @see FlowController#sendAbort(DM, int, DistributedMember)
+   * @see FlowController#sendAbort(DistributionManager, int, DistributedMember)
    */
   public static class FlowControlAbortMessage extends DistributionMessage {
     /** the window id */
@@ -263,13 +269,13 @@ public class FlowController {
 
     @Override
     public int getProcessorType() {
-      return DistributionManager.STANDARD_EXECUTOR;
+      return OperationExecutors.STANDARD_EXECUTOR;
     }
 
     @Override
-    protected void process(DistributionManager dm) {
-      if (getLoggerI18n().fineEnabled())
-        getLoggerI18n()
+    protected void process(ClusterDistributionManager dm) {
+      if (getLogger().fineEnabled())
+        getLogger()
             .fine("SNP: Received ABORT on window " + windowId + " from member " + getSender());
 
       WindowImpl<?, ?> win =
@@ -280,14 +286,16 @@ public class FlowController {
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       windowId = in.readInt();
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       out.writeInt(windowId);
     }
   }
@@ -295,7 +303,7 @@ public class FlowController {
   /**
    * Sent to acknowledge receipt of a message packet.
    *
-   * @see FlowController#sendAck(DM, DistributedMember, int, String)
+   * @see FlowController#sendAck(DistributionManager, DistributedMember, int, String)
    */
   public static class FlowControlAckMessage extends DistributionMessage {
     /** the window id */
@@ -319,13 +327,13 @@ public class FlowController {
 
     @Override
     public int getProcessorType() {
-      return DistributionManager.STANDARD_EXECUTOR;
+      return OperationExecutors.STANDARD_EXECUTOR;
     }
 
     @Override
-    protected void process(DistributionManager dm) {
-      if (getLoggerI18n().fineEnabled())
-        getLoggerI18n().fine("SNP: Received ACK for packet " + packetId + " on window " + windowId
+    protected void process(ClusterDistributionManager dm) {
+      if (getLogger().fineEnabled())
+        getLogger().fine("SNP: Received ACK for packet " + packetId + " on window " + windowId
             + " from member " + getSender());
 
       WindowImpl<?, ?> win =
@@ -336,15 +344,17 @@ public class FlowController {
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       windowId = in.readInt();
       packetId = InternalDataSerializer.readString(in);
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       out.writeInt(windowId);
       InternalDataSerializer.writeString(packetId, out);
     }

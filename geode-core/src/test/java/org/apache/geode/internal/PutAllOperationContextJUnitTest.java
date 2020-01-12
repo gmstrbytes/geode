@@ -14,7 +14,8 @@
  */
 package org.apache.geode.internal;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -25,15 +26,12 @@ import java.util.Map;
 import java.util.Set;
 
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 
 import org.apache.geode.cache.operations.PutAllOperationContext;
 import org.apache.geode.internal.cache.CachedDeserializable;
 import org.apache.geode.internal.cache.CachedDeserializableFactory;
 import org.apache.geode.internal.cache.Token;
-import org.apache.geode.test.junit.categories.UnitTest;
 
-@Category(UnitTest.class)
 public class PutAllOperationContextJUnitTest {
 
   @Test
@@ -121,7 +119,7 @@ public class PutAllOperationContextJUnitTest {
   public void testCachedDeserializable() {
     LinkedHashMap<String, Object> m = new LinkedHashMap<>();
     Object v = Integer.valueOf(99);
-    CachedDeserializable cd = CachedDeserializableFactory.create(v, 24);
+    CachedDeserializable cd = CachedDeserializableFactory.create(v, 24, null);
     m.put("cd", cd);
     PutAllOperationContext paoc = new PutAllOperationContext(m);
     Map<String, Object> opMap = paoc.getMap();

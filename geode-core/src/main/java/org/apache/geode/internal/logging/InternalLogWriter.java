@@ -14,7 +14,12 @@
  */
 package org.apache.geode.internal.logging;
 
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+
 import org.apache.geode.LogWriter;
+import org.apache.geode.annotations.Immutable;
 import org.apache.geode.i18n.LogWriterI18n;
 import org.apache.geode.i18n.StringId;
 
@@ -34,7 +39,7 @@ import org.apache.geode.i18n.StringId;
  * <li>{@link #NONE_LEVEL}
  * </ol>
  *
- * @deprecated use log4j api instead
+ * @deprecated Please use Log4J2 instead.
  */
 @Deprecated
 public interface InternalLogWriter extends LogWriter, LogWriterI18n {
@@ -42,81 +47,83 @@ public interface InternalLogWriter extends LogWriter, LogWriterI18n {
   /**
    * If the writer's level is <code>ALL_LEVEL</code> then all messages will be logged.
    */
-  public static final int ALL_LEVEL = Integer.MIN_VALUE;
+  int ALL_LEVEL = Integer.MIN_VALUE;
   /**
    * If the writer's level is <code>FINEST_LEVEL</code> then finest, finer, fine, config, info,
    * warning, error, and severe messages will be logged.
    */
-  public static final int FINEST_LEVEL = 300;
+  int FINEST_LEVEL = 300;
   /**
    * If the writer's level is <code>FINER_LEVEL</code> then finer, fine, config, info, warning,
    * error, and severe messages will be logged.
    */
-  public static final int FINER_LEVEL = 400;
+  int FINER_LEVEL = 400;
   /**
    * If the writer's level is <code>FINE_LEVEL</code> then fine, config, info, warning, error, and
    * severe messages will be logged.
    */
-  public static final int FINE_LEVEL = 500;
+  int FINE_LEVEL = 500;
   /**
    * If the writer's level is <code>CONFIG_LEVEL</code> then config, info, warning, error, and
    * severe messages will be logged.
    */
-  public static final int CONFIG_LEVEL = 700;
+  int CONFIG_LEVEL = 700;
   /**
    * If the writer's level is <code>INFO_LEVEL</code> then info, warning, error, and severe messages
    * will be logged.
    */
-  public static final int INFO_LEVEL = 800;
+  int INFO_LEVEL = 800;
   /**
    * If the writer's level is <code>WARNING_LEVEL</code> then warning, error, and severe messages
    * will be logged.
    */
-  public static final int WARNING_LEVEL = 900;
+  int WARNING_LEVEL = 900;
   /**
    * If the writer's level is <code>SEVERE_LEVEL</code> then only severe messages will be logged.
    */
-  public static final int SEVERE_LEVEL = 1000;
+  int SEVERE_LEVEL = 1000;
   /**
    * If the writer's level is <code>ERROR_LEVEL</code> then error and severe messages will be
    * logged.
    */
-  public static final int ERROR_LEVEL = (WARNING_LEVEL + SEVERE_LEVEL) / 2;
+  int ERROR_LEVEL = (WARNING_LEVEL + SEVERE_LEVEL) / 2;
   /**
    * If the writer's level is <code>NONE_LEVEL</code> then no messages will be logged.
    */
-  public static final int NONE_LEVEL = Integer.MAX_VALUE;
+  int NONE_LEVEL = Integer.MAX_VALUE;
 
-  public static final String[] levelNames = new String[] {"all", "finest", "finer", "fine",
-      "config", "info", "warning", "error", "severe", "none"};
+  @Immutable
+  public List<String> levelNames = Collections
+      .unmodifiableList(Arrays.asList("all", "finest", "finer", "fine", "config", "info", "warning",
+          "error", "severe", "none"));
 
-  public static final int[] allLevels = new int[] {ALL_LEVEL, FINEST_LEVEL, FINER_LEVEL, FINE_LEVEL,
-      CONFIG_LEVEL, INFO_LEVEL, WARNING_LEVEL, ERROR_LEVEL, SEVERE_LEVEL, NONE_LEVEL};
+  @Immutable
+  List<Integer> allLevels = Collections.unmodifiableList(
+      Arrays.asList(ALL_LEVEL, FINEST_LEVEL, FINER_LEVEL, FINE_LEVEL, CONFIG_LEVEL,
+          INFO_LEVEL, WARNING_LEVEL, ERROR_LEVEL, SEVERE_LEVEL, NONE_LEVEL));
 
-  public int getLogWriterLevel();
+  int getLogWriterLevel();
 
-  public void setLogWriterLevel(int LogWriterLevel);
+  boolean isSecure();
 
-  public boolean isSecure();
-
-  public String getConnectionName();
-
-  /**
-   * Logs a message and an exception of the given level.
-   *
-   * @param msgLevel the level code for the message to log
-   * @param msg the actual message to log
-   * @param exception the actual Exception to log
-   */
-  public void put(int msgLevel, String msg, Throwable exception);
+  String getConnectionName();
 
   /**
    * Logs a message and an exception of the given level.
    *
-   * @param msgLevel the level code for the message to log
-   * @param msgId A locale agnostic form of the message
-   * @param params the Object arguments to plug into the message
-   * @param exception the actual Exception to log
+   * @param messageLevel the level code for the message to log
+   * @param message the actual message to log
+   * @param throwable the actual Exception to log
    */
-  public void put(int msgLevel, StringId msgId, Object[] params, Throwable exception);
+  void put(int messageLevel, String message, Throwable throwable);
+
+  /**
+   * Logs a message and an exception of the given level.
+   *
+   * @param messageLevel the level code for the message to log
+   * @param messageId A locale agnostic form of the message
+   * @param parameters the Object arguments to plug into the message
+   * @param throwable the actual Exception to log
+   */
+  void put(int messageLevel, StringId messageId, Object[] parameters, Throwable throwable);
 }

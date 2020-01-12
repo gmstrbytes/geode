@@ -14,7 +14,7 @@
  */
 package org.apache.geode.cache.lucene.internal.filesystem;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
 
 import java.util.UUID;
 
@@ -23,9 +23,9 @@ import org.junit.experimental.categories.Category;
 
 import org.apache.geode.CopyHelper;
 import org.apache.geode.cache.lucene.internal.LuceneServiceImpl;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.test.junit.categories.LuceneTest;
 
-@Category(UnitTest.class)
+@Category({LuceneTest.class})
 public class ChunkKeyJUnitTest {
 
   @Test

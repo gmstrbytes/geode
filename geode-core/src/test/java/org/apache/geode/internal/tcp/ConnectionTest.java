@@ -14,9 +14,9 @@
  */
 package org.apache.geode.internal.tcp;
 
-import static org.assertj.core.api.Assertions.*;
-import static org.mockito.Matchers.*;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
@@ -25,9 +25,9 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 
 import org.apache.geode.distributed.internal.DistributionMessage;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.test.junit.categories.MembershipTest;
 
-@Category(UnitTest.class)
+@Category({MembershipTest.class})
 public class ConnectionTest {
 
   @Test
@@ -38,9 +38,9 @@ public class ConnectionTest {
     boolean forceAsync = true;
     DistributionMessage mockDistributionMessage = mock(DistributionMessage.class);
 
-    mockConnection.nioWriteFully(channel, buffer, forceAsync, mockDistributionMessage);
+    mockConnection.writeFully(channel, buffer, forceAsync, mockDistributionMessage);
 
-    verify(mockConnection, times(1)).nioWriteFully(channel, buffer, forceAsync,
+    verify(mockConnection, times(1)).writeFully(channel, buffer, forceAsync,
         mockDistributionMessage);
   }
 }

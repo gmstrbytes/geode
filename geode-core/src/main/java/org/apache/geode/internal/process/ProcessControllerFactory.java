@@ -14,12 +14,15 @@
  */
 package org.apache.geode.internal.process;
 
-import static org.apache.commons.lang.Validate.isTrue;
-import static org.apache.commons.lang.Validate.notEmpty;
-import static org.apache.commons.lang.Validate.notNull;
+import static org.apache.commons.lang3.Validate.isTrue;
+import static org.apache.commons.lang3.Validate.notEmpty;
+import static org.apache.commons.lang3.Validate.notNull;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.ServiceConfigurationError;
 import java.util.concurrent.TimeoutException;
 
 import org.apache.geode.distributed.internal.DistributionConfig;
@@ -49,13 +52,11 @@ public class ProcessControllerFactory {
     notNull(parameters, "Invalid parameters '" + parameters + "' specified");
     isTrue(pid > 0, "Invalid pid '" + pid + "' specified");
 
-    if (isAttachAPIFound()) {
-      try {
-        return new MBeanProcessController(parameters, pid);
-      } catch (ExceptionInInitializerError ignore) {
-      }
+    if (!isAttachAPIFound()) {
+      return new FileProcessController(parameters, pid);
     }
-    return new FileProcessController(parameters, pid);
+
+    return new MBeanOrFileProcessController(parameters, pid);
   }
 
   public ProcessController createProcessController(final ProcessControllerParameters parameters,
@@ -74,9 +75,14 @@ public class ProcessControllerFactory {
     }
     boolean found = false;
     try {
-      final Class<?> virtualMachineClass = Class.forName("com.sun.tools.attach.VirtualMachine");
-      found = virtualMachineClass != null;
-    } catch (ClassNotFoundException ignore) {
+      final Class<?> virtualMachineClass = Class.forName("com.sun.tools.attach.spi.AttachProvider");
+      if (virtualMachineClass != null) {
+        Method providersMethod = virtualMachineClass.getMethod("providers");
+        providersMethod.invoke(virtualMachineClass);
+        found = true;
+      }
+    } catch (ClassNotFoundException | IllegalAccessException | InvocationTargetException
+        | NoSuchMethodException | ServiceConfigurationError ignore) {
     }
     return found;
   }

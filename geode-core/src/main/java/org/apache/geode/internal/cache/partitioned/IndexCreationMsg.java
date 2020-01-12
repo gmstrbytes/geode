@@ -33,26 +33,25 @@ import org.apache.geode.cache.CacheException;
 import org.apache.geode.cache.RegionDestroyedException;
 import org.apache.geode.cache.query.Index;
 import org.apache.geode.cache.query.IndexCreationException;
-import org.apache.geode.cache.query.IndexType;
 import org.apache.geode.cache.query.MultiIndexCreationException;
 import org.apache.geode.cache.query.RegionNotFoundException;
 import org.apache.geode.cache.query.internal.index.IndexCreationData;
 import org.apache.geode.cache.query.internal.index.PartitionedIndex;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.ReplyException;
 import org.apache.geode.distributed.internal.ReplyMessage;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.Version;
 import org.apache.geode.internal.cache.ForceReattemptException;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.PartitionedRegionException;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 public class IndexCreationMsg extends PartitionMessage {
   private static final Logger logger = LogService.getLogger();
@@ -86,7 +85,7 @@ public class IndexCreationMsg extends PartitionMessage {
 
   /**
    * This message may be sent to nodes before the PartitionedRegion is completely initialized due to
-   * the RegionAdvisor(s) knowing about the existance of a partitioned region at a very early part
+   * the RegionAdvisor(s) knowing about the existence of a partitioned region at a very early part
    * of the initialization
    */
   @Override
@@ -104,7 +103,7 @@ public class IndexCreationMsg extends PartitionMessage {
    * @throws ForceReattemptException if the peer is no longer available
    */
   @Override
-  protected boolean operateOnPartitionedRegion(DistributionManager dm, PartitionedRegion pr,
+  protected boolean operateOnPartitionedRegion(ClusterDistributionManager dm, PartitionedRegion pr,
       long startTime) throws CacheException, ForceReattemptException {
     // region exists
     ReplyException replyEx = null;
@@ -126,7 +125,7 @@ public class IndexCreationMsg extends PartitionMessage {
       indexes = pr.createIndexes(true, indexDefinitions);
     } catch (IndexCreationException e1) {
       replyEx = new ReplyException(
-          LocalizedStrings.IndexCreationMsg_REMOTE_INDEX_CREAION_FAILED.toLocalizedString(), e1);
+          "Remote Index Creation Failed", e1);
     } catch (MultiIndexCreationException exx) {
       failedIndexNames.addAll(exx.getExceptionsMap().keySet());
 
@@ -139,7 +138,7 @@ public class IndexCreationMsg extends PartitionMessage {
         logger.debug("{} indexes were created succesfully", failedIndexNames.size());
       }
       replyEx = new ReplyException(
-          LocalizedStrings.IndexCreationMsg_REMOTE_INDEX_CREAION_FAILED.toLocalizedString(), exx);
+          "Remote Index Creation Failed", exx);
     }
 
     if (null == replyEx) {
@@ -179,7 +178,7 @@ public class IndexCreationMsg extends PartitionMessage {
    * Process this index creation message on the receiver.
    */
   @Override
-  public void process(final DistributionManager dm) {
+  public void process(final ClusterDistributionManager dm) {
 
     final boolean isDebugEnabled = logger.isDebugEnabled();
 
@@ -278,8 +277,9 @@ public class IndexCreationMsg extends PartitionMessage {
 
       if (pr == null /* && failIfRegionMissing() */) {
         String msg =
-            LocalizedStrings.IndexCreationMsg_COULD_NOT_GET_PARTITIONED_REGION_FROM_ID_0_FOR_MESSAGE_1_RECEIVED_ON_MEMBER_2_MAP_3
-                .toLocalizedString(new Object[] {Integer.valueOf(this.regionId), this, dm.getId(),
+            String.format(
+                "Could not get Partitioned Region from Id %s for message %s received on member= %s map= %s",
+                new Object[] {Integer.valueOf(this.regionId), this, dm.getId(),
                     PartitionedRegion.dumpPRId()});
         throw new PartitionedRegionException(msg, new RegionNotFoundException(msg));
       }
@@ -305,18 +305,17 @@ public class IndexCreationMsg extends PartitionMessage {
       // log the exception at fine level if there is no reply to the message
       if (this.processorId == 0) {
         logger.debug("{} exception while processing message:{}", this, t.getMessage(), t);
-      } else if (logger.isDebugEnabled(LogMarker.DM) && (t instanceof RuntimeException)) {
-        logger.debug(LogMarker.DM, "Exception caught while processing message: {}", t.getMessage(),
-            t);
+      } else if (logger.isDebugEnabled(LogMarker.DM_VERBOSE) && (t instanceof RuntimeException)) {
+        logger.debug(LogMarker.DM_VERBOSE, "Exception caught while processing message: {}",
+            t.getMessage(), t);
       }
       if (t instanceof RegionDestroyedException && pr != null) {
         if (pr.isClosed) {
-          logger.info(LocalizedMessage.create(
-              LocalizedStrings.IndexCreationMsg_REGION_IS_LOCALLY_DESTROYED_THROWING_REGIONDESTROYEDEXCEPTION_FOR__0,
-              pr));
+          logger.info("Region is locally destroyed, throwing RegionDestroyedException for {}",
+              pr);
           thr = new RegionDestroyedException(
-              LocalizedStrings.IndexCreationMsg_REGION_IS_LOCALLY_DESTROYED_ON_0
-                  .toLocalizedString(dm.getId()),
+              String.format("Region is locally destroyed on %s",
+                  dm.getId()),
               pr.getFullPath());
         }
       } else {
@@ -375,6 +374,7 @@ public class IndexCreationMsg extends PartitionMessage {
 
     IndexCreationMsg indMsg =
         new IndexCreationMsg(recipients, pr.getPRId(), processor, indexDefinitions);
+    indMsg.setTransactionDistributed(pr.getCache().getTxManager().isDistributed());
     if (logger.isDebugEnabled()) {
       logger.debug("Sending index creation message: {}, to member(s) {}.", indMsg, recipients);
     }
@@ -403,18 +403,21 @@ public class IndexCreationMsg extends PartitionMessage {
    * @param indexBucketsMap Map of indexes created and number of buckets indexed
    * @param numTotalBuckets Number of total buckets in this vm
    */
-  void sendReply(InternalDistributedMember member, int procId, DM dm, ReplyException ex,
-      boolean result, Map<String, Integer> indexBucketsMap, int numTotalBuckets) {
+  void sendReply(InternalDistributedMember member, int procId, DistributionManager dm,
+      ReplyException ex, boolean result, Map<String, Integer> indexBucketsMap,
+      int numTotalBuckets) {
     IndexCreationReplyMsg.send(member, procId, dm, ex, result, indexBucketsMap, numTotalBuckets);
   }
 
+  @Override
   public int getDSFID() {
     return PR_INDEX_CREATION_MSG;
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     this.indexDefinitions = DataSerializer.readHashSet(in);
   }
 
@@ -424,8 +427,9 @@ public class IndexCreationMsg extends PartitionMessage {
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     DataSerializer.writeHashSet(this.indexDefinitions, out);
   }
 
@@ -532,7 +536,6 @@ public class IndexCreationMsg extends PartitionMessage {
     /**
      * Returns a map of index names and number of buckets indexed
      *
-     * @return indexBucketsMap
      */
     public Map<String, Integer> getIndexBucketsMap() {
       return this.indexBucketsMap;
@@ -590,8 +593,9 @@ public class IndexCreationMsg extends PartitionMessage {
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.result = in.readBoolean();
       this.indexBucketsMap = DataSerializer.readObject(in);
       this.numTotalBuckets = in.readInt();
@@ -600,8 +604,9 @@ public class IndexCreationMsg extends PartitionMessage {
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       out.writeBoolean(this.result);
       DataSerializer.writeObject(this.indexBucketsMap, out);
       out.writeInt(this.numTotalBuckets);
@@ -619,9 +624,9 @@ public class IndexCreationMsg extends PartitionMessage {
      * @param indexBucketsMap Map of indexes created and number of buckets indexed
      * @param numTotalBuckets Number of total buckets in this vm
      */
-    public static void send(InternalDistributedMember recipient, int processorId, DM dm,
-        ReplyException ex, boolean result, Map<String, Integer> indexBucketsMap,
-        int numTotalBuckets) {
+    public static void send(InternalDistributedMember recipient, int processorId,
+        DistributionManager dm, ReplyException ex, boolean result,
+        Map<String, Integer> indexBucketsMap, int numTotalBuckets) {
       IndexCreationReplyMsg indMsg = new IndexCreationReplyMsg(processorId, ex, result, result,
           indexBucketsMap, numTotalBuckets);
       indMsg.setRecipient(recipient);
@@ -634,7 +639,7 @@ public class IndexCreationMsg extends PartitionMessage {
      * @param dm distribution manager
      */
     @Override
-    public void process(final DM dm, final ReplyProcessor21 p) {
+    public void process(final DistributionManager dm, final ReplyProcessor21 p) {
       if (logger.isDebugEnabled()) {
         logger.debug("Processor id is : {}", this.processorId);
       }

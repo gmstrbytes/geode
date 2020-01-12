@@ -16,96 +16,87 @@ package org.apache.geode.internal.cache.tx;
 
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.TreeMap;
 import java.util.TreeSet;
 
 import org.apache.geode.cache.UnsupportedOperationInTransactionException;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.internal.cache.DistTXCommitMessage;
 import org.apache.geode.internal.cache.DistTXCoordinatorInterface;
 import org.apache.geode.internal.cache.DistTXPrecommitMessage;
 import org.apache.geode.internal.cache.DistTXRollbackMessage;
-import org.apache.geode.internal.cache.LocalRegion;
+import org.apache.geode.internal.cache.InternalCache;
+import org.apache.geode.internal.cache.InternalRegion;
 import org.apache.geode.internal.cache.TXStateProxy;
-import org.apache.geode.internal.i18n.LocalizedStrings;
 
-/**
- *
- */
 public class DistClientTXStateStub extends ClientTXStateStub implements DistTXCoordinatorInterface {
 
-  /**
-   * @param stateProxy
-   * @param target
-   * @param firstRegion
-   */
-  public DistClientTXStateStub(TXStateProxy stateProxy, DistributedMember target,
-      LocalRegion firstRegion) {
-    super(stateProxy, target, firstRegion);
-    // TODO Auto-generated constructor stub
+  public DistClientTXStateStub(InternalCache cache, DistributionManager dm, TXStateProxy stateProxy,
+      DistributedMember target, InternalRegion firstRegion) {
+    super(cache, dm, stateProxy, target, firstRegion);
   }
 
   @Override
   public boolean getPreCommitResponse() throws UnsupportedOperationInTransactionException {
     throw new UnsupportedOperationInTransactionException(
-        LocalizedStrings.Dist_TX_PRECOMMIT_NOT_SUPPORTED_IN_A_TRANSACTION
-            .toLocalizedString("getPreCommitResponse"));
+        String.format("precommit() operation %s meant for Dist Tx is not supported",
+            "getPreCommitResponse"));
   }
 
   @Override
   public boolean getRollbackResponse() throws UnsupportedOperationInTransactionException {
     throw new UnsupportedOperationInTransactionException(
-        LocalizedStrings.Dist_TX_ROLLBACK_NOT_SUPPORTED_IN_A_TRANSACTION
-            .toLocalizedString("getRollbackResponse"));
+        String.format("rollback() operation %s meant for Dist Tx is not supported",
+            "getRollbackResponse"));
   }
 
   @Override
   public ArrayList<DistTxEntryEvent> getPrimaryTransactionalOperations()
       throws UnsupportedOperationInTransactionException {
     throw new UnsupportedOperationInTransactionException(
-        LocalizedStrings.Dist_TX_PRECOMMIT_NOT_SUPPORTED_IN_A_TRANSACTION
-            .toLocalizedString("getPrimaryTransactionalOperations"));
+        String.format("precommit() operation %s meant for Dist Tx is not supported",
+            "getPrimaryTransactionalOperations"));
   }
 
   @Override
   public void addSecondaryTransactionalOperations(DistTxEntryEvent dtop)
       throws UnsupportedOperationInTransactionException {
     throw new UnsupportedOperationInTransactionException(
-        LocalizedStrings.Dist_TX_PRECOMMIT_NOT_SUPPORTED_IN_A_TRANSACTION
-            .toLocalizedString("addSecondaryTransactionalOperations"));
+        String.format("precommit() operation %s meant for Dist Tx is not supported",
+            "addSecondaryTransactionalOperations"));
   }
 
   @Override
-  public void setPrecommitMessage(DistTXPrecommitMessage precommitMsg, DM dm)
+  public void setPrecommitMessage(DistTXPrecommitMessage precommitMsg, DistributionManager dm)
       throws UnsupportedOperationInTransactionException {
     throw new UnsupportedOperationInTransactionException(
-        LocalizedStrings.Dist_TX_PRECOMMIT_NOT_SUPPORTED_IN_A_TRANSACTION
-            .toLocalizedString("setPrecommitMessage"));
+        String.format("precommit() operation %s meant for Dist Tx is not supported",
+            "setPrecommitMessage"));
   }
 
   @Override
-  public void setCommitMessage(DistTXCommitMessage commitMsg, DM dm)
+  public void setCommitMessage(DistTXCommitMessage commitMsg, DistributionManager dm)
       throws UnsupportedOperationInTransactionException {
     throw new UnsupportedOperationInTransactionException(
-        LocalizedStrings.Dist_TX_PRECOMMIT_NOT_SUPPORTED_IN_A_TRANSACTION
-            .toLocalizedString("setCommitMessage"));
+        String.format("precommit() operation %s meant for Dist Tx is not supported",
+            "setCommitMessage"));
   }
 
   @Override
-  public void setRollbackMessage(DistTXRollbackMessage rollbackMsg, DM dm)
+  public void setRollbackMessage(DistTXRollbackMessage rollbackMsg, DistributionManager dm)
       throws UnsupportedOperationInTransactionException {
     throw new UnsupportedOperationInTransactionException(
-        LocalizedStrings.Dist_TX_ROLLBACK_NOT_SUPPORTED_IN_A_TRANSACTION
-            .toLocalizedString("setRollbackMessage"));
+        String.format("rollback() operation %s meant for Dist Tx is not supported",
+            "setRollbackMessage"));
   }
 
   @Override
-  public void gatherAffectedRegions(HashSet<LocalRegion> regionSet, boolean includePrimaryRegions,
-      boolean includeRedundantRegions) throws UnsupportedOperationInTransactionException {
+  public void gatherAffectedRegions(HashSet<InternalRegion> regionSet,
+      boolean includePrimaryRegions, boolean includeRedundantRegions)
+      throws UnsupportedOperationInTransactionException {
     throw new UnsupportedOperationInTransactionException(
-        LocalizedStrings.Dist_TX_PRECOMMIT_NOT_SUPPORTED_IN_A_TRANSACTION
-            .toLocalizedString("gatherAffectedRegions"));
+        String.format("precommit() operation %s meant for Dist Tx is not supported",
+            "gatherAffectedRegions"));
   }
 
   @Override
@@ -113,8 +104,8 @@ public class DistClientTXStateStub extends ClientTXStateStub implements DistTXCo
       boolean includePrimaryRegions, boolean includeRedundantRegions)
       throws UnsupportedOperationInTransactionException {
     throw new UnsupportedOperationInTransactionException(
-        LocalizedStrings.Dist_TX_PRECOMMIT_NOT_SUPPORTED_IN_A_TRANSACTION
-            .toLocalizedString("gatherAffectedRegions"));
+        String.format("precommit() operation %s meant for Dist Tx is not supported",
+            "gatherAffectedRegions"));
   }
 
   @Override

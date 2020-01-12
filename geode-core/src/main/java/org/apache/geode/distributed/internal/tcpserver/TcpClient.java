@@ -14,11 +14,13 @@
  */
 package org.apache.geode.distributed.internal.tcpserver;
 
+import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -31,17 +33,18 @@ import javax.net.ssl.SSLException;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.DataSerializer;
-import org.apache.geode.cache.UnsupportedVersionException;
+import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.distributed.internal.DistributionConfig;
-import org.apache.geode.internal.Version;
-import org.apache.geode.internal.VersionedDataInputStream;
-import org.apache.geode.internal.VersionedDataOutputStream;
 import org.apache.geode.internal.admin.SSLConfig;
-import org.apache.geode.internal.logging.LogService;
 import org.apache.geode.internal.net.SSLConfigurationFactory;
 import org.apache.geode.internal.net.SocketCreator;
 import org.apache.geode.internal.net.SocketCreatorFactory;
 import org.apache.geode.internal.security.SecurableCommunicationChannel;
+import org.apache.geode.internal.serialization.UnsupportedSerializationVersionException;
+import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.VersionedDataInputStream;
+import org.apache.geode.internal.serialization.VersionedDataOutputStream;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * <p>
@@ -56,8 +59,9 @@ public class TcpClient {
 
   private static final int DEFAULT_REQUEST_TIMEOUT = 60 * 2 * 1000;
 
-  private static Map<InetSocketAddress, Short> serverVersions =
-      new HashMap<InetSocketAddress, Short>();
+  @MakeNotStatic
+  private static final Map<InetSocketAddress, Short> serverVersions =
+      new HashMap<>();
 
   private final SocketCreator socketCreator;
 
@@ -108,8 +112,8 @@ public class TcpClient {
 
   /**
    * Contacts the Locator running on the given host, and port and gets information about it. Two
-   * <code>String</code>s are returned: the first string is the working directory of the locator and
-   * the second string is the product directory of the locator.
+   * <code>String</code>s are returned: the first string is the working directory of the locator
+   * and the second string is the product directory of the locator.
    */
   public String[] getInfo(InetAddress addr, int port) {
     try {
@@ -134,11 +138,7 @@ public class TcpClient {
    * @param port The locator's tcp/ip port
    * @param request The request message
    * @param timeout Timeout for sending the message and receiving a reply
-   *
    * @return the reply
-   *
-   * @throws IOException
-   * @throws ClassNotFoundException
    */
   public Object requestToServer(InetAddress addr, int port, Object request, int timeout)
       throws IOException, ClassNotFoundException {
@@ -154,11 +154,7 @@ public class TcpClient {
    * @param request The request message
    * @param timeout Timeout for sending the message and receiving a reply
    * @param replyExpected Whether to wait for a reply
-   *
    * @return the reply
-   *
-   * @throws IOException
-   * @throws ClassNotFoundException
    */
   public Object requestToServer(InetAddress addr, int port, Object request, int timeout,
       boolean replyExpected) throws IOException, ClassNotFoundException {
@@ -178,23 +174,14 @@ public class TcpClient {
    * @param request The request message
    * @param timeout Timeout for sending the message and receiving a reply
    * @param replyExpected Whether to wait for a reply
-   *
    * @return The reply, or null if no reply is expected
-   *
-   * @throws IOException
-   * @throws ClassNotFoundException
    */
   public Object requestToServer(InetSocketAddress ipAddr, Object request, int timeout,
       boolean replyExpected) throws IOException, ClassNotFoundException {
-    /*
-     * InetSocketAddress ipAddr; if (addr == null) { ipAddr = new InetSocketAddress(port); } else {
-     * ipAddr = new InetSocketAddress(addr, port); // fix for bug 30810 }
-     */
-
     long giveupTime = System.currentTimeMillis() + timeout;
 
     // Get the GemFire version of the TcpServer first, before sending any other request.
-    short serverVersion = getServerVersion(ipAddr, timeout).shortValue();
+    short serverVersion = getServerVersion(ipAddr, timeout);
 
     if (serverVersion > Version.CURRENT_ORDINAL) {
       serverVersion = Version.CURRENT_ORDINAL;
@@ -219,7 +206,8 @@ public class TcpClient {
     sock.setSoTimeout((int) newTimeout);
     DataOutputStream out = null;
     try {
-      out = new DataOutputStream(sock.getOutputStream());
+
+      out = new DataOutputStream(new BufferedOutputStream(sock.getOutputStream()));
 
       if (serverVersion < Version.CURRENT_ORDINAL) {
         out = new VersionedDataOutputStream(out, Version.fromOrdinalNoThrow(serverVersion, false));
@@ -234,7 +222,7 @@ public class TcpClient {
 
       if (replyExpected) {
         DataInputStream in = new DataInputStream(sock.getInputStream());
-        in = new VersionedDataInputStream(in, Version.fromOrdinal(serverVersion, false));
+        in = new VersionedDataInputStream(in, Version.fromOrdinal(serverVersion));
         try {
           Object response = DataSerializer.readObject(in);
           logger.debug("received response: {}", response);
@@ -249,7 +237,7 @@ public class TcpClient {
       } else {
         return null;
       }
-    } catch (UnsupportedVersionException ex) {
+    } catch (UnsupportedSerializationVersionException ex) {
       if (logger.isDebugEnabled()) {
         logger
             .debug("Remote TcpServer version: " + serverVersion + " is higher than local version: "
@@ -280,30 +268,32 @@ public class TcpClient {
   private Short getServerVersion(InetSocketAddress ipAddr, int timeout)
       throws IOException, ClassNotFoundException {
 
-    int gossipVersion = TcpServer.getCurrentGossipVersion();
-    Short serverVersion = null;
+    int gossipVersion;
+    Short serverVersion;
+    Socket sock;
 
     // Get GemFire version of TcpServer first, before sending any other request.
     synchronized (serverVersions) {
       serverVersion = serverVersions.get(ipAddr);
     }
+
     if (serverVersion != null) {
       return serverVersion;
     }
 
     gossipVersion = TcpServer.getOldGossipVersion();
 
-    Socket sock = null;
     try {
       sock = socketCreator.connect(ipAddr.getAddress(), ipAddr.getPort(), timeout, null, false);
       sock.setSoTimeout(timeout);
     } catch (SSLException e) {
-      throw new LocatorCancelException("Unable to form SSL connection", e);
+      throw new IllegalStateException("Unable to form SSL connection", e);
     }
 
     try {
-      DataOutputStream out = new DataOutputStream(sock.getOutputStream());
-      out = new VersionedDataOutputStream(out, Version.GFE_57);
+      OutputStream outputStream = new BufferedOutputStream(sock.getOutputStream());
+      DataOutputStream out =
+          new VersionedDataOutputStream(new DataOutputStream(outputStream), Version.GFE_57);
 
       out.writeInt(gossipVersion);
 
@@ -317,37 +307,41 @@ public class TcpClient {
       try {
         Object readObject = DataSerializer.readObject(in);
         if (!(readObject instanceof VersionResponse)) {
-          throw new LocatorCancelException(
-              "Unrecognisable response received: This could be the result of trying to connect a non-SSL-enabled client to an SSL-enabled locator.");
+          throw new IllegalThreadStateException(
+              "Server version response invalid: "
+                  + "This could be the result of trying to connect a non-SSL-enabled client to an SSL-enabled locator.");
         }
+
         VersionResponse response = (VersionResponse) readObject;
-        if (response != null) {
-          serverVersion = Short.valueOf(response.getVersionOrdinal());
-          synchronized (serverVersions) {
-            serverVersions.put(ipAddr, serverVersion);
-          }
-          return serverVersion;
+        serverVersion = response.getVersionOrdinal();
+        synchronized (serverVersions) {
+          serverVersions.put(ipAddr, serverVersion);
         }
+
+        return serverVersion;
+
       } catch (EOFException ex) {
         // old locators will not recognize the version request and will close the connection
       }
     } finally {
       try {
         sock.setSoLinger(true, 0); // initiate an abort on close to shut down the server's socket
+      } catch (Exception e) {
+        logger.error("Error aborting socket ", e);
+      }
+      try {
         sock.close();
       } catch (Exception e) {
         logger.error("Error closing socket ", e);
       }
-    }
-    if (logger.isDebugEnabled()) {
-      logger.debug("Locator " + ipAddr
-          + " did not respond to a request for its version.  I will assume it is using v5.7 for safety.");
+
     }
     synchronized (serverVersions) {
       serverVersions.put(ipAddr, Version.GFE_57.ordinal());
     }
     return Short.valueOf(Version.GFE_57.ordinal());
   }
+
 
   /**
    * Clear static class information concerning Locators. This is used in unit tests. It will force
@@ -359,5 +353,4 @@ public class TcpClient {
       serverVersions.clear();
     }
   }
-
 }

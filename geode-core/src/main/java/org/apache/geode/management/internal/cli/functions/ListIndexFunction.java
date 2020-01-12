@@ -19,11 +19,10 @@ import java.util.HashSet;
 import java.util.Set;
 
 import org.apache.geode.cache.Cache;
-import org.apache.geode.cache.execute.FunctionAdapter;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.cache.query.Index;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.internal.InternalEntity;
+import org.apache.geode.internal.cache.execute.InternalFunction;
 import org.apache.geode.management.internal.cli.domain.IndexDetails;
 
 /**
@@ -40,12 +39,14 @@ import org.apache.geode.management.internal.cli.domain.IndexDetails;
  * @since GemFire 7.0
  */
 @SuppressWarnings("unused")
-public class ListIndexFunction extends FunctionAdapter implements InternalEntity {
+public class ListIndexFunction implements InternalFunction {
 
+  @Override
   public String getId() {
     return ListIndexFunction.class.getName();
   }
 
+  @Override
   public void execute(final FunctionContext context) {
     try {
       final Set<IndexDetails> indexDetailsSet = new HashSet<IndexDetails>();
@@ -62,5 +63,4 @@ public class ListIndexFunction extends FunctionAdapter implements InternalEntity
       context.getResultSender().sendException(e);
     }
   }
-
 }

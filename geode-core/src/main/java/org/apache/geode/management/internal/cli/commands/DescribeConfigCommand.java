@@ -14,7 +14,6 @@
  */
 package org.apache.geode.management.internal.cli.commands;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -23,23 +22,30 @@ import java.util.TreeSet;
 import org.springframework.shell.core.annotation.CliCommand;
 import org.springframework.shell.core.annotation.CliOption;
 
-import org.apache.geode.cache.execute.FunctionInvocationTargetException;
-import org.apache.geode.cache.execute.ResultCollector;
 import org.apache.geode.distributed.DistributedMember;
+import org.apache.geode.internal.util.ArgumentRedactor;
 import org.apache.geode.management.cli.CliMetaData;
 import org.apache.geode.management.cli.ConverterHint;
-import org.apache.geode.management.cli.Result;
+import org.apache.geode.management.cli.GfshCommand;
 import org.apache.geode.management.internal.cli.domain.MemberConfigurationInfo;
+import org.apache.geode.management.internal.cli.functions.CliFunctionResult;
 import org.apache.geode.management.internal.cli.functions.GetMemberConfigInformationFunction;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.cli.result.CompositeResultData;
-import org.apache.geode.management.internal.cli.result.ErrorResultData;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
-import org.apache.geode.management.internal.cli.result.TabularResultData;
+import org.apache.geode.management.internal.cli.result.model.DataResultModel;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
+import org.apache.geode.management.internal.cli.result.model.TabularResultModel;
 import org.apache.geode.management.internal.security.ResourceOperation;
 import org.apache.geode.security.ResourcePermission;
 
-public class DescribeConfigCommand implements GfshCommand {
+public class DescribeConfigCommand extends GfshCommand {
+  public static final String API_PROPERTIES_SECTION = "api-properties";
+  public static final String RUNTIME_PROPERTIES_SECTION = "runtime-properties";
+  public static final String FILE_PROPERTIES_SECTION = "file-properties";
+  public static final String DEFAULT_PROPERTIES_SECTION = "default-properties";
+  public static final String CACHE_ATTRIBUTES_SECTION = "cache-attributes";
+  public static final String CACHESERVER_ATTRIBUTES_SECTION = "cacheserver-attributes";
+  public static final String JVM_ARGS_SECTION = "jvm-args";
+
   private final GetMemberConfigInformationFunction getMemberConfigFunction =
       new GetMemberConfigInformationFunction();
 
@@ -47,99 +53,79 @@ public class DescribeConfigCommand implements GfshCommand {
   @CliMetaData(relatedTopic = {CliStrings.TOPIC_GEODE_CONFIG})
   @ResourceOperation(resource = ResourcePermission.Resource.CLUSTER,
       operation = ResourcePermission.Operation.READ)
-  public Result describeConfig(
+  public ResultModel describeConfig(
       @CliOption(key = CliStrings.MEMBER, optionContext = ConverterHint.ALL_MEMBER_IDNAME,
           help = CliStrings.DESCRIBE_CONFIG__MEMBER__HELP, mandatory = true) String memberNameOrId,
       @CliOption(key = CliStrings.DESCRIBE_CONFIG__HIDE__DEFAULTS,
           help = CliStrings.DESCRIBE_CONFIG__HIDE__DEFAULTS__HELP, unspecifiedDefaultValue = "true",
           specifiedDefaultValue = "true") boolean hideDefaults) {
 
-    Result result = null;
-    try {
-      DistributedMember targetMember = null;
+    ResultModel result = new ResultModel();
 
-      if (memberNameOrId != null && !memberNameOrId.isEmpty()) {
-        targetMember = getMember(memberNameOrId);
-      }
+    DistributedMember targetMember = null;
 
-      ResultCollector<?, ?> rc =
-          executeFunction(getMemberConfigFunction, hideDefaults, targetMember);
-      ArrayList<?> output = (ArrayList<?>) rc.getResult();
-      Object obj = output.get(0);
-
-      if (obj != null && obj instanceof MemberConfigurationInfo) {
-        MemberConfigurationInfo memberConfigInfo = (MemberConfigurationInfo) obj;
-
-        CompositeResultData crd = ResultBuilder.createCompositeResultData();
-        crd.setHeader(CliStrings.format(CliStrings.DESCRIBE_CONFIG__HEADER__TEXT, memberNameOrId));
-
-        List<String> jvmArgsList = memberConfigInfo.getJvmInputArguments();
-        TabularResultData jvmInputArgs = crd.addSection().addSection().addTable();
-
-        for (String jvmArg : jvmArgsList) {
-          jvmInputArgs.accumulate("JVM command line arguments", jvmArg);
-        }
-
-        addSection(crd, memberConfigInfo.getGfePropsSetUsingApi(),
-            "GemFire properties defined using the API");
-        addSection(crd, memberConfigInfo.getGfePropsRuntime(),
-            "GemFire properties defined at the runtime");
-        addSection(crd, memberConfigInfo.getGfePropsSetFromFile(),
-            "GemFire properties defined with the property file");
-        addSection(crd, memberConfigInfo.getGfePropsSetWithDefaults(),
-            "GemFire properties using default values");
-        addSection(crd, memberConfigInfo.getCacheAttributes(), "Cache attributes");
-
-        List<Map<String, String>> cacheServerAttributesList =
-            memberConfigInfo.getCacheServerAttributes();
-
-        if (cacheServerAttributesList != null && !cacheServerAttributesList.isEmpty()) {
-          CompositeResultData.SectionResultData cacheServerSection = crd.addSection();
-          cacheServerSection.setHeader("Cache-server attributes");
-
-          for (Map<String, String> cacheServerAttributes : cacheServerAttributesList) {
-            addSubSection(cacheServerSection, cacheServerAttributes);
-          }
-        }
-        result = ResultBuilder.buildResult(crd);
-      }
-
-    } catch (FunctionInvocationTargetException e) {
-      result = ResultBuilder.createGemFireErrorResult(CliStrings
-          .format(CliStrings.COULD_NOT_EXECUTE_COMMAND_TRY_AGAIN, CliStrings.DESCRIBE_CONFIG));
-    } catch (Exception e) {
-      ErrorResultData erd = ResultBuilder.createErrorResultData();
-      erd.addLine(e.getMessage());
-      result = ResultBuilder.buildResult(erd);
+    if (memberNameOrId != null && !memberNameOrId.isEmpty()) {
+      targetMember = getMember(memberNameOrId);
     }
+
+    CliFunctionResult functionResult =
+        executeFunctionAndGetFunctionResult(getMemberConfigFunction, hideDefaults, targetMember);
+    Object obj = functionResult.getResultObject();
+
+    if (obj != null && obj instanceof MemberConfigurationInfo) {
+      MemberConfigurationInfo memberConfigInfo = (MemberConfigurationInfo) obj;
+
+      result
+          .setHeader(CliStrings.format(CliStrings.DESCRIBE_CONFIG__HEADER__TEXT, memberNameOrId));
+
+      List<String> jvmArgsList = memberConfigInfo.getJvmInputArguments();
+      TabularResultModel jvmInputArgs = result.addTable(JVM_ARGS_SECTION);
+
+      for (String jvmArg : jvmArgsList) {
+        // This redaction should be redundant, since jvmArgs should have already been redacted in
+        // MemberConfigurationInfo. Still, better redundant than missing.
+        jvmInputArgs.accumulate("JVM command line arguments", ArgumentRedactor.redact(jvmArg));
+      }
+
+      addSection(API_PROPERTIES_SECTION, result, memberConfigInfo.getGfePropsSetUsingApi(),
+          "GemFire properties defined using the API");
+      addSection(RUNTIME_PROPERTIES_SECTION, result, memberConfigInfo.getGfePropsRuntime(),
+          "GemFire properties defined at the runtime");
+      addSection(FILE_PROPERTIES_SECTION, result, memberConfigInfo.getGfePropsSetFromFile(),
+          "GemFire properties defined with the property file");
+      addSection(DEFAULT_PROPERTIES_SECTION, result,
+          memberConfigInfo.getGfePropsSetWithDefaults(),
+          "GemFire properties using default values");
+      addSection(CACHE_ATTRIBUTES_SECTION, result, memberConfigInfo.getCacheAttributes(),
+          "Cache attributes");
+
+      List<Map<String, String>> cacheServerAttributesList =
+          memberConfigInfo.getCacheServerAttributes();
+
+      if (cacheServerAttributesList != null && !cacheServerAttributesList.isEmpty()) {
+        for (Map<String, String> cacheServerAttributes : cacheServerAttributesList) {
+          addSection(CACHESERVER_ATTRIBUTES_SECTION, result, cacheServerAttributes,
+              "Cache-server attributes");
+        }
+      }
+    }
+
     return result;
   }
 
-  private void addSection(CompositeResultData crd, Map<String, String> attrMap, String headerText) {
+  private void addSection(String namedSection, ResultModel model, Map<String, String> attrMap,
+      String headerText) {
     if (attrMap != null && !attrMap.isEmpty()) {
-      CompositeResultData.SectionResultData section = crd.addSection();
-      section.setHeader(headerText);
-      section.addSeparator('.');
+      DataResultModel dataSection = model.addData(namedSection);
+      dataSection.setHeader(headerText);
       Set<String> attributes = new TreeSet<>(attrMap.keySet());
 
       for (String attribute : attributes) {
         String attributeValue = attrMap.get(attribute);
-        section.addData(attribute, attributeValue);
+        dataSection.addData(attribute,
+            ArgumentRedactor.redactArgumentIfNecessary(attribute, attributeValue));
       }
     }
   }
 
-  private void addSubSection(CompositeResultData.SectionResultData section,
-      Map<String, String> attrMap) {
-    if (!attrMap.isEmpty()) {
-      CompositeResultData.SectionResultData subSection = section.addSection();
-      Set<String> attributes = new TreeSet<>(attrMap.keySet());
-      subSection.setHeader("");
-
-      for (String attribute : attributes) {
-        String attributeValue = attrMap.get(attribute);
-        subSection.addData(attribute, attributeValue);
-      }
-    }
-  }
 }

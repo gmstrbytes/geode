@@ -14,14 +14,30 @@
  */
 package org.apache.geode.admin.internal;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
 
-import org.apache.geode.admin.*;
-import org.apache.geode.cache.*;
+import org.apache.geode.admin.AdminException;
+import org.apache.geode.admin.CacheDoesNotExistException;
+import org.apache.geode.admin.GemFireMemberStatus;
+import org.apache.geode.admin.RegionSubRegionSnapshot;
+import org.apache.geode.admin.Statistic;
+import org.apache.geode.admin.SystemMemberBridgeServer;
+import org.apache.geode.admin.SystemMemberCache;
+import org.apache.geode.admin.SystemMemberCacheServer;
+import org.apache.geode.admin.SystemMemberRegion;
+import org.apache.geode.cache.Region;
+import org.apache.geode.cache.RegionAttributes;
 import org.apache.geode.internal.Assert;
 import org.apache.geode.internal.ObjIdMap;
-import org.apache.geode.internal.admin.*;
-import org.apache.geode.internal.i18n.LocalizedStrings;
+import org.apache.geode.internal.admin.AdminBridgeServer;
+import org.apache.geode.internal.admin.CacheInfo;
+import org.apache.geode.internal.admin.GemFireVM;
+import org.apache.geode.internal.admin.Stat;
+import org.apache.geode.internal.admin.StatResource;
 
 /**
  * View of a GemFire system member's cache.
@@ -33,7 +49,7 @@ public class SystemMemberCacheImpl implements SystemMemberCache {
   protected CacheInfo info;
   protected Statistic[] statistics;
 
-  /** Maps the id of a bridge server to its SystemMemberBridgeServer */
+  /** Maps the id of a cache server to its SystemMemberBridgeServer */
   private ObjIdMap bridgeServers = new ObjIdMap();
 
   // constructors
@@ -42,8 +58,8 @@ public class SystemMemberCacheImpl implements SystemMemberCache {
     this.info = vm.getCacheInfo();
     if (this.info == null) {
       throw new CacheDoesNotExistException(
-          LocalizedStrings.SystemMemberCacheImpl_THE_VM_0_DOES_NOT_CURRENTLY_HAVE_A_CACHE
-              .toLocalizedString(vm.getId()));
+          String.format("The VM %s does not currently have a cache.",
+              vm.getId()));
     }
     initStats();
   }
@@ -52,6 +68,7 @@ public class SystemMemberCacheImpl implements SystemMemberCache {
   /**
    * The name of the cache.
    */
+  @Override
   public String getName() {
     String result = this.info.getName();
     if (result == null || result.length() == 0) {
@@ -63,42 +80,52 @@ public class SystemMemberCacheImpl implements SystemMemberCache {
   /**
    * Value that uniquely identifies an instance of a cache for a given member.
    */
+  @Override
   public int getId() {
     return this.info.getId();
   }
 
+  @Override
   public boolean isClosed() {
     return this.info.isClosed();
   }
 
+  @Override
   public int getLockTimeout() {
     return this.info.getLockTimeout();
   }
 
+  @Override
   public void setLockTimeout(int seconds) throws AdminException {
     this.info = this.vm.setCacheLockTimeout(this.info, seconds);
   }
 
+  @Override
   public int getLockLease() {
     return this.info.getLockLease();
   }
 
+  @Override
   public void setLockLease(int seconds) throws AdminException {
     this.info = this.vm.setCacheLockLease(this.info, seconds);
   }
 
+  @Override
   public int getSearchTimeout() {
     return this.info.getSearchTimeout();
   }
 
+  @Override
   public void setSearchTimeout(int seconds) throws AdminException {
     this.info = this.vm.setCacheSearchTimeout(this.info, seconds);
   }
 
+  @Override
   public int getUpTime() {
     return this.info.getUpTime();
   }
 
+  @Override
   public java.util.Set getRootRegionNames() {
     Set set = this.info.getRootRegionNames();
     if (set == null) {
@@ -108,6 +135,7 @@ public class SystemMemberCacheImpl implements SystemMemberCache {
   }
   // operations
 
+  @Override
   public void refresh() {
     if (!this.info.isClosed()) {
       CacheInfo cur = vm.getCacheInfo();
@@ -123,23 +151,21 @@ public class SystemMemberCacheImpl implements SystemMemberCache {
   }
 
   public GemFireMemberStatus getSnapshot() {
-    // System.out.println(">>>SystemMemberCacheJmxImpl::getSnapshot:pre::: " + this.vm);
     GemFireMemberStatus stat = this.vm.getSnapshot();
-    // System.out.println(">>>SystemMemberCacheJmxImpl::getSnapshot:post::: " + stat);
     return stat;
   }
 
   public RegionSubRegionSnapshot getRegionSnapshot() {
-    // System.out.println(">>>SystemMemberCacheJmxImpl::getRegionSnapshot:pre::: " + this.vm);
     RegionSubRegionSnapshot snap = this.vm.getRegionSnapshot();
-    // System.out.println(">>>SystemMemberCacheJmxImpl::getRegionSnapshot:post::: " + snap);
     return snap;
   }
 
+  @Override
   public Statistic[] getStatistics() {
     return this.statistics;
   }
 
+  @Override
   public SystemMemberRegion getRegion(String path) throws org.apache.geode.admin.AdminException {
     Region r = this.vm.getRegion(this.info, path);
     if (r == null) {
@@ -149,6 +175,7 @@ public class SystemMemberCacheImpl implements SystemMemberCache {
     }
   }
 
+  @Override
   public SystemMemberRegion createRegion(String name, RegionAttributes attrs)
       throws AdminException {
     Region r = this.vm.createVMRootRegion(this.info, name, attrs);
@@ -160,6 +187,7 @@ public class SystemMemberCacheImpl implements SystemMemberCache {
     }
   }
 
+  @Override
   public SystemMemberRegion createVMRegion(String name, RegionAttributes attrs)
       throws AdminException {
     return createRegion(name, attrs);
@@ -186,7 +214,7 @@ public class SystemMemberCacheImpl implements SystemMemberCache {
     for (int i = 0; i < stats.length; i++) {
       statList.add(createStatistic(stats[i]));
     }
-    this.statistics = (Statistic[]) statList.toArray(new Statistic[statList.size()]);
+    this.statistics = (Statistic[]) statList.toArray(new Statistic[0]);
   }
 
   private void updateStats() {
@@ -240,6 +268,7 @@ public class SystemMemberCacheImpl implements SystemMemberCache {
     return sysMemberRegion;
   }
 
+  @Override
   public SystemMemberCacheServer addCacheServer() throws AdminException {
 
     AdminBridgeServer bridge = this.vm.addCacheServer(this.info);
@@ -270,6 +299,7 @@ public class SystemMemberCacheImpl implements SystemMemberCache {
     return bridges;
   }
 
+  @Override
   public SystemMemberCacheServer[] getCacheServers() throws AdminException {
     Collection bridges = getCacheServersCollection();
     SystemMemberCacheServer[] array = new SystemMemberCacheServer[bridges.size()];
@@ -285,6 +315,7 @@ public class SystemMemberCacheImpl implements SystemMemberCache {
     return new SystemMemberBridgeServerImpl(this, bridge);
   }
 
+  @Override
   public boolean isServer() throws AdminException {
     return this.info.isServer();
   }

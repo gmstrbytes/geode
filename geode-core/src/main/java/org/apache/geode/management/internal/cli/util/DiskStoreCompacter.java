@@ -20,11 +20,12 @@ import java.io.StringReader;
 import java.util.Properties;
 import java.util.regex.Pattern;
 
+import org.apache.commons.lang3.exception.ExceptionUtils;
+
 import org.apache.geode.GemFireIOException;
 import org.apache.geode.cache.DiskAccessException;
 import org.apache.geode.internal.cache.DiskStoreImpl;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.management.internal.cli.CliUtil;
+import org.apache.geode.internal.lang.StringUtils;
 import org.apache.geode.management.internal.cli.GfshParser;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
 
@@ -34,7 +35,7 @@ import org.apache.geode.management.internal.cli.i18n.CliStrings;
  * @since GemFire 7.0
  */
 public class DiskStoreCompacter {
-  public static String STACKTRACE_START = "--------------------------";
+  public static final String STACKTRACE_START = "--------------------------";
 
   public static void main(String[] args) {
     String errorString = null;
@@ -45,6 +46,7 @@ public class DiskStoreCompacter {
     String[] diskDirs = null;;
     String maxOpLogSize = null;;
     long maxOplogSize = -1;
+    boolean errored = false;
     try {
       if (args.length < 3) {
         throw new IllegalArgumentException(
@@ -68,15 +70,16 @@ public class DiskStoreCompacter {
 
       compact(diskStoreName, diskDirs, maxOplogSize);
     } catch (GemFireIOException e) {
+      errored = true;
       Throwable cause = e.getCause();
       if (cause instanceof IllegalStateException) {
         String message = cause.getMessage();
         if (stringMatches(
-            LocalizedStrings.DiskInitFile_THE_INIT_FILE_0_DOES_NOT_EXIST.toLocalizedString("(.*)"),
+            String.format("The init file %s does not exist.", "(.*)"),
             message)) {
           errorString = CliStrings.format(
               CliStrings.COMPACT_OFFLINE_DISK_STORE__MSG__VERIFY_WHETHER_DISKSTORE_EXISTS_IN_0,
-              CliUtil.arrayToString(diskDirs));
+              StringUtils.arrayToString(diskDirs));
         } else {
           errorString = message;
         }
@@ -85,8 +88,8 @@ public class DiskStoreCompacter {
         Throwable nestedCause = cause.getCause();
         if (nestedCause instanceof IOException) {
           String message = nestedCause.getMessage();
-          if (stringMatches(LocalizedStrings.Oplog_THE_FILE_0_IS_BEING_USED_BY_ANOTHER_PROCESS
-              .toLocalizedString("(.*)"), message)) {
+          if (stringMatches(String.format("The file %s is being used by another process.",
+              "(.*)"), message)) {
             errorString =
                 CliStrings.COMPACT_OFFLINE_DISK_STORE__MSG__DISKSTORE_IN_USE_COMPACT_DISKSTORE_CAN_BE_USED;
             isKnownCause = true;
@@ -95,15 +98,16 @@ public class DiskStoreCompacter {
         if (!isKnownCause) {
           errorString = CliStrings.format(
               CliStrings.COMPACT_OFFLINE_DISK_STORE__MSG__CANNOT_ACCESS_DISKSTORE_0_FROM_1_CHECK_GFSH_LOGS,
-              new Object[] {diskStoreName, CliUtil.arrayToString(diskDirs)});
+              new Object[] {diskStoreName, StringUtils.arrayToString(diskDirs)});
         }
       } else {
         errorString = e.getMessage(); // which are other known exceptions?
       }
-      stackTraceString = CliUtil.stackTraceAsString(e);
+      stackTraceString = ExceptionUtils.getStackTrace(e);
     } catch (IllegalArgumentException e) {
+      errored = true;
       errorString = e.getMessage();
-      stackTraceString = CliUtil.stackTraceAsString(e);
+      stackTraceString = ExceptionUtils.getStackTrace(e);
     } finally {
       if (errorString != null) {
         System.err.println(errorString);
@@ -111,6 +115,10 @@ public class DiskStoreCompacter {
       if (stackTraceString != null) {
         System.err.println(STACKTRACE_START);
         System.err.println(stackTraceString);
+      }
+
+      if (errored) {
+        System.exit(1);
       }
     }
   }
@@ -128,7 +136,7 @@ public class DiskStoreCompacter {
     } catch (Exception ex) {
       String fieldsMessage = (maxOplogSize != -1
           ? CliStrings.COMPACT_OFFLINE_DISK_STORE__MAXOPLOGSIZE + "=" + maxOplogSize + "," : "");
-      fieldsMessage += CliUtil.arrayToString(dirs);
+      fieldsMessage += StringUtils.arrayToString(dirs);
       throw new GemFireIOException(CliStrings.format(
           CliStrings.COMPACT_OFFLINE_DISK_STORE__MSG__ERROR_WHILE_COMPACTING_DISKSTORE_0_WITH_1_REASON_2,
           new Object[] {diskStoreName, fieldsMessage, ex.getMessage()}), ex);

@@ -12,9 +12,6 @@
  * or implied. See the License for the specific language governing permissions and limitations under
  * the License.
  */
-/**
- *
- */
 package org.apache.geode.management.internal.cli.converters;
 
 import java.util.List;
@@ -25,9 +22,6 @@ import org.springframework.shell.core.MethodTarget;
 
 import org.apache.geode.management.internal.cli.util.ConnectionEndpoint;
 
-/**
- *
- */
 public class ConnectionEndpointConverter implements Converter<ConnectionEndpoint> {
   // Defaults
   static final String DEFAULT_JMX_HOST = "localhost";
@@ -102,47 +96,4 @@ public class ConnectionEndpointConverter implements Converter<ConnectionEndpoint
 
     return completions.size() > 0;
   }
-
-  public static void main(String[] args) {
-    ConnectionEndpointConverter cec = new ConnectionEndpointConverter();
-
-    try {
-      System.out.println(cec.convertFromText("halibut[2555]", null, null));
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
-
-    try {
-      System.out.println(cec.convertFromText("halibut.pune.gemstone.com[2555]", null, null));
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
-
-    try {
-      System.out.println(cec.convertFromText("halibut[]", null, null));
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
-
-    try {
-      System.out.println(cec.convertFromText("halibut2555]", null, null));
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
-
-    try {
-      System.out.println(cec.convertFromText("halibut[", null, null));
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
-
-    try {
-      System.out.println(cec.convertFromText("halibut", null, null));
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
-
-
-  }
-
 }

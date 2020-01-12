@@ -46,10 +46,11 @@ public class RestSecurityConfiguration extends WebSecurityConfigurerAdapter {
     return super.authenticationManagerBean();
   }
 
+  @Override
   protected void configure(HttpSecurity http) throws Exception {
     http.sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS).and()
         .authorizeRequests()
-        .antMatchers("/ping", "/docs/**", "/swagger-ui.html", "/v2/api-docs/**",
+        .antMatchers("/ping", "/docs/**", "/swagger-ui.html", "/v1/api-docs/**",
             "/webjars/springfox-swagger-ui/**", "/swagger-resources/**")
         .permitAll().anyRequest().authenticated().and().csrf().disable();
 

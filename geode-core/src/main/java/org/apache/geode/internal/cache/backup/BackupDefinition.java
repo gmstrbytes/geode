@@ -23,25 +23,28 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.geode.cache.DiskStore;
+import org.apache.geode.internal.util.JavaWorkarounds;
 
 class BackupDefinition {
+
   private final Map<DiskStore, Set<Path>> oplogFilesByDiskStore = new HashMap<>();
   private final Set<Path> configFiles = new HashSet<>();
-  private final Set<Path> userFiles = new HashSet<>();
-  private final Set<Path> deployedJars = new HashSet<>();
+  private final Map<Path, Path> userFiles = new HashMap<>();
+  private final Map<Path, Path> deployedJars = new HashMap<>();
   private final Map<DiskStore, Path> diskInitFiles = new HashMap<>();
+
   private RestoreScript restoreScript;
 
   void addConfigFileToBackup(Path configFile) {
     configFiles.add(configFile);
   }
 
-  void addUserFilesToBackup(Path userFile) {
-    userFiles.add(userFile);
+  void addUserFilesToBackup(Path userFile, Path source) {
+    userFiles.put(userFile, source);
   }
 
-  void addDeployedJarToBackup(Path deployedJar) {
-    deployedJars.add(deployedJar);
+  void addDeployedJarToBackup(Path deployedJar, Path source) {
+    deployedJars.put(deployedJar, source);
   }
 
   void addDiskInitFile(DiskStore diskStore, Path diskInitFile) {
@@ -60,12 +63,12 @@ class BackupDefinition {
     return Collections.unmodifiableSet(configFiles);
   }
 
-  Set<Path> getUserFiles() {
-    return Collections.unmodifiableSet(userFiles);
+  Map<Path, Path> getUserFiles() {
+    return Collections.unmodifiableMap(userFiles);
   }
 
-  Set<Path> getDeployedJars() {
-    return Collections.unmodifiableSet(deployedJars);
+  Map<Path, Path> getDeployedJars() {
+    return Collections.unmodifiableMap(deployedJars);
   }
 
   Map<DiskStore, Path> getDiskInitFiles() {
@@ -77,7 +80,8 @@ class BackupDefinition {
   }
 
   void addOplogFileToBackup(DiskStore diskStore, Path fileLocation) {
-    Set<Path> files = oplogFilesByDiskStore.computeIfAbsent(diskStore, k -> new HashSet<>());
+    Set<Path> files =
+        JavaWorkarounds.computeIfAbsent(oplogFilesByDiskStore, diskStore, k -> new HashSet<>());
     files.add(fileLocation);
   }
 }

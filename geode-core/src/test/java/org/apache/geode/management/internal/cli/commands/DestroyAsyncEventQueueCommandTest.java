@@ -31,27 +31,24 @@ import java.util.Set;
 import org.junit.Before;
 import org.junit.ClassRule;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 import org.mockito.ArgumentCaptor;
 
 import org.apache.geode.cache.execute.ResultCollector;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.internal.ClusterConfigurationService;
+import org.apache.geode.distributed.internal.InternalConfigurationPersistenceService;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.management.internal.cli.functions.CliFunctionResult;
 import org.apache.geode.management.internal.cli.functions.DestroyAsyncEventQueueFunction;
 import org.apache.geode.management.internal.cli.functions.DestroyAsyncEventQueueFunctionArgs;
 import org.apache.geode.management.internal.configuration.domain.Configuration;
-import org.apache.geode.test.junit.categories.UnitTest;
 import org.apache.geode.test.junit.rules.GfshParserRule;
 
-@Category(UnitTest.class)
 public class DestroyAsyncEventQueueCommandTest {
   @ClassRule
   public static GfshParserRule gfsh = new GfshParserRule();
 
   private DestroyAsyncEventQueueCommand command;
-  private ClusterConfigurationService service;
+  private InternalConfigurationPersistenceService service;
   private Map<String, Configuration> configurationMap;
   private DistributedMember member1 = mock(DistributedMember.class);
   private DistributedMember member2 = mock(DistributedMember.class);
@@ -93,7 +90,7 @@ public class DestroyAsyncEventQueueCommandTest {
         DestroyAsyncEventQueueCommand.DESTROY_ASYNC_EVENT_QUEUE__AEQ_0_DESTROYED, "queue1")));
 
     gfsh.executeAndAssertThat(command, "destroy async-event-queue --id=queue1").statusIsSuccess()
-        .containsOutput("\\\"queue1\\\" destroyed").tableHasRowCount("Member", 2);
+        .containsOutput("\"queue1\" destroyed").tableHasRowCount(2);
   }
 
   @Test
@@ -113,7 +110,7 @@ public class DestroyAsyncEventQueueCommandTest {
 
     gfsh.executeAndAssertThat(command,
         "destroy async-event-queue --id=nonexistentQueue --if-exists")
-        .tableHasRowCount("Member", 2);
+        .tableHasRowCount(2);
     verify(command).executeAndGetFunctionResult(any(), argCaptor.capture(), eq(members));
     assertThat(argCaptor.getValue().isIfExists()).isEqualTo(true);
   }
@@ -132,7 +129,7 @@ public class DestroyAsyncEventQueueCommandTest {
         ArgumentCaptor.forClass(DestroyAsyncEventQueueFunctionArgs.class);
 
     gfsh.executeAndAssertThat(command, "destroy async-event-queue --id=nonexistentQueue")
-        .statusIsError().tableHasRowCount("Member", 2);
+        .statusIsError().tableHasRowCount(2);
     verify(command).executeAndGetFunctionResult(any(), argCaptor.capture(), eq(members));
     assertThat(argCaptor.getValue().isIfExists()).isEqualTo(false);
   }

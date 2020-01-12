@@ -16,29 +16,29 @@
 package org.apache.geode.management.internal.cli.commands;
 
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.shell.core.annotation.CliCommand;
 import org.springframework.shell.core.annotation.CliOption;
 
-import org.apache.geode.cache.CacheClosedException;
+import org.apache.geode.annotations.Immutable;
 import org.apache.geode.cache.execute.ResultCollector;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.management.cli.CliMetaData;
 import org.apache.geode.management.cli.ConverterHint;
-import org.apache.geode.management.cli.Result;
-import org.apache.geode.management.internal.cli.CliUtil;
-import org.apache.geode.management.internal.cli.domain.CacheServerInfo;
-import org.apache.geode.management.internal.cli.domain.MemberInformation;
+import org.apache.geode.management.cli.GfshCommand;
 import org.apache.geode.management.internal.cli.functions.GetMemberInformationFunction;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.cli.result.CompositeResultData;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
+import org.apache.geode.management.internal.cli.result.model.DataResultModel;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.management.internal.security.ResourceOperation;
+import org.apache.geode.management.runtime.CacheServerInfo;
+import org.apache.geode.management.runtime.MemberInformation;
 import org.apache.geode.security.ResourcePermission;
 
-public class DescribeMemberCommand implements GfshCommand {
+public class DescribeMemberCommand extends GfshCommand {
+  @Immutable
   private static final GetMemberInformationFunction getMemberInformation =
       new GetMemberInformationFunction();
 
@@ -46,77 +46,62 @@ public class DescribeMemberCommand implements GfshCommand {
   @CliMetaData(relatedTopic = CliStrings.TOPIC_GEODE_SERVER)
   @ResourceOperation(resource = ResourcePermission.Resource.CLUSTER,
       operation = ResourcePermission.Operation.READ)
-  public Result describeMember(@CliOption(key = CliStrings.DESCRIBE_MEMBER__IDENTIFIER,
+  public ResultModel describeMember(@CliOption(key = CliStrings.DESCRIBE_MEMBER__IDENTIFIER,
       optionContext = ConverterHint.ALL_MEMBER_IDNAME, help = CliStrings.DESCRIBE_MEMBER__HELP,
       mandatory = true) String memberNameOrId) {
-    Result result = null;
+    DistributedMember memberToBeDescribed = getMember(memberNameOrId);
 
-    try {
-      DistributedMember memberToBeDescribed = getMember(memberNameOrId);
+    ResultCollector<?, ?> rc = executeFunction(getMemberInformation, null, memberToBeDescribed);
 
-      ResultCollector<?, ?> rc = executeFunction(getMemberInformation, null, memberToBeDescribed);
+    ArrayList<?> output = (ArrayList<?>) rc.getResult();
+    Object obj = output.get(0);
 
-      ArrayList<?> output = (ArrayList<?>) rc.getResult();
-      Object obj = output.get(0);
+    if (obj == null || !(obj instanceof MemberInformation)) {
+      return ResultModel.createInfo(String.format(
+          CliStrings.DESCRIBE_MEMBER__MSG__INFO_FOR__0__COULD_NOT_BE_RETRIEVED, memberNameOrId));
+    }
+    ResultModel result = new ResultModel();
+    DataResultModel memberInfo = result.addData("memberInfo");
 
-      if (obj != null && (obj instanceof MemberInformation)) {
-        CompositeResultData crd = ResultBuilder.createCompositeResultData();
+    MemberInformation memberInformation = (MemberInformation) obj;
+    memberInfo.addData("Name", memberInformation.getMemberName());
+    memberInfo.addData("Id", memberInformation.getId());
+    memberInfo.addData("Host", memberInformation.getHost());
+    memberInfo.addData("Regions", StringUtils.join(memberInformation.getHostedRegions(), '\n'));
+    memberInfo.addData("PID", memberInformation.getProcessId());
+    memberInfo.addData("Groups", memberInformation.getGroups());
+    memberInfo.addData("Used Heap", memberInformation.getHeapUsage() + "M");
+    memberInfo.addData("Max Heap", memberInformation.getMaxHeapSize() + "M");
 
-        MemberInformation memberInformation = (MemberInformation) obj;
-        memberInformation.setName(memberToBeDescribed.getName());
-        memberInformation.setId(memberToBeDescribed.getId());
-        memberInformation.setHost(memberToBeDescribed.getHost());
-        memberInformation.setProcessId("" + memberToBeDescribed.getProcessId());
+    String offHeapMemorySize = memberInformation.getOffHeapMemorySize();
+    if (offHeapMemorySize != null && !offHeapMemorySize.isEmpty()) {
+      memberInfo.addData("Off Heap Size", offHeapMemorySize);
+    }
 
-        CompositeResultData.SectionResultData section = crd.addSection();
-        section.addData("Name", memberInformation.getName());
-        section.addData("Id", memberInformation.getId());
-        section.addData("Host", memberInformation.getHost());
-        section.addData("Regions",
-            CliUtil.convertStringSetToString(memberInformation.getHostedRegions(), '\n'));
-        section.addData("PID", memberInformation.getProcessId());
-        section.addData("Groups", memberInformation.getGroups());
-        section.addData("Used Heap", memberInformation.getHeapUsage() + "M");
-        section.addData("Max Heap", memberInformation.getMaxHeapSize() + "M");
+    memberInfo.addData("Working Dir", memberInformation.getWorkingDirPath());
+    memberInfo.addData("Log file", memberInformation.getLogFilePath());
 
-        String offHeapMemorySize = memberInformation.getOffHeapMemorySize();
-        if (offHeapMemorySize != null && !offHeapMemorySize.isEmpty()) {
-          section.addData("Off Heap Size", offHeapMemorySize);
-        }
+    memberInfo.addData("Locators", memberInformation.getLocators());
 
-        section.addData("Working Dir", memberInformation.getWorkingDirPath());
-        section.addData("Log file", memberInformation.getLogFilePath());
-
-        section.addData("Locators", memberInformation.getLocators());
-
-        if (memberInformation.isServer()) {
-          CompositeResultData.SectionResultData clientServiceSection = crd.addSection();
-          List<CacheServerInfo> csList = memberInformation.getCacheServeInfo();
-
-          if (csList != null) {
-            Iterator<CacheServerInfo> iters = csList.iterator();
-            clientServiceSection.setHeader("Cache Server Information");
-
-            while (iters.hasNext()) {
-              CacheServerInfo cacheServerInfo = iters.next();
-              clientServiceSection.addData("Server Bind", cacheServerInfo.getBindAddress());
-              clientServiceSection.addData("Server Port", cacheServerInfo.getPort());
-              clientServiceSection.addData("Running", cacheServerInfo.isRunning());
-            }
-
-            clientServiceSection.addData("Client Connections", memberInformation.getClientCount());
+    if (memberInformation.isServer()) {
+      List<CacheServerInfo> csList = memberInformation.getCacheServerInfo();
+      if (csList != null) {
+        int serverCount = 0;
+        for (CacheServerInfo cacheServerInfo : csList) {
+          DataResultModel serverInfo = result.addData("serverInfo" + serverCount++);
+          if (csList.size() == 1) {
+            serverInfo.setHeader("Cache Server Information");
+          } else {
+            serverInfo.setHeader("Cache Server " + serverCount + " Information");
           }
+          serverInfo.addData("Server Bind", cacheServerInfo.getBindAddress());
+          serverInfo.addData("Server Port", cacheServerInfo.getPort());
+          serverInfo.addData("Running", cacheServerInfo.isRunning());
         }
-        result = ResultBuilder.buildResult(crd);
 
-      } else {
-        result = ResultBuilder.createInfoResult(
-            CliStrings.format(CliStrings.DESCRIBE_MEMBER__MSG__INFO_FOR__0__COULD_NOT_BE_RETRIEVED,
-                new Object[] {memberNameOrId}));
+        DataResultModel connectionInfo = result.addData("connectionInfo");
+        connectionInfo.addData("Client Connections", memberInformation.getClientCount());
       }
-    } catch (CacheClosedException ignored) {
-    } catch (Exception e) {
-      result = ResultBuilder.createGemFireErrorResult(e.getMessage());
     }
     return result;
   }

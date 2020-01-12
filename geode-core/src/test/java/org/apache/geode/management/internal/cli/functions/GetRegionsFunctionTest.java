@@ -12,77 +12,109 @@
  * or implied. See the License for the specific language governing permissions and limitations under
  * the License.
  */
-
 package org.apache.geode.management.internal.cli.functions;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.MockitoAnnotations.initMocks;
 
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Collections;
 
-import org.awaitility.core.ConditionTimeoutException;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
 
 import org.apache.geode.cache.Cache;
-import org.apache.geode.cache.CacheFactory;
+import org.apache.geode.cache.DataPolicy;
+import org.apache.geode.cache.Region;
+import org.apache.geode.cache.RegionAttributes;
+import org.apache.geode.cache.Scope;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.cache.execute.ResultSender;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.management.internal.cli.domain.RegionInformation;
 
-@Category(UnitTest.class)
+/**
+ * Characterization unit tests for {@code GetRegionsFunction};
+ */
 public class GetRegionsFunctionTest {
 
-  private enum STATE {
-    INITIAL, BLOCKING, FINISHED
-  };
+  @Mock
+  private RegionAttributes<Object, Object> regionAttributes;
 
-  private static GetRegionsFunctionTest.STATE lockingThreadState =
-      GetRegionsFunctionTest.STATE.INITIAL;
-  private static AtomicBoolean lockAquired = new AtomicBoolean(false);
-  private static AtomicBoolean functionExecuted = new AtomicBoolean(false);
+  @Mock
+  private Region<Object, Object> region;
 
-  private GetRegionsFunction getRegionsFunction;
-  private FunctionContext functionContext;
+  @Mock
+  private FunctionContext<Void> functionContext;
+
+  @Mock
+  private ResultSender<RegionInformation[]> resultSender;
+
+  private final GetRegionsFunction getRegionsFunction = new GetRegionsFunction();
 
   @Before
-  public void before() {
-    getRegionsFunction = new GetRegionsFunction();
-    functionContext = mock(FunctionContext.class);
+  public void setUp() {
+    initMocks(this);
+
+    when(functionContext.<RegionInformation[]>getResultSender()).thenReturn(resultSender);
   }
 
   @Test
-  public void doNotUseCacheFacotryToGetCache() throws Exception {
-    // start a thread that would hold on to the CacheFactory's class lock
-    new Thread(() -> {
-      synchronized (CacheFactory.class) {
-        lockAquired.set(true);
-        lockingThreadState = GetRegionsFunctionTest.STATE.BLOCKING;
-        try {
-          await().atMost(10, TimeUnit.SECONDS).untilTrue(functionExecuted);
-        } catch (ConditionTimeoutException e) {
-          e.printStackTrace();
-          lockingThreadState = GetRegionsFunctionTest.STATE.FINISHED;
-        }
-      }
-    }).start();
+  public void lastResultIsNullWhenThereAreNoRegions() {
+    Cache cacheFromFunctionContext = mock(Cache.class);
+    when(cacheFromFunctionContext.rootRegions()).thenReturn(Collections.emptySet());
+    when(functionContext.getCache()).thenReturn(cacheFromFunctionContext);
 
-    // wait till the blocking thread aquired the lock on CacheFactory
-    await().atMost(1, TimeUnit.SECONDS).untilTrue(lockAquired);
-    when(functionContext.getCache()).thenReturn(mock(Cache.class));
-    when(functionContext.getResultSender()).thenReturn(mock(ResultSender.class));
-
-    // execute a function that would get the cache, make sure that's not waiting on the lock
-    // of CacheFactory
     getRegionsFunction.execute(functionContext);
-    assertThat(lockingThreadState).isEqualTo(lockingThreadState.BLOCKING);
 
+    verify(resultSender).lastResult(isNull());
+  }
 
-    // this will make the awaitility call in the thread return
-    functionExecuted.set(true);
+  @Test
+  public void lastResultHasRegionInformationForRegion() {
+    String regionNameInCacheFromFunctionContext = "MyRegion";
+    Cache cacheFromFunctionContext = cacheWithOneRootRegion(regionNameInCacheFromFunctionContext);
+    when(functionContext.getCache()).thenReturn(cacheFromFunctionContext);
+
+    getRegionsFunction.execute(functionContext);
+
+    assertThat(lastResultFrom(resultSender).getValue())
+        .extracting(r -> r.getPath())
+        .containsExactly(regionNameInCacheFromFunctionContext);
+  }
+
+  @Test
+  public void getsCacheFromFunctionContext() {
+    Cache cacheFromFunctionContext = mock(Cache.class);
+    when(cacheFromFunctionContext.rootRegions()).thenReturn(Collections.emptySet());
+    when(functionContext.getCache()).thenReturn(cacheFromFunctionContext);
+
+    getRegionsFunction.execute(functionContext);
+
+    verify(functionContext).getCache();
+  }
+
+  private Cache cacheWithOneRootRegion(String regionName) {
+    Cache cache = mock(Cache.class);
+    when(regionAttributes.getDataPolicy()).thenReturn(mock(DataPolicy.class));
+    when(regionAttributes.getScope()).thenReturn(mock(Scope.class));
+    when(region.getFullPath()).thenReturn(Region.SEPARATOR + regionName);
+    when(region.subregions(anyBoolean())).thenReturn(Collections.emptySet());
+    when(region.getAttributes()).thenReturn(regionAttributes);
+    when(cache.rootRegions()).thenReturn(Collections.singleton(region));
+    return cache;
+  }
+
+  private ArgumentCaptor<RegionInformation[]> lastResultFrom(
+      ResultSender<RegionInformation[]> resultSender) {
+    ArgumentCaptor<RegionInformation[]> lastResult =
+        ArgumentCaptor.forClass(RegionInformation[].class);
+    verify(resultSender).lastResult(lastResult.capture());
+    return lastResult;
   }
 }

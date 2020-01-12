@@ -23,7 +23,7 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.DataSerializer;
 import org.apache.geode.distributed.LockServiceDestroyedException;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.MessageWithReply;
@@ -33,8 +33,10 @@ import org.apache.geode.distributed.internal.ReplyMessage;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.Assert;
-import org.apache.geode.internal.logging.LogService;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * A processor for telling the grantor that a lock service participant has shutdown. The grantor
@@ -51,20 +53,20 @@ public class NonGrantorDestroyedProcessor extends ReplyProcessor21 {
 
   /**
    *
-   * Send a message to grantor telling him that we've shutdown the named lock service for this
+   * Send a message to grantor telling it that we've shutdown the named lock service for this
    * member.
    * <p>
    * Caller should loop, getting the grantor, calling <code>send</code>, and checking
    * <code>informedGrantor()</code> until the grantor has acknowledged being informed.
    */
-  static boolean send(String serviceName, LockGrantorId theLockGrantorId, DM dm) {
+  static boolean send(String serviceName, LockGrantorId theLockGrantorId, DistributionManager dm) {
     InternalDistributedMember recipient = theLockGrantorId.getLockGrantorMember();
     NonGrantorDestroyedProcessor processor = new NonGrantorDestroyedProcessor(dm, recipient);
     NonGrantorDestroyedMessage.send(serviceName, recipient, dm, processor);
     try {
       processor.waitForRepliesUninterruptibly();
     } catch (ReplyException e) {
-      e.handleAsUnexpected();
+      e.handleCause();
     }
     return processor.informedGrantor();
   }
@@ -72,7 +74,7 @@ public class NonGrantorDestroyedProcessor extends ReplyProcessor21 {
   //////////// Instance methods //////////////
 
   /** Creates a new instance of NonGrantorDestroyedProcessor */
-  private NonGrantorDestroyedProcessor(DM dm, InternalDistributedMember grantor) {
+  private NonGrantorDestroyedProcessor(DistributionManager dm, InternalDistributedMember grantor) {
     super(dm, grantor);
   }
 
@@ -108,8 +110,8 @@ public class NonGrantorDestroyedProcessor extends ReplyProcessor21 {
     /** The name of the DistributedLockService */
     private String serviceName;
 
-    protected static void send(String serviceName, InternalDistributedMember grantor, DM dm,
-        ReplyProcessor21 proc) {
+    protected static void send(String serviceName, InternalDistributedMember grantor,
+        DistributionManager dm, ReplyProcessor21 proc) {
       Assert.assertTrue(grantor != null, "Cannot send NonGrantorDestroyedMessage to null grantor");
 
       NonGrantorDestroyedMessage msg = new NonGrantorDestroyedMessage();
@@ -117,8 +119,9 @@ public class NonGrantorDestroyedProcessor extends ReplyProcessor21 {
       msg.processorId = proc.getProcessorId();
       msg.setRecipient(grantor);
 
-      if (logger.isTraceEnabled(LogMarker.DLS)) {
-        logger.trace(LogMarker.DLS, "NonGrantorDestroyedMessage sending {} to {}", msg, grantor);
+      if (logger.isTraceEnabled(LogMarker.DLS_VERBOSE)) {
+        logger.trace(LogMarker.DLS_VERBOSE, "NonGrantorDestroyedMessage sending {} to {}", msg,
+            grantor);
       }
 
       if (grantor.equals(dm.getId())) {
@@ -134,22 +137,22 @@ public class NonGrantorDestroyedProcessor extends ReplyProcessor21 {
       return this.processorId;
     }
 
-    private void reply(byte replyCode, DM dm) {
+    private void reply(byte replyCode, DistributionManager dm) {
       NonGrantorDestroyedReplyMessage.send(this, replyCode, dm);
     }
 
     @Override
-    protected void process(DistributionManager dm) {
+    protected void process(ClusterDistributionManager dm) {
       basicProcess(dm);
     }
 
     /** Process locally without using messaging */
-    protected void processLocally(final DM dm) {
+    protected void processLocally(final DistributionManager dm) {
       basicProcess(dm);
     }
 
     /** Perform basic processing of this message */
-    private void basicProcess(final DM dm) {
+    private void basicProcess(final DistributionManager dm) {
       boolean replied = false;
       try {
         DLockService svc = DLockService.getInternalServiceNamed(this.serviceName);
@@ -165,19 +168,19 @@ public class NonGrantorDestroyedProcessor extends ReplyProcessor21 {
         }
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
-        if (logger.isTraceEnabled(LogMarker.DLS)) {
-          logger.trace(LogMarker.DLS,
+        if (logger.isTraceEnabled(LogMarker.DLS_VERBOSE)) {
+          logger.trace(LogMarker.DLS_VERBOSE,
               "Processing of NonGrantorDestroyedMessage resulted in InterruptedException", e);
         }
       } catch (LockServiceDestroyedException e) {
-        if (logger.isTraceEnabled(LogMarker.DLS)) {
-          logger.trace(LogMarker.DLS,
+        if (logger.isTraceEnabled(LogMarker.DLS_VERBOSE)) {
+          logger.trace(LogMarker.DLS_VERBOSE,
               "Processing of NonGrantorDestroyedMessage resulted in LockServiceDestroyedException",
               e);
         }
       } catch (LockGrantorDestroyedException e) {
-        if (logger.isTraceEnabled(LogMarker.DLS)) {
-          logger.trace(LogMarker.DLS,
+        if (logger.isTraceEnabled(LogMarker.DLS_VERBOSE)) {
+          logger.trace(LogMarker.DLS_VERBOSE,
               "Processing of NonGrantorDestroyedMessage resulted in LockGrantorDestroyedException",
               e);
         }
@@ -188,20 +191,23 @@ public class NonGrantorDestroyedProcessor extends ReplyProcessor21 {
       }
     }
 
+    @Override
     public int getDSFID() {
       return NON_GRANTOR_DESTROYED_MESSAGE;
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.processorId = in.readInt();
       this.serviceName = DataSerializer.readString(in);
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       out.writeInt(this.processorId);
       DataSerializer.writeString(this.serviceName, out);
     }
@@ -222,7 +228,7 @@ public class NonGrantorDestroyedProcessor extends ReplyProcessor21 {
 
     private byte replyCode;
 
-    public static void send(MessageWithReply destroyedMsg, byte replyCode, DM dm) {
+    public static void send(MessageWithReply destroyedMsg, byte replyCode, DistributionManager dm) {
       NonGrantorDestroyedReplyMessage m = new NonGrantorDestroyedReplyMessage();
       m.processorId = destroyedMsg.getProcessorId();
       m.setRecipient(destroyedMsg.getSender());
@@ -262,14 +268,16 @@ public class NonGrantorDestroyedProcessor extends ReplyProcessor21 {
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.replyCode = in.readByte();
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       out.writeByte(this.replyCode);
     }
 

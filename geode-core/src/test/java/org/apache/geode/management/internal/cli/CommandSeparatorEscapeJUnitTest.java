@@ -14,17 +14,14 @@
  */
 package org.apache.geode.management.internal.cli;
 
-import static org.apache.geode.management.internal.cli.shell.MultiCommandHelper.*;
-import static org.junit.Assert.*;
+import static org.apache.geode.management.internal.cli.shell.MultiCommandHelper.getMultipleCommands;
+import static org.junit.Assert.assertEquals;
 
 import java.util.List;
 
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 
-import org.apache.geode.test.junit.categories.UnitTest;
 
-@Category(UnitTest.class)
 public class CommandSeparatorEscapeJUnitTest {
 
   // testcases : single command

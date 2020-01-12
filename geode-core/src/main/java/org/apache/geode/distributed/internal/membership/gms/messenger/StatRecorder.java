@@ -28,9 +28,8 @@ import org.jgroups.protocols.pbcast.NAKACK2;
 import org.jgroups.protocols.pbcast.NakAckHeader2;
 import org.jgroups.stack.Protocol;
 
-import org.apache.geode.distributed.internal.DMStats;
-import org.apache.geode.distributed.internal.membership.gms.GMSUtil;
 import org.apache.geode.distributed.internal.membership.gms.Services;
+import org.apache.geode.distributed.internal.membership.gms.api.MembershipStatistics;
 
 /**
  * JGroups doesn't capture quite the stats we want so this protocol is inserted into the stack to
@@ -45,7 +44,7 @@ public class StatRecorder extends Protocol {
   private static final int OUTGOING = 0;
   private static final int INCOMING = 1;
 
-  DMStats stats;
+  MembershipStatistics stats;
   Services services;
 
   private final short nakackHeaderId = ClassConfigurator.getProtocolId(NAKACK2.class);
@@ -107,7 +106,6 @@ public class StatRecorder extends Protocol {
 
   private void processForMulticast(Message msg, int direction) {
     Object o = msg.getHeader(nakackHeaderId);
-    // logger.debug("sending message with NakAck header {}: {}", o, msg);
     if (o instanceof NakAckHeader2 && stats != null) {
       NakAckHeader2 hdr = (NakAckHeader2) o;
       switch (direction) {
@@ -155,12 +153,6 @@ public class StatRecorder extends Protocol {
       boolean copyBuffer = false;
       if (h != null && h instanceof FragHeader) {
         copyBuffer = true;
-        // String str = direction == OUTGOING? "sending" : "receiving";
-        // logger.debug("{} fragment {} msg buffer hash {} offset {} msg size {} first bytes=\n{}",
-        // str, hdr,
-        // msg.getRawBuffer().hashCode(), msg.getOffset(), msg.getLength(),
-        // GMSUtil.formatBytes(msg.getRawBuffer(), msg.getOffset(),
-        // Math.min(200, msg.getLength())));
       } else {
         h = msg.getHeader(unicastHeaderId);
         if (h instanceof UNICAST3.Header) {

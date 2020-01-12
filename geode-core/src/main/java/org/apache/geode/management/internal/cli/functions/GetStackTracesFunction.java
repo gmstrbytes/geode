@@ -15,14 +15,15 @@
 package org.apache.geode.management.internal.cli.functions;
 
 
+import java.time.Instant;
+
 import org.apache.geode.cache.Cache;
-import org.apache.geode.cache.execute.FunctionAdapter;
 import org.apache.geode.cache.execute.FunctionContext;
-import org.apache.geode.internal.InternalEntity;
 import org.apache.geode.internal.OSProcess;
+import org.apache.geode.internal.cache.execute.InternalFunction;
 import org.apache.geode.management.internal.cli.domain.StackTracesPerMember;
 
-public class GetStackTracesFunction extends FunctionAdapter implements InternalEntity {
+public class GetStackTracesFunction implements InternalFunction {
 
   private static final long serialVersionUID = 1L;
 
@@ -36,7 +37,8 @@ public class GetStackTracesFunction extends FunctionAdapter implements InternalE
         memberNameOrId = cache.getDistributedSystem().getDistributedMember().getId();
       }
       StackTracesPerMember stackTracePerMember =
-          new StackTracesPerMember(memberNameOrId, OSProcess.zipStacks());
+          new StackTracesPerMember(memberNameOrId, Instant.now(),
+              OSProcess.zipStacks());
       context.getResultSender().lastResult(stackTracePerMember);
     } catch (Exception e) {
       context.getResultSender().sendException(e);

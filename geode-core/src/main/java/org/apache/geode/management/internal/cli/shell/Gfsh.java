@@ -43,13 +43,17 @@ import org.springframework.shell.core.JLineShell;
 import org.springframework.shell.core.Parser;
 import org.springframework.shell.event.ShellStatus.Status;
 
-import org.apache.geode.internal.Banner;
+import org.apache.geode.annotations.internal.MakeNotStatic;
+import org.apache.geode.annotations.internal.MutableForTesting;
 import org.apache.geode.internal.GemFireVersion;
 import org.apache.geode.internal.lang.ClassUtils;
+import org.apache.geode.internal.logging.Banner;
 import org.apache.geode.internal.process.signal.AbstractSignalNotificationHandler;
+import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.internal.util.ArgumentRedactor;
 import org.apache.geode.internal.util.HostName;
 import org.apache.geode.internal.util.SunAPINotFoundException;
+import org.apache.geode.logging.internal.executors.LoggingThread;
 import org.apache.geode.management.cli.CommandProcessingException;
 import org.apache.geode.management.cli.Result;
 import org.apache.geode.management.internal.cli.CliUtil;
@@ -58,7 +62,7 @@ import org.apache.geode.management.internal.cli.GfshParser;
 import org.apache.geode.management.internal.cli.LogWrapper;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
 import org.apache.geode.management.internal.cli.result.CommandResult;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.management.internal.cli.shell.jline.ANSIHandler;
 import org.apache.geode.management.internal.cli.shell.jline.ANSIHandler.ANSIStyle;
 import org.apache.geode.management.internal.cli.shell.jline.GfshHistory;
@@ -127,13 +131,16 @@ public class Gfsh extends JLineShell {
   private static final int DEFAULT_HEIGHT = 100;
   private static final Object INSTANCE_LOCK = new Object();
 
+  @MutableForTesting
   protected static PrintStream gfshout = System.out;
+  @MutableForTesting
   protected static PrintStream gfsherr = System.err;
-  protected static ThreadLocal<Gfsh> gfshThreadLocal = new ThreadLocal<>();
-  private static Gfsh instance;
+  protected static final ThreadLocal<Gfsh> gfshThreadLocal = new ThreadLocal<>();
+  @MakeNotStatic
+  private static volatile Gfsh instance;
   // This flag is used to restrict column trimming to table only types
-  private static ThreadLocal<Boolean> resultTypeTL = new ThreadLocal<>();
-  private static String OS = System.getProperty("os.name").toLowerCase();
+  private static final ThreadLocal<Boolean> resultTypeTL = new ThreadLocal<>();
+  private static final String OS = System.getProperty("os.name").toLowerCase();
   private final Map<String, String> env = new TreeMap<>();
   private final List<String> readonlyAppEnv = new ArrayList<>();
   // Map to keep reference to actual user specified Command String
@@ -163,8 +170,6 @@ public class Gfsh extends JLineShell {
    * Create a GemFire shell with console using the specified arguments.
    *
    * @param args arguments to be used to create a GemFire shell instance
-   * @throws IOException
-   * @throws ClassNotFoundException
    */
   protected Gfsh(String[] args) {
     this(true, args, new GfshConfig());
@@ -176,8 +181,6 @@ public class Gfsh extends JLineShell {
    *
    * @param launchShell whether to make Console available
    * @param args arguments to be used to create a GemFire shell instance or execute command
-   * @throws IOException
-   * @throws ClassNotFoundException
    */
   protected Gfsh(boolean launchShell, String[] args, GfshConfig gfshConfig) {
     // 1. Disable suppressing of duplicate messages
@@ -185,12 +188,13 @@ public class Gfsh extends JLineShell {
 
     // 2. set & use gfshConfig
     this.gfshConfig = gfshConfig;
-    this.gfshFileLogger = LogWrapper.getInstance();
+    // The cache doesn't exist yet, since we are still setting up parsing.
+    this.gfshFileLogger = LogWrapper.getInstance(null);
     this.gfshFileLogger.configure(this.gfshConfig);
     this.ansiHandler = ANSIHandler.getInstance(this.gfshConfig.isANSISupported());
 
-    /* 3. log system properties & gfsh environment */
-    this.gfshFileLogger.info(Banner.getString(args));
+    // 3. log system properties & gfsh environment TODO: change GFSH to use Geode logging
+    this.gfshFileLogger.info(new Banner().getString());
 
     // 4. Customized History implementation
     this.gfshHistory = new GfshHistory();
@@ -235,20 +239,22 @@ public class Gfsh extends JLineShell {
       // disable jline terminal
       System.setProperty("jline.terminal", GfshUnsupportedTerminal.class.getName());
       env.put(ENV_APP_QUIET_EXECUTION, String.valueOf(true));
-      // redirect Internal Java Loggers Now
-      // When run with shell, this is done on connection. See 'connect' command.
-      redirectInternalJavaLoggers();
-      // AbstractShell.logger - we don't want it to log on screen
-      LogWrapper.getInstance().setParentFor(logger);
+      // Only in headless mode, we do not want Gfsh's logger logs on screen
+      this.gfshFileLogger.setParentFor(logger);
     }
+    // we want to direct internal JDK logging to file in either mode
+    redirectInternalJavaLoggers();
   }
 
   public static Gfsh getInstance(boolean launchShell, String[] args, GfshConfig gfshConfig) {
-    if (instance == null) {
+    Gfsh localGfshInstance = instance;
+    if (localGfshInstance == null) {
       synchronized (INSTANCE_LOCK) {
-        if (instance == null) {
-          instance = new Gfsh(launchShell, args, gfshConfig);
-          instance.executeInitFileIfPresent();
+        localGfshInstance = instance;
+        if (localGfshInstance == null) {
+          localGfshInstance = new Gfsh(launchShell, args, gfshConfig);
+          localGfshInstance.executeInitFileIfPresent();
+          instance = localGfshInstance;
         }
       }
     }
@@ -267,15 +273,15 @@ public class Gfsh extends JLineShell {
     gfshout.println();
   }
 
-  public static <T> void println(T toPrint) {
+  public static void println(Object toPrint) {
     gfshout.println(toPrint);
   }
 
-  public static <T> void print(T toPrint) {
+  public static void print(Object toPrint) {
     gfshout.print(toPrint);
   }
 
-  public static <T> void printlnErr(T toPrint) {
+  public static void printlnErr(Object toPrint) {
     gfsherr.println(toPrint);
   }
 
@@ -304,7 +310,14 @@ public class Gfsh extends JLineShell {
     return result;
   }
 
-  public static void redirectInternalJavaLoggers() {
+  /**
+   * This method sets the parent of all loggers whose name starts with "java" or "javax" to
+   * LogWrapper.
+   *
+   * logWrapper disables any parents's log handler, and only logs to the file if specified. This
+   * would prevent JDK's logging show up in the console
+   */
+  public void redirectInternalJavaLoggers() {
     // Do we need to this on re-connect?
     LogManager logManager = LogManager.getLogManager();
 
@@ -322,12 +335,12 @@ public class Gfsh extends JLineShell {
            * properly handle the case where the Logger has been garbage collected.
            */
           if (javaLogger != null) {
-            LogWrapper.getInstance().setParentFor(javaLogger);
+            this.gfshFileLogger.setParentFor(javaLogger);
           }
         }
       }
     } catch (SecurityException e) {
-      LogWrapper.getInstance().warning(e.getMessage(), e);
+      this.gfshFileLogger.warning(e.getMessage(), e);
     }
   }
 
@@ -410,7 +423,7 @@ public class Gfsh extends JLineShell {
         final int spaceCharIndex = string.lastIndexOf(" ", index);
 
         // If no spaces were found then there's no logical way to split the string
-        if (spaceCharIndex == -1) {
+        if (spaceCharIndex == -1 || spaceCharIndex < startOfCurrentLine) {
           stringBuf.append(string.substring(startOfCurrentLine, index)).append(LINE_SEPARATOR);
 
           // Else split the string cleanly between words
@@ -480,7 +493,7 @@ public class Gfsh extends JLineShell {
    * Starts this GemFire Shell with console.
    */
   public void start() {
-    runner = new Thread(this, getShellName());
+    runner = new LoggingThread(getShellName(), false, this);
     runner.start();
   }
 
@@ -554,8 +567,21 @@ public class Gfsh extends JLineShell {
     return parser;
   }
 
-  public GfshParser getGfshParser() {
-    return parser;
+  public LogWrapper getGfshFileLogger() {
+    return gfshFileLogger;
+  }
+
+  /**
+   * Executes a single command string.
+   * It substitutes the variables defined within the command, if any, and then delegates to the
+   * default execution.
+   *
+   * @param line command string to be executed
+   * @return command execution result.
+   */
+  @Override
+  public org.springframework.shell.core.CommandResult executeCommand(String line) {
+    return super.executeCommand(!line.contains("$") ? line : expandProperties(line));
   }
 
   /**
@@ -584,7 +610,7 @@ public class Gfsh extends JLineShell {
         expandedPropCommandsMap.put(withPropsExpanded, line);
       }
       if (gfshFileLogger.fineEnabled()) {
-        gfshFileLogger.fine(logMessage + ArgumentRedactor.redactScriptLine(withPropsExpanded));
+        gfshFileLogger.fine(logMessage + ArgumentRedactor.redact(withPropsExpanded));
       }
       success = super.executeScriptLine(withPropsExpanded);
     } catch (Exception e) {
@@ -647,8 +673,13 @@ public class Gfsh extends JLineShell {
     if (full) {
       return GemFireVersion.asString();
     } else {
+
       return GemFireVersion.getGemFireVersion();
     }
+  }
+
+  public String getGeodeSerializationVersion() {
+    return Version.CURRENT.getName();
   }
 
   public String getWelcomeMessage() {
@@ -675,12 +706,13 @@ public class Gfsh extends JLineShell {
         if (useExternalViewer(commandResult)) {
           // - Save file and pass to less so that viewer can scroll through
           // results
-          CliUtil.runLessCommandAsExternalViewer(commandResult, isError);
+          CliUtil.runLessCommandAsExternalViewer(commandResult);
         } else {
           if (!isScriptRunning) {
             // Normal Command
             while (commandResult.hasNextLine()) {
-              write(commandResult.nextLine(), isError);
+              String nextLine = commandResult.nextLine();
+              write(nextLine, isError);
             }
           } else if (!suppressScriptCmdOutput) {
             // Command is part of script. Show output only when quite=false
@@ -688,20 +720,10 @@ public class Gfsh extends JLineShell {
               write(commandResult.nextLine(), isError);
             }
           }
+          commandResult.resetToFirstLine();
         }
 
         resultTypeTL.set(null);
-
-        if (result instanceof CommandResult) {
-          CommandResult cmdResult = (CommandResult) result;
-          if (cmdResult.hasIncomingFiles()) {
-            boolean isAlreadySaved = cmdResult.getNumTimesSaved() > 0;
-            if (!isAlreadySaved) {
-              cmdResult.saveIncomingFiles(null);
-            }
-            Gfsh.println();// Empty line
-          }
-        }
       }
       if (result != null && !(result instanceof Result)) {
         printAsInfo(result.toString());
@@ -748,11 +770,11 @@ public class Gfsh extends JLineShell {
     String originalString = expandedPropCommandsMap.get(processedLine);
     if (originalString != null) {
       // In history log the original command string & expanded line as a comment
-      super.logCommandToOutput(GfshHistory.redact(originalString));
-      super.logCommandToOutput(GfshHistory.redact("// Post substitution"));
-      super.logCommandToOutput(GfshHistory.redact("//" + processedLine));
+      super.logCommandToOutput(ArgumentRedactor.redact(originalString));
+      super.logCommandToOutput(ArgumentRedactor.redact("// Post substitution"));
+      super.logCommandToOutput(ArgumentRedactor.redact("//" + processedLine));
     } else {
-      super.logCommandToOutput(GfshHistory.redact(processedLine));
+      super.logCommandToOutput(ArgumentRedactor.redact(processedLine));
     }
   }
 
@@ -866,8 +888,8 @@ public class Gfsh extends JLineShell {
     return loggedMessage;
   }
 
-  public Result executeScript(File scriptFile, boolean quiet, boolean continueOnError) {
-    Result result;
+  public ResultModel executeScript(File scriptFile, boolean quiet, boolean continueOnError) {
+    ResultModel result = null;
     String initialIsQuiet = getEnvProperty(ENV_APP_QUIET_EXECUTION);
     try {
       this.isScriptRunning = true;
@@ -944,7 +966,7 @@ public class Gfsh extends JLineShell {
       scriptInfo.logScriptExecutionInfo(gfshFileLogger, result);
       if (quiet) {
         // Create empty result when in quiet mode
-        result = ResultBuilder.createInfoResult("");
+        result = ResultModel.createInfo("");
       }
     } catch (IOException e) {
       throw new CommandProcessingException("Error while reading file " + scriptFile,
@@ -983,8 +1005,7 @@ public class Gfsh extends JLineShell {
   }
 
   public Map<String, String> getEnv() {
-    Map<String, String> map = new TreeMap<>();
-    map.putAll(env);
+    Map<String, String> map = new TreeMap<>(env);
     return map;
   }
 
@@ -1122,7 +1143,7 @@ public class Gfsh extends JLineShell {
     return gfshHistory;
   }
 
-  private String expandProperties(final String input) {
+  protected String expandProperties(final String input) {
     String output = input;
     Scanner s = new Scanner(output);
     String foundInLine;

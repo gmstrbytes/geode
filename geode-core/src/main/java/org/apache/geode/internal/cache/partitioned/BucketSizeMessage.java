@@ -23,12 +23,13 @@ import java.util.Set;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.cache.CacheException;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.DistributionStats;
 import org.apache.geode.distributed.internal.HighPriorityDistributionMessage;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
+import org.apache.geode.distributed.internal.OperationExecutors;
 import org.apache.geode.distributed.internal.ReplyException;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
@@ -36,9 +37,10 @@ import org.apache.geode.internal.Assert;
 import org.apache.geode.internal.cache.ForceReattemptException;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.PartitionedRegionDataStore;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * A message used to determine the number of bytes a Bucket consumes.
@@ -67,7 +69,7 @@ public class BucketSizeMessage extends PartitionMessage {
 
   @Override
   public int getProcessorType() {
-    return DistributionManager.STANDARD_EXECUTOR;
+    return OperationExecutors.STANDARD_EXECUTOR;
   }
 
   /**
@@ -84,17 +86,18 @@ public class BucketSizeMessage extends PartitionMessage {
     Assert.assertTrue(recipient != null, "BucketSizeMessage NULL reply message");
     BucketSizeResponse p = new BucketSizeResponse(r.getSystem(), Collections.singleton(recipient));
     BucketSizeMessage m = new BucketSizeMessage(recipient, r.getPRId(), p, bucketId);
+    m.setTransactionDistributed(r.getCache().getTxManager().isDistributed());
     Set failures = r.getDistributionManager().putOutgoing(m);
     if (failures != null && failures.size() > 0) {
       throw new ForceReattemptException(
-          LocalizedStrings.BucketSizeMessage_FAILED_SENDING_0.toLocalizedString(m));
+          String.format("Failed sending < %s >", m));
     }
 
     return p;
   }
 
   @Override
-  protected boolean operateOnPartitionedRegion(DistributionManager dm, PartitionedRegion r,
+  protected boolean operateOnPartitionedRegion(ClusterDistributionManager dm, PartitionedRegion r,
       long startTime) throws CacheException, ForceReattemptException {
 
     PartitionedRegionDataStore ds = r.getDataStore();
@@ -103,8 +106,8 @@ public class BucketSizeMessage extends PartitionMessage {
       size = ds.getBucketSize(bucketId);
     } else {
       // sender thought this member had a data store, but it doesn't
-      throw new ForceReattemptException(LocalizedStrings.BucketSizeMessage_NO_DATASTORE_IN_0
-          .toLocalizedString(dm.getDistributionManagerId()));
+      throw new ForceReattemptException(String.format("no datastore in %s",
+          dm.getDistributionManagerId()));
     }
 
     r.getPrStats().endPartitionMessagesProcessing(startTime);
@@ -119,19 +122,22 @@ public class BucketSizeMessage extends PartitionMessage {
     buff.append("; bucketId=").append(this.bucketId);
   }
 
+  @Override
   public int getDSFID() {
     return PR_BUCKET_SIZE_MESSAGE;
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     this.bucketId = in.readInt();
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     out.writeInt(this.bucketId); // fix for bug 38228
   }
 
@@ -153,8 +159,8 @@ public class BucketSizeMessage extends PartitionMessage {
     }
 
     /** Send an ack */
-    public static void send(InternalDistributedMember recipient, int processorId, DM dm,
-        long size) {
+    public static void send(InternalDistributedMember recipient, int processorId,
+        DistributionManager dm, long size) {
       Assert.assertTrue(recipient != null, "PRDistribuedGetReplyMessage NULL reply message");
       BucketSizeReplyMessage m = new BucketSizeReplyMessage(processorId, size);
       m.setRecipient(recipient);
@@ -167,10 +173,10 @@ public class BucketSizeMessage extends PartitionMessage {
      * @param dm the distribution manager that is processing the message.
      */
     @Override
-    protected void process(final DistributionManager dm) {
+    protected void process(final ClusterDistributionManager dm) {
       final long startTime = getTimestamp();
-      if (logger.isTraceEnabled(LogMarker.DM)) {
-        logger.trace(LogMarker.DM,
+      if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+        logger.trace(LogMarker.DM_VERBOSE,
             "PRDistributedBucketSizeReplyMessage process invoking reply processor with processorId: {}",
             this.processorId);
       }
@@ -178,33 +184,36 @@ public class BucketSizeMessage extends PartitionMessage {
       ReplyProcessor21 processor = ReplyProcessor21.getProcessor(this.processorId);
 
       if (processor == null) {
-        if (logger.isTraceEnabled(LogMarker.DM)) {
+        if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
           logger.debug("PRDistributedBucketSizeReplyMessage processor not found");
         }
         return;
       }
       processor.process(this);
 
-      if (logger.isTraceEnabled(LogMarker.DM)) {
-        logger.trace(LogMarker.DM, "{} Processed {}", processor, this);
+      if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+        logger.trace(LogMarker.DM_VERBOSE, "{} Processed {}", processor, this);
       }
       dm.getStats().incReplyMessageTime(DistributionStats.getStatTime() - startTime);
     }
 
+    @Override
     public int getDSFID() {
       return PR_BUCKET_SIZE_REPLY_MESSAGE;
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.processorId = in.readInt();
       this.size = in.readLong();
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       out.writeInt(processorId);
       out.writeLong(this.size);
     }
@@ -241,8 +250,9 @@ public class BucketSizeMessage extends PartitionMessage {
         if (msg instanceof BucketSizeReplyMessage) {
           BucketSizeReplyMessage reply = (BucketSizeReplyMessage) msg;
           this.returnValue = reply.getSize();
-          if (logger.isTraceEnabled(LogMarker.DM)) {
-            logger.trace(LogMarker.DM, "BucketSizeResponse return value is {}", this.returnValue);
+          if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+            logger.trace(LogMarker.DM_VERBOSE, "BucketSizeResponse return value is {}",
+                this.returnValue);
           }
         }
       } finally {
@@ -263,19 +273,17 @@ public class BucketSizeMessage extends PartitionMessage {
           logger.debug("BucketSizeResponse got remote cancellation; forcing reattempt. {}",
               t.getMessage(), t);
           throw new ForceReattemptException(
-              LocalizedStrings.BucketSizeMessage_BUCKETSIZERESPONSE_GOT_REMOTE_CACHECLOSEDEXCEPTION_FORCING_REATTEMPT
-                  .toLocalizedString(),
+              "BucketSizeResponse got remote CacheClosedException; forcing reattempt.",
               t);
         }
         if (t instanceof ForceReattemptException) {
           logger.debug("BucketSizeResponse got remote Region destroyed; forcing reattempt. {}",
               t.getMessage(), t);
           throw new ForceReattemptException(
-              LocalizedStrings.BucketSizeMessage_BUCKETSIZERESPONSE_GOT_REMOTE_REGION_DESTROYED_FORCING_REATTEMPT
-                  .toLocalizedString(),
+              "BucketSizeResponse got remote Region destroyed; forcing reattempt.",
               t);
         }
-        e.handleAsUnexpected();
+        e.handleCause();
       }
       return this.returnValue;
     }

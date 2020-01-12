@@ -12,6 +12,7 @@
  * or implied. See the License for the specific language governing permissions and limitations under
  * the License.
  */
+
 package org.apache.geode.cache.client.internal;
 
 import java.util.List;
@@ -26,31 +27,32 @@ import org.apache.geode.internal.logging.InternalLogWriter;
  */
 public interface QueueManager {
 
-  public QueueConnections getAllConnectionsNoWait();
+  QueueConnections getAllConnectionsNoWait();
 
-  public QueueConnections getAllConnections();
+  QueueConnections getAllConnections();
 
   void start(ScheduledExecutorService background);
 
   void close(boolean keepAlive);
 
-  public static interface QueueConnections {
+  interface QueueConnections {
     Connection getPrimary();
 
-    List/* <Connection> */ getBackups();
+    List<Connection> getBackups();
 
     QueueConnectionImpl getConnection(Endpoint endpoint);
   }
 
-  public QueueState getState();
+  QueueState getState();
 
-  public InternalPool getPool();
+  InternalPool getPool();
 
-  public InternalLogWriter getSecurityLogger();
+  @Deprecated
+  InternalLogWriter getSecurityLogger();
 
-  public void readyForEvents(InternalDistributedSystem system);
+  void readyForEvents(InternalDistributedSystem system);
 
-  public void emergencyClose();
+  void emergencyClose();
 
-  public void checkEndpoint(ClientUpdater qc, Endpoint endpoint);
+  void checkEndpoint(ClientUpdater qc, Endpoint endpoint);
 }

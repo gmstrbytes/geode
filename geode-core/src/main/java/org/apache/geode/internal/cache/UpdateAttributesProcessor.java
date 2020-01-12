@@ -28,7 +28,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.geode.CancelException;
 import org.apache.geode.DataSerializer;
 import org.apache.geode.SystemFailure;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionAdvisee;
 import org.apache.geode.distributed.internal.DistributionAdvisor;
 import org.apache.geode.distributed.internal.DistributionAdvisor.Profile;
@@ -42,8 +42,9 @@ import org.apache.geode.distributed.internal.ReplyMessage;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.Assert;
-import org.apache.geode.internal.DSFIDFactory;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * This class is a bit misnamed. It really has more with pushing a DistributionAdvisee's profile out
@@ -102,14 +103,14 @@ public class UpdateAttributesProcessor {
     if (processor == null) {
       return;
     }
-    DM mgr = this.advisee.getDistributionManager();
+    DistributionManager mgr = this.advisee.getDistributionManager();
     try {
       // bug 36983 - you can't loop on a reply processor
       mgr.getCancelCriterion().checkCancelInProgress(null);
       try {
         processor.waitForRepliesUninterruptibly();
       } catch (ReplyException e) {
-        e.handleAsUnexpected();
+        e.handleCause();
       }
     } finally {
       processor.cleanup();
@@ -117,7 +118,7 @@ public class UpdateAttributesProcessor {
   }
 
   public void sendProfileUpdate(boolean exchangeProfiles) {
-    DM mgr = this.advisee.getDistributionManager();
+    DistributionManager mgr = this.advisee.getDistributionManager();
     DistributionAdvisor advisor = this.advisee.getDistributionAdvisor();
     this.profileExchange = exchangeProfiles;
 
@@ -129,7 +130,7 @@ public class UpdateAttributesProcessor {
     if (!exchangeProfiles) {
       if (this.removeProfile) {
         if (!advisor.isInitialized()) {
-          // no need to tell the other guy we are going away since
+          // no need to tell the other advisor we are going away since
           // never got initialized.
           return;
         }
@@ -278,7 +279,7 @@ public class UpdateAttributesProcessor {
     }
 
     @Override
-    protected void process(DistributionManager dm) {
+    protected void process(ClusterDistributionManager dm) {
       Throwable thr = null;
       boolean sendReply = this.processorId != 0;
       List<Profile> replyProfiles = null;
@@ -347,13 +348,15 @@ public class UpdateAttributesProcessor {
       return buff.toString();
     }
 
+    @Override
     public int getDSFID() {
       return UPDATE_ATTRIBUTES_MESSAGE;
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.adviseePath = DataSerializer.readString(in);
       this.processorId = in.readInt();
       // set the processor ID to be able to send reply to sender in case of any
@@ -365,8 +368,9 @@ public class UpdateAttributesProcessor {
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       DataSerializer.writeString(this.adviseePath, out);
       out.writeInt(this.processorId);
       DataSerializer.writeObject(this.profile, out);
@@ -380,7 +384,7 @@ public class UpdateAttributesProcessor {
     Profile profile;
 
     public static void send(InternalDistributedMember recipient, int processorId,
-        ReplyException exception, DistributionManager dm, Profile profile) {
+        ReplyException exception, ClusterDistributionManager dm, Profile profile) {
       Assert.assertTrue(recipient != null, "Sending a ProfileReplyMessage to ALL");
       ProfileReplyMessage m = new ProfileReplyMessage();
 
@@ -402,14 +406,16 @@ public class UpdateAttributesProcessor {
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.profile = (Profile) DataSerializer.readObject(in);
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       DataSerializer.writeObject(this.profile, out);
     }
 
@@ -449,7 +455,7 @@ public class UpdateAttributesProcessor {
     Profile[] profiles;
 
     public static void send(InternalDistributedMember recipient, int processorId,
-        ReplyException exception, DistributionManager dm, Profile[] profiles) {
+        ReplyException exception, ClusterDistributionManager dm, Profile[] profiles) {
       Assert.assertTrue(recipient != null, "Sending a ProfilesReplyMessage to ALL");
       ProfilesReplyMessage m = new ProfilesReplyMessage();
 
@@ -475,8 +481,9 @@ public class UpdateAttributesProcessor {
 
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       int length = in.readInt();
       if (length == -1) {
         this.profiles = null;
@@ -490,8 +497,9 @@ public class UpdateAttributesProcessor {
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       if (this.profiles == null) {
         out.writeInt(-1);
       } else {

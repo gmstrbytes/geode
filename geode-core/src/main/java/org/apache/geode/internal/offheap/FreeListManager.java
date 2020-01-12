@@ -14,7 +14,13 @@
  */
 package org.apache.geode.internal.offheap;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.NavigableSet;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -25,7 +31,7 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.OutOfOffHeapMemoryException;
 import org.apache.geode.distributed.internal.DistributionConfig;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * Manages the free lists and slabs for a MemoryAllocator
@@ -389,7 +395,7 @@ public class FreeListManager {
     /**
      * Retrieves and removes the top of this stack, or returns {@code 0L} if this stack is empty.
      */
-    public long poll();
+    long poll();
   }
   /**
    * Manages an array of primitive longs. The array can grow.
@@ -830,7 +836,7 @@ public class FreeListManager {
     Collections.sort(value, new Comparator<MemoryBlock>() {
       @Override
       public int compare(MemoryBlock o1, MemoryBlock o2) {
-        return Long.valueOf(o1.getAddress()).compareTo(o2.getAddress());
+        return Long.compare(o1.getAddress(), o2.getAddress());
       }
     });
     return value;
@@ -875,7 +881,7 @@ public class FreeListManager {
     Collections.sort(value, new Comparator<MemoryBlock>() {
       @Override
       public int compare(MemoryBlock o1, MemoryBlock o2) {
-        return Long.valueOf(o1.getAddress()).compareTo(o2.getAddress());
+        return Long.compare(o1.getAddress(), o2.getAddress());
       }
     });
     return value;

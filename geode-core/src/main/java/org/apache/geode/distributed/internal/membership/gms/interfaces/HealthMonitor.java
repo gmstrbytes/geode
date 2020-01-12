@@ -14,50 +14,41 @@
  */
 package org.apache.geode.distributed.internal.membership.gms.interfaces;
 
-import java.net.InetSocketAddress;
-import java.util.List;
-import java.util.Map;
 
-import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.distributed.internal.membership.NetMember;
+import org.apache.geode.distributed.internal.membership.gms.api.MemberIdentifier;
 
 public interface HealthMonitor extends Service {
 
   /**
    * Note that this member has been contacted by the given member
    *
-   * @param sender
    */
-  public void contactedBy(InternalDistributedMember sender);
+  void contactedBy(MemberIdentifier sender);
 
   /**
    * initiate, asynchronously, suspicion that the member is no longer available
    *
-   * @param mbr
-   * @param reason
    */
-  public void suspect(InternalDistributedMember mbr, String reason);
+  void suspect(MemberIdentifier mbr, String reason);
 
   /**
    * Check on the health of the given member, initiating suspicion if it fails. Return true if the
    * member is found to be available, false if it isn't.
    *
-   * @param mbr
    * @param reason the reason this check is being performed
    * @param initiateRemoval if the member should be removed if it is not available
    */
-  public boolean checkIfAvailable(DistributedMember mbr, String reason, boolean initiateRemoval);
+  boolean checkIfAvailable(MemberIdentifier mbr, String reason, boolean initiateRemoval);
 
   /**
    * Invoked by the Manager, this notifies the HealthMonitor that a ShutdownMessage has been
    * received from the given member
    */
-  public void memberShutdown(DistributedMember mbr, String reason);
+  void memberShutdown(MemberIdentifier mbr, String reason);
 
   /**
    * Returns the failure detection port for this member, or -1 if there is no such port
    */
-  public int getFailureDetectionPort();
+  int getFailureDetectionPort();
 
 }

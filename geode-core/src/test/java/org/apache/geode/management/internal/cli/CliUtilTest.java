@@ -25,28 +25,14 @@ import java.util.List;
 import org.apache.commons.io.FileUtils;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 import org.junit.rules.TemporaryFolder;
 
-import org.apache.geode.test.junit.categories.UnitTest;
 
 
-@Category(UnitTest.class)
 public class CliUtilTest {
 
   @Rule
   public TemporaryFolder temporaryFolder = new TemporaryFolder();
-
-  @Test
-  public void arrayToString() throws Exception {
-    assertThat(CliUtil.arrayToString(null)).isEqualTo("null");
-    String[] array1 = {"one", "two", "three"};
-    assertThat(CliUtil.arrayToString(array1)).isEqualTo("one, two, three");
-    String[] array2 = {"one", null, "three"};
-    assertThat(CliUtil.arrayToString(array2)).isEqualTo("one, null, three");
-    String[] array3 = {null};
-    assertThat(CliUtil.arrayToString(array3)).isEqualTo("null");
-  }
 
   @Test
   public void filesToBytesAndThenBytesToFiles() throws IOException {

@@ -23,10 +23,12 @@ import java.util.List;
 
 import org.apache.geode.DataSerializer;
 import org.apache.geode.cache.server.ServerLoad;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionAdvisee;
-import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.InternalDataSerializer;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
 
 
 /**
@@ -118,12 +120,12 @@ public class CacheServerAdvisor extends GridAdvisor {
      * @since GemFire 5.7
      */
     @Override
-    public void processIncoming(DistributionManager dm, String adviseePath, boolean removeProfile,
-        boolean exchangeProfiles, final List<Profile> replyProfiles) {
+    public void processIncoming(ClusterDistributionManager dm, String adviseePath,
+        boolean removeProfile, boolean exchangeProfiles, final List<Profile> replyProfiles) {
       // tell local controllers about this cache server
       tellLocalControllers(removeProfile, exchangeProfiles, replyProfiles);
       // for QRM messaging we need cache servers to know about each other
-      tellLocalBridgeServers(removeProfile, exchangeProfiles, replyProfiles);
+      tellLocalBridgeServers(dm.getCache(), removeProfile, exchangeProfiles, replyProfiles);
     }
 
     @Override
@@ -132,8 +134,9 @@ public class CacheServerAdvisor extends GridAdvisor {
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       DataSerializer.writeStringArray(this.groups, out);
       out.writeInt(maxConnections);
       InternalDataSerializer.invokeToData(initialLoad, out);
@@ -141,8 +144,9 @@ public class CacheServerAdvisor extends GridAdvisor {
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.groups = DataSerializer.readStringArray(in);
       this.maxConnections = in.readInt();
       this.initialLoad = new ServerLoad();

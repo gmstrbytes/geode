@@ -23,12 +23,15 @@ import java.util.List;
 import java.util.Set;
 
 import org.apache.geode.DataSerializer;
+import org.apache.geode.annotations.Immutable;
 import org.apache.geode.distributed.DistributedSystemDisconnectedException;
 import org.apache.geode.distributed.Locator;
 import org.apache.geode.distributed.internal.DistributionAdvisee;
 import org.apache.geode.distributed.internal.DistributionAdvisor;
 import org.apache.geode.distributed.internal.InternalLocator;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
 
 /**
  * Used to share code with BridgeServerAdvisor and ControllerAdvisor
@@ -50,13 +53,17 @@ public abstract class GridAdvisor extends DistributionAdvisor {
 
   private volatile Set/* <DistributedMember> */ cachedControllerAdvise;
 
+  @Immutable
   private static final Filter CONTROLLER_FILTER = new Filter() {
+    @Override
     public boolean include(Profile profile) {
       return profile instanceof ControllerAdvisor.ControllerProfile;
     }
   };
 
+  @Immutable
   private static final Filter BRIDGE_SERVER_FILTER = new Filter() {
+    @Override
     public boolean include(Profile profile) {
       return profile instanceof CacheServerAdvisor.CacheServerProfile;
     }
@@ -80,7 +87,7 @@ public abstract class GridAdvisor extends DistributionAdvisor {
   }
 
   /**
-   * Return an unmodifiable Set<DistributedMember> of the bridge servers in this system.
+   * Return an unmodifiable Set<DistributedMember> of the cache servers in this system.
    */
   public Set adviseBridgeServers() {
     Set/* <DistributedMember> */ result = this.cachedBridgeServerAdvise;
@@ -204,7 +211,8 @@ public abstract class GridAdvisor extends DistributionAdvisor {
       // Exchange with any local servers or controllers.
       List<Profile> otherProfiles = new ArrayList<Profile>();
       GridProfile profile = (GridProfile) createProfile();
-      profile.tellLocalBridgeServers(false, true, otherProfiles);
+      profile.tellLocalBridgeServers(getDistributionManager().getCache(), false, true,
+          otherProfiles);
       profile.tellLocalControllers(false, true, otherProfiles);
       for (Profile otherProfile : otherProfiles) {
         if (!otherProfile.equals(profile)) {
@@ -220,10 +228,10 @@ public abstract class GridAdvisor extends DistributionAdvisor {
     try {
       new UpdateAttributesProcessor(getAdvisee(), true/* removeProfile */).distribute();
 
-      // Notify any local bridge servers or controllers
+      // Notify any local cache servers or controllers
       // that we are closing.
       GridProfile profile = (GridProfile) createProfile();
-      profile.tellLocalBridgeServers(true, false, null);
+      profile.tellLocalBridgeServers(getDistributionManager().getCache(), true, false, null);
       profile.tellLocalControllers(true, false, null);
       super.close();
     } catch (DistributedSystemDisconnectedException ignore) {
@@ -320,14 +328,14 @@ public abstract class GridAdvisor extends DistributionAdvisor {
     }
 
     /**
-     * Tell local bridge servers about the received profile. Also if exchange profiles then add each
-     * local bridge server to reply.
+     * Tell local cache servers about the received profile. Also if exchange profiles then add each
+     * local cache server to reply.
      *
      * @since GemFire 5.7
      */
-    protected void tellLocalBridgeServers(boolean removeProfile, boolean exchangeProfiles,
-        final List<Profile> replyProfiles) {
-      final InternalCache cache = GemFireCacheImpl.getInstance();
+    protected void tellLocalBridgeServers(InternalCache cache, boolean removeProfile,
+        boolean exchangeProfiles, final List<Profile> replyProfiles) {
+
       if (cache != null && !cache.isClosed()) {
         List<?> bridgeServers = cache.getCacheServersAndGatewayReceiver();
         for (int i = 0; i < bridgeServers.size(); i++) {
@@ -350,15 +358,17 @@ public abstract class GridAdvisor extends DistributionAdvisor {
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       DataSerializer.writeString(this.host, out);
       DataSerializer.writePrimitiveInt(this.port, out);
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.host = DataSerializer.readString(in);
       this.port = DataSerializer.readPrimitiveInt(in);
       finishInit();

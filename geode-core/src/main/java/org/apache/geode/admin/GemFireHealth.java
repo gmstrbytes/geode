@@ -14,8 +14,8 @@
  */
 package org.apache.geode.admin;
 
+import org.apache.geode.annotations.Immutable;
 import org.apache.geode.internal.Assert;
-import org.apache.geode.internal.i18n.LocalizedStrings;
 
 /**
  * Provides information about the aggregate health of the members of a GemFire distributed system
@@ -46,7 +46,8 @@ public interface GemFireHealth {
    *
    * @see #getHealth
    */
-  public static final Health GOOD_HEALTH = new Health(Health.GOOD_STRING);
+  @Immutable
+  Health GOOD_HEALTH = new Health(Health.GOOD_STRING);
 
   /**
    * An indicator that one or more GemFire components is slightly unhealthy. The problem may or may
@@ -54,7 +55,8 @@ public interface GemFireHealth {
    *
    * @see #getHealth
    */
-  public static final Health OKAY_HEALTH = new Health(Health.OKAY_STRING);
+  @Immutable
+  Health OKAY_HEALTH = new Health(Health.OKAY_STRING);
 
   /**
    * An indicator that one or more GemFire components is unhealthy. While it may be possible for the
@@ -62,7 +64,8 @@ public interface GemFireHealth {
    *
    * @see #getHealth
    */
-  public static final Health POOR_HEALTH = new Health(Health.POOR_STRING);
+  @Immutable
+  Health POOR_HEALTH = new Health(Health.POOR_STRING);
 
   /////////////////////// Instance Methods ///////////////////////
 
@@ -73,29 +76,29 @@ public interface GemFireHealth {
    * @see #OKAY_HEALTH
    * @see #POOR_HEALTH
    */
-  public Health getHealth();
+  Health getHealth();
 
   /**
    * Resets the overall health of the GemFire components to {@link #GOOD_HEALTH}. This operation
    * should be invoked when the operator has determined that warnings about the components's health
    * do not need to be regarded.
    */
-  public void resetHealth();
+  void resetHealth();
 
   /**
    * Returns a message that provides a description of the cause of a component's ill health.
    */
-  public String getDiagnosis();
+  String getDiagnosis();
 
   /**
    * Returns the configuration for determining the health of the distributed system itself.
    */
-  public DistributedSystemHealthConfig getDistributedSystemHealthConfig();
+  DistributedSystemHealthConfig getDistributedSystemHealthConfig();
 
   /**
    * Sets the configuration for determining the health of the distributed system itself.
    */
-  public void setDistributedSystemHealthConfig(DistributedSystemHealthConfig config);
+  void setDistributedSystemHealthConfig(DistributedSystemHealthConfig config);
 
   /**
    * Returns the <code>GemFireHealthConfig</code> for GemFire components whose configurations are
@@ -103,7 +106,7 @@ public interface GemFireHealth {
    * <code>GemFireHealthConfig</code> will not take effect until
    * {@link #setDefaultGemFireHealthConfig} is invoked.
    */
-  public GemFireHealthConfig getDefaultGemFireHealthConfig();
+  GemFireHealthConfig getDefaultGemFireHealthConfig();
 
   /**
    * Sets the <code>GemFireHealthConfig</code> for GemFire components whose configurations are not
@@ -111,7 +114,7 @@ public interface GemFireHealth {
    *
    * @throws IllegalArgumentException If <code>config</code> specifies the config for a host
    */
-  public void setDefaultGemFireHealthConfig(GemFireHealthConfig config);
+  void setDefaultGemFireHealthConfig(GemFireHealthConfig config);
 
   /**
    * Returns the <code>GemFireHealthConfig</code> for GemFire components that reside on a given
@@ -121,7 +124,7 @@ public interface GemFireHealth {
    * @param hostName The {@linkplain java.net.InetAddress#getCanonicalHostName canonical} name of
    *        the host.
    */
-  public GemFireHealthConfig getGemFireHealthConfig(String hostName);
+  GemFireHealthConfig getGemFireHealthConfig(String hostName);
 
   /**
    * Sets the <code>GemFireHealthConfig</code> for GemFire components that reside on a given host.
@@ -136,38 +139,39 @@ public interface GemFireHealth {
    *         no GemFire components running on that host or if <code>config</code> does not configure
    *         host <code>hostName</code>.
    */
-  public void setGemFireHealthConfig(String hostName, GemFireHealthConfig config);
+  void setGemFireHealthConfig(String hostName, GemFireHealthConfig config);
 
   /**
    * Closes this health monitor and releases all resources associated with it.
    */
-  public void close();
+  void close();
 
   /**
    * Returns whether or not this <code>GemFireHealth</code> is {@linkplain #close closed}.
    */
-  public boolean isClosed();
+  boolean isClosed();
 
   ////////////////////// Inner Classes //////////////////////
 
   /**
    * An enumerated type for the health of GemFire.
    */
-  public static class Health implements java.io.Serializable {
+  @Immutable
+  class Health implements java.io.Serializable {
     private static final long serialVersionUID = 3039539430412151801L;
     /** The string for good health */
-    static final String GOOD_STRING = LocalizedStrings.GemFireHealth_GOOD.toLocalizedString();
+    static final String GOOD_STRING = "Good";
 
     /** The string for okay health */
-    static final String OKAY_STRING = LocalizedStrings.GemFireHealth_OKAY.toLocalizedString();
+    static final String OKAY_STRING = "Okay";
 
     /** The string for poor health */
-    static final String POOR_STRING = LocalizedStrings.GemFireHealth_POOR.toLocalizedString();
+    static final String POOR_STRING = "Poor";
 
     //////////////////// Instance Fields ////////////////////
 
     /** The string for this health */
-    private String healthString = OKAY_STRING;
+    private final String healthString;
 
     ///////////////////// Constructors //////////////////////
 

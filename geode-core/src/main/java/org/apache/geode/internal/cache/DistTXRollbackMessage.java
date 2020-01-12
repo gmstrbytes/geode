@@ -32,9 +32,8 @@ import org.apache.geode.CancelException;
 import org.apache.geode.DataSerializer;
 import org.apache.geode.cache.CommitIncompleteException;
 import org.apache.geode.cache.RegionDestroyedException;
-import org.apache.geode.cache.TransactionDataNotColocatedException;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.DistributionStats;
@@ -45,13 +44,13 @@ import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.ReplySender;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.Assert;
-import org.apache.geode.internal.cache.RemoteOperationMessage.RemoteOperationResponse;
-import org.apache.geode.internal.logging.LogService;
+import org.apache.geode.internal.InternalDataSerializer;
+import org.apache.geode.internal.cache.tx.RemoteOperationMessage.RemoteOperationResponse;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
-/**
- *
- */
 public class DistTXRollbackMessage extends TXMessage {
 
   private static final Logger logger = LogService.getLogger();
@@ -70,7 +69,8 @@ public class DistTXRollbackMessage extends TXMessage {
   }
 
   @Override
-  protected boolean operateOnTx(TXId txId, DistributionManager dm) throws RemoteOperationException {
+  protected boolean operateOnTx(TXId txId, ClusterDistributionManager dm)
+      throws RemoteOperationException {
     if (logger.isDebugEnabled()) {
       logger.debug("Dist TX: Rollback: {}", txId);
     }
@@ -108,14 +108,16 @@ public class DistTXRollbackMessage extends TXMessage {
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     // more data
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     // more data
   }
 
@@ -141,7 +143,7 @@ public class DistTXRollbackMessage extends TXMessage {
     public DistTXRollbackReplyMessage() {}
 
     public DistTXRollbackReplyMessage(DataInput in) throws IOException, ClassNotFoundException {
-      fromData(in);
+      fromData(in, InternalDataSerializer.createDeserializationContext(in));
     }
 
     private DistTXRollbackReplyMessage(int processorId, Boolean val) {
@@ -179,17 +181,17 @@ public class DistTXRollbackMessage extends TXMessage {
      * @param dm the distribution manager that is processing the message.
      */
     @Override
-    public void process(final DM dm, ReplyProcessor21 processor) {
+    public void process(final DistributionManager dm, ReplyProcessor21 processor) {
       final long startTime = getTimestamp();
-      if (logger.isTraceEnabled(LogMarker.DM)) {
-        logger.trace(LogMarker.DM,
+      if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+        logger.trace(LogMarker.DM_VERBOSE,
             "DistTXRollbackReplyMessage process invoking reply processor with processorId:{}",
             this.processorId);
       }
 
       if (processor == null) {
-        if (logger.isTraceEnabled(LogMarker.DM)) {
-          logger.trace(LogMarker.DM, "DistTXRollbackReplyMessage processor not found");
+        if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+          logger.trace(LogMarker.DM_VERBOSE, "DistTXRollbackReplyMessage processor not found");
         }
         return;
       }
@@ -202,14 +204,16 @@ public class DistTXRollbackMessage extends TXMessage {
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       DataSerializer.writeBoolean(this.rollbackState, out);
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.rollbackState = DataSerializer.readBoolean(in);
     }
 
@@ -260,16 +264,9 @@ public class DistTXRollbackMessage extends TXMessage {
      * @return Object associated with the key that was sent in the get message
      */
     public Boolean waitForResponse() throws RemoteOperationException {
-      try {
-        // waitForRepliesUninterruptibly();
-        waitForCacheException();
-        if (DistributionStats.enableClockStats) {
-          getDistributionManager().getStats().incReplyHandOffTime(this.start);
-        }
-      } catch (RemoteOperationException e) {
-        final String msg = "DistTXRollbackResponse got RemoteOperationException; rethrowing";
-        logger.debug(msg, e);
-        throw e;
+      waitForRemoteResponse();
+      if (DistributionStats.enableClockStats) {
+        getDistributionManager().getStats().incReplyHandOffTime(this.start);
       }
       return rollbackState;
     }
@@ -288,7 +285,7 @@ public class DistTXRollbackMessage extends TXMessage {
     private Map<DistributedMember, Boolean> rollbackResponseMap;
     private transient TXId txIdent = null;
 
-    public DistTxRollbackReplyProcessor(TXId txUniqId, DM dm, Set initMembers,
+    public DistTxRollbackReplyProcessor(TXId txUniqId, DistributionManager dm, Set initMembers,
         HashMap<DistributedMember, DistTXCoordinatorInterface> msgMap) {
       super(dm, initMembers);
       this.msgMap = msgMap;

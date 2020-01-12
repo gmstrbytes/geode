@@ -23,7 +23,7 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.CancelException;
 import org.apache.geode.DataSerializer;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
@@ -32,12 +32,15 @@ import org.apache.geode.distributed.internal.ReplyMessage;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.Assert;
+import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.NanoTimer;
 import org.apache.geode.internal.cache.ForceReattemptException;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.PartitionedRegionDataStore;
-import org.apache.geode.internal.logging.LogService;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * Moves the bucket to the recipient's PartitionedRegionDataStore. The recipient will create an
@@ -84,6 +87,7 @@ public class MoveBucketMessage extends PartitionMessage {
     MoveBucketResponse response = new MoveBucketResponse(region.getSystem(), recipient, region);
     MoveBucketMessage msg =
         new MoveBucketMessage(recipient, region.getPRId(), response, bucketId, source);
+    msg.setTransactionDistributed(region.getCache().getTxManager().isDistributed());
 
     Set<InternalDistributedMember> failures = region.getDistributionManager().putOutgoing(msg);
     if (failures != null && failures.size() > 0) {
@@ -95,7 +99,7 @@ public class MoveBucketMessage extends PartitionMessage {
   }
 
   public MoveBucketMessage(DataInput in) throws IOException, ClassNotFoundException {
-    fromData(in);
+    fromData(in, InternalDataSerializer.createDeserializationContext(in));
   }
 
   @Override
@@ -105,8 +109,8 @@ public class MoveBucketMessage extends PartitionMessage {
   }
 
   @Override
-  protected boolean operateOnPartitionedRegion(DistributionManager dm, PartitionedRegion region,
-      long startTime) throws ForceReattemptException {
+  protected boolean operateOnPartitionedRegion(ClusterDistributionManager dm,
+      PartitionedRegion region, long startTime) throws ForceReattemptException {
 
     PartitionedRegionDataStore dataStore = region.getDataStore();
     boolean moved = dataStore.moveBucket(this.bucketId, this.source, true);
@@ -124,20 +128,23 @@ public class MoveBucketMessage extends PartitionMessage {
     buff.append("; source=").append(this.source);
   }
 
+  @Override
   public int getDSFID() {
     return PR_MOVE_BUCKET_MESSAGE;
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     this.bucketId = in.readInt();
     this.source = (InternalDistributedMember) DataSerializer.readObject(in);
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     out.writeInt(this.bucketId);
     DataSerializer.writeObject(this.source, out);
   }
@@ -152,7 +159,7 @@ public class MoveBucketMessage extends PartitionMessage {
     public MoveBucketReplyMessage() {}
 
     public MoveBucketReplyMessage(DataInput in) throws IOException, ClassNotFoundException {
-      fromData(in);
+      fromData(in, InternalDataSerializer.createDeserializationContext(in));
     }
 
     private MoveBucketReplyMessage(int processorId, ReplyException re, boolean moved) {
@@ -162,8 +169,8 @@ public class MoveBucketMessage extends PartitionMessage {
     }
 
     /** Send a reply */
-    public static void send(InternalDistributedMember recipient, int processorId, DM dm,
-        ReplyException re, boolean moved) {
+    public static void send(InternalDistributedMember recipient, int processorId,
+        DistributionManager dm, ReplyException re, boolean moved) {
       Assert.assertTrue(recipient != null, "MoveBucketReplyMessage NULL recipient");
       MoveBucketReplyMessage m = new MoveBucketReplyMessage(processorId, re, moved);
       m.setRecipient(recipient);
@@ -175,31 +182,32 @@ public class MoveBucketMessage extends PartitionMessage {
     }
 
     @Override
-    public void process(final DM dm, final ReplyProcessor21 processor) {
+    public void process(final DistributionManager dm, final ReplyProcessor21 processor) {
       final long startTime = getTimestamp();
-      if (logger.isTraceEnabled(LogMarker.DM)) {
-        logger.trace(LogMarker.DM,
+      if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+        logger.trace(LogMarker.DM_VERBOSE,
             "MoveBucketReplyMessage process invoking reply processor with processorId: {}",
             this.processorId);
       }
 
       if (processor == null) {
-        if (logger.isTraceEnabled(LogMarker.DM)) {
-          logger.trace(LogMarker.DM, "MoveBucketReplyMessage processor not found");
+        if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+          logger.trace(LogMarker.DM_VERBOSE, "MoveBucketReplyMessage processor not found");
         }
         return;
       }
       processor.process(this);
 
-      if (logger.isTraceEnabled(LogMarker.DM)) {
-        logger.trace(LogMarker.DM, "{} processed {}", processor, this);
+      if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+        logger.trace(LogMarker.DM_VERBOSE, "{} processed {}", processor, this);
       }
       dm.getStats().incReplyMessageTime(NanoTimer.getTime() - startTime);
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       out.writeBoolean(this.moved);
     }
 
@@ -209,8 +217,9 @@ public class MoveBucketMessage extends PartitionMessage {
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.moved = in.readBoolean();
     }
 
@@ -242,8 +251,8 @@ public class MoveBucketMessage extends PartitionMessage {
         if (msg instanceof MoveBucketReplyMessage) {
           MoveBucketReplyMessage reply = (MoveBucketReplyMessage) msg;
           this.moved = reply.moved();
-          if (logger.isTraceEnabled(LogMarker.DM)) {
-            logger.trace(LogMarker.DM, "MoveBucketResponse is {}", moved);
+          if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+            logger.trace(LogMarker.DM_VERBOSE, "MoveBucketResponse is {}", moved);
           }
         }
       } finally {
@@ -281,7 +290,7 @@ public class MoveBucketMessage extends PartitionMessage {
           logger.debug(msg, t);
           return false;
         }
-        e.handleAsUnexpected();
+        e.handleCause();
       }
       return this.moved;
     }

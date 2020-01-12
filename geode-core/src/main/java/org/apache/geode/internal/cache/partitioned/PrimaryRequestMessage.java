@@ -23,10 +23,11 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.CancelException;
 import org.apache.geode.cache.CacheException;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
+import org.apache.geode.distributed.internal.OperationExecutors;
 import org.apache.geode.distributed.internal.ReplyException;
 import org.apache.geode.distributed.internal.ReplyMessage;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
@@ -34,9 +35,10 @@ import org.apache.geode.distributed.internal.membership.InternalDistributedMembe
 import org.apache.geode.internal.Assert;
 import org.apache.geode.internal.cache.ForceReattemptException;
 import org.apache.geode.internal.cache.PartitionedRegion;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  *
@@ -69,11 +71,12 @@ public class PrimaryRequestMessage extends PartitionMessage {
     Assert.assertTrue(recipients != null, "PrimaryRequestMessage NULL recipient");
     PrimaryResponse p = new PrimaryResponse(r.getSystem(), recipients);
     PrimaryRequestMessage m = new PrimaryRequestMessage(recipients, r.getPRId(), p, bucketId);
+    m.setTransactionDistributed(r.getCache().getTxManager().isDistributed());
 
     Set failures = r.getDistributionManager().putOutgoing(m);
     if (failures != null && failures.size() > 0) {
       throw new ForceReattemptException(
-          LocalizedStrings.PrimaryRequestMessage_FAILED_SENDING_0.toLocalizedString(m));
+          String.format("Failed sending < %s >", m));
     }
 
     return p;
@@ -93,10 +96,11 @@ public class PrimaryRequestMessage extends PartitionMessage {
   }
 
   @Override
-  protected boolean operateOnPartitionedRegion(DistributionManager dm, PartitionedRegion pr,
+  protected boolean operateOnPartitionedRegion(ClusterDistributionManager dm, PartitionedRegion pr,
       long startTime) throws CacheException, ForceReattemptException {
-    if (logger.isTraceEnabled(LogMarker.DM)) {
-      logger.trace(LogMarker.DM, "PrimaryRequestMessage operateOnRegion: {}", pr.getFullPath());
+    if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+      logger.trace(LogMarker.DM_VERBOSE, "PrimaryRequestMessage operateOnRegion: {}",
+          pr.getFullPath());
     }
 
     pr.checkReadiness();
@@ -112,25 +116,28 @@ public class PrimaryRequestMessage extends PartitionMessage {
     return false;
   }
 
+  @Override
   public int getDSFID() {
     return PR_PRIMARY_REQUEST_MESSAGE;
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     this.bucketId = in.readInt();
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     out.writeInt(this.bucketId);
   }
 
   @Override
   public int getProcessorType() {
-    return DistributionManager.WAITING_POOL_EXECUTOR;
+    return OperationExecutors.WAITING_POOL_EXECUTOR;
   }
 
   /**
@@ -142,7 +149,7 @@ public class PrimaryRequestMessage extends PartitionMessage {
     public volatile boolean isPrimary;
 
     protected static void sendReply(InternalDistributedMember member, int procId, boolean isPrimary,
-        DM dm) {
+        DistributionManager dm) {
       dm.putOutgoing(new PrimaryRequestReplyMessage(member, procId, isPrimary));
     }
 
@@ -161,14 +168,16 @@ public class PrimaryRequestMessage extends PartitionMessage {
     }
 
     @Override
-    public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-      super.fromData(in);
+    public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      super.fromData(in, context);
       this.isPrimary = in.readBoolean();
     }
 
     @Override
-    public void toData(DataOutput out) throws IOException {
-      super.toData(out);
+    public void toData(DataOutput out,
+        SerializationContext context) throws IOException {
+      super.toData(out, context);
       out.writeBoolean(this.isPrimary);
     }
   }
@@ -192,13 +201,13 @@ public class PrimaryRequestMessage extends PartitionMessage {
           PrimaryRequestReplyMessage reply = (PrimaryRequestReplyMessage) msg;
           if (reply.isPrimary) {
             this.msg = reply;
-            if (logger.isTraceEnabled(LogMarker.DM)) {
-              logger.trace(LogMarker.DM, "PrimaryRequestResponse primary is {}",
+            if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+              logger.trace(LogMarker.DM_VERBOSE, "PrimaryRequestResponse primary is {}",
                   this.msg.getSender());
             }
           } else {
-            if (logger.isTraceEnabled(LogMarker.DM)) {
-              logger.debug("PrimaryRequestResponse {} is not primary", this.msg.getSender());
+            if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+              logger.trace("PrimaryRequestResponse {} is not primary", this.msg.getSender());
             }
           }
         } else {
@@ -215,17 +224,16 @@ public class PrimaryRequestMessage extends PartitionMessage {
       } catch (ReplyException e) {
         Throwable t = e.getCause();
         if (t instanceof CancelException) {
-          if (logger.isTraceEnabled(LogMarker.DM)) {
-            logger.trace(LogMarker.DM,
+          if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+            logger.trace(LogMarker.DM_VERBOSE,
                 "NodeResponse got remote CacheClosedException, throwing PartitionedRegionCommunication Exception. {}",
                 t.getMessage(), t);
           }
           throw new ForceReattemptException(
-              LocalizedStrings.PrimaryRequestMessage_NODERESPONSE_GOT_REMOTE_CACHECLOSEDEXCEPTION_THROWING_PARTITIONEDREGIONCOMMUNICATION_EXCEPTION
-                  .toLocalizedString(),
+              "NodeResponse got remote CacheClosedException, throwing PartitionedRegionCommunication Exception.",
               t);
         }
-        e.handleAsUnexpected();
+        e.handleCause();
       }
       return this.msg.getSender();
     }

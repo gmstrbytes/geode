@@ -25,6 +25,7 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,17 +33,12 @@ import java.util.Map;
 import org.junit.Before;
 import org.junit.ClassRule;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 
 import org.apache.geode.management.internal.cli.GfshParseResult;
 import org.apache.geode.management.internal.cli.domain.RegionDescriptionPerMember;
-import org.apache.geode.management.internal.cli.json.GfJsonObject;
-import org.apache.geode.management.internal.cli.result.CommandResult;
 import org.apache.geode.test.junit.assertions.CommandResultAssert;
-import org.apache.geode.test.junit.categories.UnitTest;
 import org.apache.geode.test.junit.rules.GfshParserRule;
 
-@Category(UnitTest.class)
 public class DescribeRegionJUnitTest {
 
   @ClassRule
@@ -104,12 +100,15 @@ public class DescribeRegionJUnitTest {
         gfsh.executeAndAssertThat(command, COMMAND + " --name=" + regionName).statusIsSuccess()
             .doesNotContainOutput("Non-Default Attributes Specific To");
 
-    GfJsonObject shared = getSharedAttributedJson(commandAssert.getCommandResult());
-    GfJsonObject unique = getMemberSpecificAttributeJson(commandAssert.getCommandResult());
-
-    assertThat(shared.toString()).contains("regKey", "regVal", "evictKey", "evictVal", "partKey",
-        "partVal");
-    assertThat(unique.toString()).isEqualTo("{}");
+    commandAssert.hasDataSection("region-1").hasContent().containsEntry("Name", "testRegion")
+        .containsEntry("Data Policy", "normal")
+        .containsEntry("Hosting Members", "mockA");
+    commandAssert.hasTableSection("non-default-1").hasRowSize(3).hasColumns()
+        .containsExactly("Type", "Name", "Value")
+        .hasAnyRow().containsExactly("Region", "regKey", "regVal")
+        .hasAnyRow().containsExactly("Eviction", "evictKey", "evictVal")
+        .hasAnyRow().containsExactly("Partition", "partKey", "partVal");
+    commandAssert.hasTableSection("member-non-default-1").isEmpty();
   }
 
   @Test
@@ -133,12 +132,17 @@ public class DescribeRegionJUnitTest {
         gfsh.executeAndAssertThat(command, COMMAND + " --name=" + regionName).statusIsSuccess()
             .doesNotContainOutput("Non-Default Attributes Specific To");
 
-    GfJsonObject shared = getSharedAttributedJson(commandAssert.getCommandResult());
-    GfJsonObject unique = getMemberSpecificAttributeJson(commandAssert.getCommandResult());
-
-    assertThat(shared.toString()).contains("regKey", "regVal", "evictKey", "evictVal", "partKey",
-        "partVal");
-    assertThat(unique.toString()).isEqualTo("{}");
+    commandAssert.hasDataSection("region-1").hasContent().containsEntry("Name", "testRegion")
+        .containsEntry("Data Policy", "normal")
+        .extracting(DescribeRegionJUnitTest::extractHostingMembers)
+        .asList()
+        .containsExactlyInAnyOrder("mockA", "mockB");;
+    commandAssert.hasTableSection("non-default-1").hasRowSize(3).hasColumns()
+        .containsExactly("Type", "Name", "Value")
+        .hasAnyRow().containsExactly("Region", "regKey", "regVal")
+        .hasAnyRow().containsExactly("Eviction", "evictKey", "evictVal")
+        .hasAnyRow().containsExactly("Partition", "partKey", "partVal");
+    commandAssert.hasTableSection("member-non-default-1").isEmpty();
   }
 
   @Test
@@ -169,20 +173,27 @@ public class DescribeRegionJUnitTest {
     CommandResultAssert commandAssert =
         gfsh.executeAndAssertThat(command, COMMAND + " --name=" + regionName).statusIsSuccess();
 
-    GfJsonObject shared = getSharedAttributedJson(commandAssert.getCommandResult());
-    GfJsonObject unique = getMemberSpecificAttributeJson(commandAssert.getCommandResult());
-
-    assertThat(shared.toString()).contains("Eviction", "sharedEvictionKey", "sharedEvictionValue");
-    assertThat(unique.toString()).contains("sharedPartitionKey", "uniquePartitionValue_A",
-        "uniqueRegionKey_A", "uniqueRegionValue_A", "sharedPartitionKey", "uniquePartitionValue_B",
-        "uniqueRegionKey_B", "uniqueRegionValue_B");
+    commandAssert.hasDataSection("region-1").hasContent().containsEntry("Name", "testRegion")
+        .containsEntry("Data Policy", "normal")
+        .extracting(DescribeRegionJUnitTest::extractHostingMembers)
+        .asList()
+        .containsExactlyInAnyOrder("mockA", "mockB");
+    commandAssert.hasTableSection("non-default-1").hasRowSize(1).hasColumns()
+        .containsExactly("Type", "Name", "Value").hasAnyRow()
+        .containsExactly("Eviction", "sharedEvictionKey", "sharedEvictionValue");
+    commandAssert.hasTableSection("member-non-default-1").hasRowSize(4).hasColumns()
+        .containsExactly("Member", "Type", "Name", "Value")
+        .hasAnyRow().containsExactly("mockA", "Region", "uniqueRegionKey_A", "uniqueRegionValue_A")
+        .hasAnyRow()
+        .containsExactly("", "Partition", "sharedPartitionKey", "uniquePartitionValue_A")
+        .hasAnyRow().containsExactly("mockB", "Region", "uniqueRegionKey_B", "uniqueRegionValue_B")
+        .hasAnyRow()
+        .containsExactly("", "Partition", "sharedPartitionKey", "uniquePartitionValue_B");
   }
 
-  private GfJsonObject getSharedAttributedJson(CommandResult commandResult) {
-    return commandResult.getTableContent(0, 0, 0);
-  }
-
-  private GfJsonObject getMemberSpecificAttributeJson(CommandResult commandResult) {
-    return commandResult.getTableContent(0, 1, 0);
+  static List<String> extractHostingMembers(Map<String, String> map) {
+    String key = "Hosting Members";
+    assertThat(map).containsKeys(key);
+    return Arrays.asList(map.get(key).split("\n"));
   }
 }

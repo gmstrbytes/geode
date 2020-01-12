@@ -14,9 +14,9 @@
  */
 package org.apache.geode.distributed.internal.membership.gms.interfaces;
 
-import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.distributed.internal.membership.NetView;
+import org.apache.geode.distributed.internal.membership.gms.GMSMembershipView;
 import org.apache.geode.distributed.internal.membership.gms.Services;
+import org.apache.geode.distributed.internal.membership.gms.api.MemberIdentifier;
 
 /**
  * Services in GMS all implement this interface
@@ -49,7 +49,7 @@ public interface Service {
   /**
    * called when a new view is installed by Membership
    */
-  void installView(NetView v);
+  void installView(GMSMembershipView v);
 
   /**
    * test method for simulating a sick/dead member
@@ -74,8 +74,9 @@ public interface Service {
   /**
    * a member is suspected of having crashed
    */
-  void memberSuspected(InternalDistributedMember initiator, InternalDistributedMember suspect,
+  void memberSuspected(MemberIdentifier initiator, MemberIdentifier suspect,
       String reason);
 
 
+  default void setLocalAddress(MemberIdentifier address) {}
 }

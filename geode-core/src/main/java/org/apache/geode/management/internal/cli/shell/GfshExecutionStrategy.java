@@ -20,7 +20,6 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
-import org.apache.commons.lang.StringUtils;
 import org.springframework.shell.core.ExecutionStrategy;
 import org.springframework.shell.core.Shell;
 import org.springframework.shell.event.ParseResult;
@@ -28,18 +27,14 @@ import org.springframework.util.Assert;
 
 import org.apache.geode.internal.ClassPathLoader;
 import org.apache.geode.management.cli.CliMetaData;
-import org.apache.geode.management.cli.Result;
 import org.apache.geode.management.cli.Result.Status;
 import org.apache.geode.management.internal.cli.CliAroundInterceptor;
 import org.apache.geode.management.internal.cli.CommandRequest;
-import org.apache.geode.management.internal.cli.CommandResponse;
-import org.apache.geode.management.internal.cli.CommandResponseBuilder;
 import org.apache.geode.management.internal.cli.GfshParseResult;
 import org.apache.geode.management.internal.cli.LogWrapper;
-import org.apache.geode.management.internal.cli.i18n.CliStrings;
 import org.apache.geode.management.internal.cli.remote.CommandExecutor;
-import org.apache.geode.management.internal.cli.result.FileResult;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
+import org.apache.geode.management.internal.cli.result.CommandResult;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.security.NotAuthorizedException;
 
 /**
@@ -54,7 +49,7 @@ public class GfshExecutionStrategy implements ExecutionStrategy {
 
   GfshExecutionStrategy(Gfsh shell) {
     this.shell = shell;
-    this.logWrapper = LogWrapper.getInstance();
+    this.logWrapper = shell.getGfshFileLogger();
   }
 
   /**
@@ -65,11 +60,12 @@ public class GfshExecutionStrategy implements ExecutionStrategy {
    *
    * @param parseResult that should be executed (never presented as null)
    * @return an object which will be rendered by the {@link Shell} implementation (may return null)
+   *         this returns a CommandResult for all the online commands. For offline-commands,
+   *         this can return either a CommandResult or ExitShellRequest
    * @throws RuntimeException which is handled by the {@link Shell} implementation
    */
   @Override
   public Object execute(ParseResult parseResult) {
-    Result result;
     Method method = parseResult.getMethod();
 
     // check if it's a shell only command
@@ -78,7 +74,12 @@ public class GfshExecutionStrategy implements ExecutionStrategy {
       synchronized (mutex) {
         Assert.isTrue(isReadyForCommands(), "Not yet ready for commands");
 
-        return new CommandExecutor().execute(parseResult);
+        Object exeuctionResult = new CommandExecutor().execute((GfshParseResult) parseResult);
+        if (exeuctionResult instanceof ResultModel) {
+          return new CommandResult((ResultModel) exeuctionResult);
+        }
+        return exeuctionResult;
+
       }
     }
 
@@ -87,8 +88,12 @@ public class GfshExecutionStrategy implements ExecutionStrategy {
       throw new IllegalStateException("Configuration error!");
     }
 
-    result = executeOnRemote((GfshParseResult) parseResult);
-    return result;
+    ResultModel resultModel = executeOnRemote((GfshParseResult) parseResult);
+
+    if (resultModel == null) {
+      return null;
+    }
+    return new CommandResult(resultModel);
   }
 
   /**
@@ -136,9 +141,7 @@ public class GfshExecutionStrategy implements ExecutionStrategy {
    * @return result of execution/processing of the command
    * @throws IllegalStateException if gfsh doesn't have an active connection.
    */
-  private Result executeOnRemote(GfshParseResult parseResult) {
-    Result commandResult = null;
-    Object response = null;
+  private ResultModel executeOnRemote(GfshParseResult parseResult) {
     Path tempFile = null;
 
     if (!shell.isConnectedAndReady()) {
@@ -165,86 +168,62 @@ public class GfshExecutionStrategy implements ExecutionStrategy {
       }
 
       if (interceptor == null) {
-        return ResultBuilder.createBadConfigurationErrorResult("Interceptor Configuration Error");
+        return ResultModel.createError("Interceptor Configuration Error");
       }
 
-      Result preExecResult = interceptor.preExecution(parseResult);
-      if (Status.ERROR.equals(preExecResult.getStatus())) {
+      ResultModel preExecResult = interceptor.preExecution(parseResult);
+      if (preExecResult.getStatus() != Status.OK) {
         return preExecResult;
       }
-
-      // when the preExecution yields a FileResult, we will get the fileData out of it
-      if (preExecResult instanceof FileResult) {
-        FileResult fileResult = (FileResult) preExecResult;
-        fileData = fileResult.getFiles();
-      }
+      fileData = preExecResult.getFileList();
     }
 
     // 2. Remote Execution
+    Object response = null;
     final Map<String, String> env = shell.getEnv();
     try {
       response = shell.getOperationInvoker()
           .processCommand(new CommandRequest(parseResult, env, fileData));
 
       if (response == null) {
-        return ResultBuilder
-            .createBadResponseErrorResult("Response was null for: " + parseResult.getUserInput());
+        return ResultModel.createError("Response was null for: " + parseResult.getUserInput());
       }
     } catch (NotAuthorizedException e) {
-      return ResultBuilder
-          .createGemFireUnAuthorizedErrorResult("Unauthorized. Reason : " + e.getMessage());
+      return ResultModel.createError("Unauthorized. Reason : " + e.getMessage());
     } catch (Exception e) {
       shell.logSevere(e.getMessage(), e);
-      e.printStackTrace();
-      return ResultBuilder.createBadResponseErrorResult(
+      return ResultModel.createError(
           "Error occurred while executing \"" + parseResult.getUserInput() + "\" on manager.");
     } finally {
       env.clear();
     }
 
-    // the response could be a string which is a json representation of the CommandResult object
+    // the response could be a string which is a json representation of the
+    // ResultModel object
     // it can also be a Path to a temp file downloaded from the rest http request
+    ResultModel commandResult = null;
     if (response instanceof String) {
-      CommandResponse commandResponse =
-          CommandResponseBuilder.prepareCommandResponseFromJson((String) response);
+      commandResult = ResultModel.fromJson((String) response);
 
-      if (commandResponse.isFailedToPersist()) {
-        shell.printAsSevere(CliStrings.SHARED_CONFIGURATION_FAILED_TO_PERSIST_COMMAND_CHANGES);
-        logWrapper.severe(CliStrings.SHARED_CONFIGURATION_FAILED_TO_PERSIST_COMMAND_CHANGES);
-      }
-
-      String debugInfo = commandResponse.getDebugInfo();
-      if (StringUtils.isNotBlank(debugInfo)) {
-        debugInfo = debugInfo.replaceAll("\n\n\n", "\n");
-        debugInfo = debugInfo.replaceAll("\n\n", "\n");
-        debugInfo =
-            debugInfo.replaceAll("\n", "\n[From Manager : " + commandResponse.getSender() + "]");
-        debugInfo = "[From Manager : " + commandResponse.getSender() + "]" + debugInfo;
-        LogWrapper.getInstance().info(debugInfo);
-      }
-      commandResult = ResultBuilder.fromJson((String) response);
     } else if (response instanceof Path) {
       tempFile = (Path) response;
     }
 
     // 3. Post Remote Execution
     if (interceptor != null) {
-      Result postExecResult = interceptor.postExecution(parseResult, commandResult, tempFile);
-      if (postExecResult != null) {
-        if (Status.ERROR.equals(postExecResult.getStatus())) {
-          if (logWrapper.infoEnabled()) {
-            logWrapper.info("Post execution Result :: " + postExecResult);
-          }
-        } else if (logWrapper.fineEnabled()) {
-          logWrapper.fine("Post execution Result :: " + postExecResult);
-        }
-        commandResult = postExecResult;
+      try {
+        commandResult =
+            interceptor.postExecution(parseResult, commandResult, tempFile);
+
+      } catch (Exception e) {
+        logWrapper.severe("error running post interceptor", e);
+        commandResult = ResultModel.createError(e.getMessage());
       }
     }
 
     if (commandResult == null) {
-      commandResult = ResultBuilder
-          .createGemFireErrorResult("Unable to build commandResult using the remote response.");
+      commandResult =
+          ResultModel.createError("Unable to build ResultModel using the remote response.");
     }
 
     return commandResult;

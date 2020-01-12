@@ -28,9 +28,8 @@ import java.util.logging.Level;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 
+import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.cache.Cache;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.management.internal.cli.remote.CommandExecutionContext;
 import org.apache.geode.management.internal.cli.shell.GfshConfig;
 
 /**
@@ -40,35 +39,41 @@ import org.apache.geode.management.internal.cli.shell.GfshConfig;
  * @since GemFire 7.0
  */
 public class LogWrapper {
-  private static Object INSTANCE_LOCK = new Object();
+  private static final Object INSTANCE_LOCK = new Object();
+  @MakeNotStatic
   private static volatile LogWrapper INSTANCE = null;
 
   private Logger logger;
 
-  private LogWrapper() {
+  private LogWrapper(Cache cache) {
     logger = Logger.getLogger(this.getClass().getCanonicalName());
 
-    Cache cache = CliUtil.getCacheIfExists();
     if (cache != null && !cache.isClosed()) {
       logger.addHandler(cache.getLogger().getHandler());
-      CommandResponseWriterHandler handler = new CommandResponseWriterHandler();
-      handler.setFilter(record -> record.getLevel().intValue() >= Level.FINE.intValue());
-      handler.setLevel(Level.FINE);
-      logger.addHandler(handler);
     }
     logger.setUseParentHandlers(false);
   }
 
-  public static LogWrapper getInstance() {
+  /**
+   * Used in the manager when logging is required to be sent back to gfsh
+   */
+  public static LogWrapper getInstance(Cache cache) {
     if (INSTANCE == null) {
       synchronized (INSTANCE_LOCK) {
         if (INSTANCE == null) {
-          INSTANCE = new LogWrapper();
+          INSTANCE = new LogWrapper(cache);
         }
       }
     }
 
     return INSTANCE;
+  }
+
+  /**
+   * used in the gfsh process
+   */
+  public static LogWrapper getInstance() {
+    return getInstance(null);
   }
 
   public void configure(GfshConfig config) {
@@ -135,6 +140,7 @@ public class LogWrapper {
    * Make logger null when the singleton (which was referred by INSTANCE) gets garbage collected.
    * Makes an attempt at removing associated {@link Handler}s of the {@link Logger}.
    */
+  @Override
   protected void finalize() throws Throwable {
     cleanupLogger(this.logger);
     this.logger = null;
@@ -312,8 +318,7 @@ public class LogWrapper {
           formatText(pw, msg, 40);
         } catch (RuntimeException e) {
           pw.println(msg);
-          pw.println(LocalizedStrings.GemFireFormatter_IGNORING_THE_FOLLOWING_EXCEPTION
-              .toLocalizedString());
+          pw.println("Ignoring the following exception:");
           e.printStackTrace(pw);
         }
       } else {
@@ -381,30 +386,5 @@ public class LogWrapper {
     private String formatDate(Date date) {
       return sdf.format(date);
     }
-  }
-
-  /**
-   * Handler to write to CommandResponseWriter
-   *
-   * @since GemFire 7.0
-   */
-  static class CommandResponseWriterHandler extends Handler {
-
-    public CommandResponseWriterHandler() {
-      setFormatter(new GemFireFormatter());
-    }
-
-    @Override
-    public void publish(LogRecord record) {
-      CommandResponseWriter responseWriter =
-          CommandExecutionContext.getAndCreateIfAbsentCommandResponseWriter();
-      responseWriter.println(getFormatter().format(record));
-    }
-
-    @Override
-    public void flush() {}
-
-    @Override
-    public void close() throws SecurityException {}
   }
 }

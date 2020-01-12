@@ -18,7 +18,6 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.Properties;
@@ -34,7 +33,6 @@ import org.xml.sax.SAXException;
 
 import org.apache.geode.DataSerializable;
 import org.apache.geode.DataSerializer;
-import org.apache.geode.internal.util.CollectionUtils;
 import org.apache.geode.management.internal.configuration.utils.XmlUtils;
 
 /**
@@ -82,13 +80,17 @@ public class Configuration implements DataSerializable {
     this.cacheXmlContent = cacheXmlContent;
   }
 
-  public void setCacheXmlFile(File cacheXmlFile)
-      throws TransformerException, ParserConfigurationException, IOException, SAXException {
+  public void setCacheXmlFile(File cacheXmlFile) throws IOException {
     if (cacheXmlFile.length() == 0) {
       this.cacheXmlContent = "";
     } else {
-      Document doc = XmlUtils.getDocumentBuilder().parse(cacheXmlFile);
-      this.cacheXmlContent = XmlUtils.elementToString(doc);
+      try {
+        Document doc = XmlUtils.getDocumentBuilder().parse(cacheXmlFile);
+        this.cacheXmlContent = XmlUtils.elementToString(doc);
+      } catch (SAXException | TransformerException | ParserConfigurationException e) {
+        throw new IOException("Unable to parse existing cluster configuration from file: "
+            + cacheXmlFile.getAbsolutePath(), e);
+      }
     }
   }
 

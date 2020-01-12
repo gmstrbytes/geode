@@ -22,14 +22,15 @@ import java.util.Set;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.cache.CacheException;
-import org.apache.geode.distributed.internal.DistributionManager;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
+import org.apache.geode.distributed.internal.OperationExecutors;
 import org.apache.geode.internal.Assert;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.PartitionedRegionDataStore;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * A message sent requesting that an evaluation of buckets be made to determine if one or more needs
@@ -64,12 +65,13 @@ public class BucketBackupMessage extends PartitionMessage {
   public static void send(Set recipients, PartitionedRegion r, int bucketId) {
     Assert.assertTrue(recipients != null, "BucketBackupMessage NULL sender list");
     BucketBackupMessage m = new BucketBackupMessage(recipients, r.getPRId(), bucketId);
+    m.setTransactionDistributed(r.getCache().getTxManager().isDistributed());
     r.getDistributionManager().putOutgoing(m);
   }
 
   /**
    * This message may be sent to nodes before the PartitionedRegion is completely initialized due to
-   * the RegionAdvisor(s) knowing about the existance of a partitioned region at a very early part
+   * the RegionAdvisor(s) knowing about the existence of a partitioned region at a very early part
    * of the initialization
    */
   @Override
@@ -78,7 +80,7 @@ public class BucketBackupMessage extends PartitionMessage {
   }
 
   @Override
-  protected boolean operateOnPartitionedRegion(DistributionManager dm, PartitionedRegion pr,
+  protected boolean operateOnPartitionedRegion(ClusterDistributionManager dm, PartitionedRegion pr,
       long startTime) throws CacheException {
 
     // This call has come to an uninitialized region.
@@ -88,15 +90,15 @@ public class BucketBackupMessage extends PartitionMessage {
       return false;
     }
 
-    if (logger.isTraceEnabled(LogMarker.DM)) {
-      logger.trace(LogMarker.DM, "BucketBackupMessage operateOnRegion: {}", pr.getFullPath());
+    if (logger.isTraceEnabled(LogMarker.DM_VERBOSE)) {
+      logger.trace(LogMarker.DM_VERBOSE, "BucketBackupMessage operateOnRegion: {}",
+          pr.getFullPath());
     }
     PartitionedRegionDataStore ds = pr.getDataStore();
     if (ds != null) {
       pr.getRedundancyProvider().finishIncompleteBucketCreation(bucketId);
     } else {
-      logger.warn(LocalizedMessage.create(
-          LocalizedStrings.BucketBackupMessage_BUCKETBACKUPMESSAGE_DATA_STORE_NOT_CONFIGURED_FOR_THIS_MEMBER));
+      logger.warn("BucketBackupMessage: data store not configured for this member");
     }
     pr.getPrStats().endPartitionMessagesProcessing(startTime);
     return false;
@@ -104,22 +106,25 @@ public class BucketBackupMessage extends PartitionMessage {
 
   @Override
   public int getProcessorType() {
-    return DistributionManager.WAITING_POOL_EXECUTOR;
+    return OperationExecutors.WAITING_POOL_EXECUTOR;
   }
 
+  @Override
   public int getDSFID() {
     return PR_BUCKET_BACKUP_MESSAGE;
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     bucketId = in.readInt();
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     out.writeInt(bucketId);
   }
 

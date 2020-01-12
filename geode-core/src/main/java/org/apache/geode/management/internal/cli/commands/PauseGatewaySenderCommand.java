@@ -22,27 +22,26 @@ import javax.management.ObjectName;
 import org.springframework.shell.core.annotation.CliCommand;
 import org.springframework.shell.core.annotation.CliOption;
 
+import org.apache.geode.cache.Cache;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.management.GatewaySenderMXBean;
-import org.apache.geode.management.ManagementService;
 import org.apache.geode.management.cli.CliMetaData;
 import org.apache.geode.management.cli.ConverterHint;
-import org.apache.geode.management.cli.Result;
+import org.apache.geode.management.cli.SingleGfshCommand;
 import org.apache.geode.management.internal.SystemManagementService;
 import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.cli.result.ResultBuilder;
-import org.apache.geode.management.internal.cli.result.TabularResultData;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
+import org.apache.geode.management.internal.cli.result.model.TabularResultModel;
 import org.apache.geode.management.internal.security.ResourceOperation;
 import org.apache.geode.security.ResourcePermission;
 
-public class PauseGatewaySenderCommand implements GfshCommand {
+public class PauseGatewaySenderCommand extends SingleGfshCommand {
 
   @CliCommand(value = CliStrings.PAUSE_GATEWAYSENDER, help = CliStrings.PAUSE_GATEWAYSENDER__HELP)
   @CliMetaData(relatedTopic = CliStrings.TOPIC_GEODE_WAN)
   @ResourceOperation(resource = ResourcePermission.Resource.CLUSTER,
       operation = ResourcePermission.Operation.MANAGE, target = ResourcePermission.Target.GATEWAY)
-  public Result pauseGatewaySender(@CliOption(key = CliStrings.PAUSE_GATEWAYSENDER__ID,
+  public ResultModel pauseGatewaySender(@CliOption(key = CliStrings.PAUSE_GATEWAYSENDER__ID,
       mandatory = true, optionContext = ConverterHint.GATEWAY_SENDER_ID,
       help = CliStrings.PAUSE_GATEWAYSENDER__ID__HELP) String senderId,
 
@@ -54,25 +53,21 @@ public class PauseGatewaySenderCommand implements GfshCommand {
           optionContext = ConverterHint.MEMBERIDNAME,
           help = CliStrings.PAUSE_GATEWAYSENDER__MEMBER__HELP) String[] onMember) {
 
-    Result result;
     if (senderId != null) {
       senderId = senderId.trim();
     }
 
-    InternalCache cache = getCache();
-    SystemManagementService service =
-        (SystemManagementService) ManagementService.getExistingManagementService(cache);
+    final Cache cache = getCache();
+    final SystemManagementService service = getManagementService();
 
     GatewaySenderMXBean bean;
-
-    TabularResultData resultData = ResultBuilder.createTabularResultData();
-
     Set<DistributedMember> dsMembers = findMembers(onGroup, onMember);
-
     if (dsMembers.isEmpty()) {
-      return ResultBuilder.createUserErrorResult(CliStrings.NO_MEMBERS_FOUND_MESSAGE);
+      return ResultModel.createError(CliStrings.NO_MEMBERS_FOUND_MESSAGE);
     }
 
+    ResultModel resultModel = new ResultModel();
+    TabularResultModel resultData = resultModel.addTable(CliStrings.PAUSE_GATEWAYSENDER);
     for (DistributedMember member : dsMembers) {
       if (cache.getDistributedSystem().getDistributedMember().getId().equals(member.getId())) {
         bean = service.getLocalGatewaySenderMXBean(senderId);
@@ -83,31 +78,30 @@ public class PauseGatewaySenderCommand implements GfshCommand {
       if (bean != null) {
         if (bean.isRunning()) {
           if (bean.isPaused()) {
-            GatewayCommandsUtils.accumulateStartResult(resultData, member.getId(),
+            resultData.addMemberStatusResultRow(member.getId(),
                 CliStrings.GATEWAY_ERROR,
                 CliStrings.format(CliStrings.GATEWAY_SENDER_0_IS_ALREADY_PAUSED_ON_MEMBER_1,
                     senderId, member.getId()));
           } else {
             bean.pause();
-            GatewayCommandsUtils.accumulateStartResult(resultData, member.getId(),
+            resultData.addMemberStatusResultRow(member.getId(),
                 CliStrings.GATEWAY_OK, CliStrings.format(
                     CliStrings.GATEWAY_SENDER_0_IS_PAUSED_ON_MEMBER_1, senderId, member.getId()));
           }
         } else {
-          GatewayCommandsUtils.accumulateStartResult(resultData, member.getId(),
+          resultData.addMemberStatusResultRow(member.getId(),
               CliStrings.GATEWAY_ERROR,
               CliStrings.format(CliStrings.GATEWAY_SENDER_0_IS_NOT_RUNNING_ON_MEMBER_1, senderId,
                   member.getId()));
         }
       } else {
-        GatewayCommandsUtils.accumulateStartResult(resultData, member.getId(),
+        resultData.addMemberStatusResultRow(member.getId(),
             CliStrings.GATEWAY_ERROR,
             CliStrings.format(CliStrings.GATEWAY_SENDER_0_IS_NOT_AVAILABLE_ON_MEMBER_1, senderId,
                 member.getId()));
       }
     }
-    result = ResultBuilder.buildResult(resultData);
 
-    return result;
+    return resultModel;
   }
 }

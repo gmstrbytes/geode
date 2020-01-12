@@ -14,8 +14,9 @@
  */
 package org.apache.geode.cache.lucene.internal.repository.serializer;
 
-import static org.junit.Assert.*;
-import static org.mockito.Mockito.*;
+import static org.junit.Assert.assertEquals;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import org.apache.lucene.document.Document;
 import org.junit.Test;
@@ -23,12 +24,12 @@ import org.junit.experimental.categories.Category;
 
 import org.apache.geode.cache.lucene.LuceneService;
 import org.apache.geode.pdx.PdxInstance;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.test.junit.categories.LuceneTest;
 
 /**
  * Unit test of the ObjectToDocumentMapper.
  */
-@Category(UnitTest.class)
+@Category({LuceneTest.class})
 public class HeterogeneousLuceneSerializerJUnitTest {
 
   /**

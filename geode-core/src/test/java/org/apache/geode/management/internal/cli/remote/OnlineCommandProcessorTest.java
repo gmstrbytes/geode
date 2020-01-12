@@ -26,23 +26,19 @@ import java.util.Properties;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 import org.junit.rules.TemporaryFolder;
 
 import org.apache.geode.internal.security.SecurityService;
-import org.apache.geode.management.cli.Result;
-import org.apache.geode.management.internal.cli.result.CommandResult;
+import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.security.NotAuthorizedException;
-import org.apache.geode.test.junit.categories.UnitTest;
 
-@Category(UnitTest.class)
 public class OnlineCommandProcessorTest {
 
   Properties properties;
   SecurityService securityService;
   CommandExecutor executor;
   OnlineCommandProcessor onlineCommandProcessor;
-  Result result;
+  ResultModel result;
 
   @Rule
   public TemporaryFolder temporaryFolder = new TemporaryFolder();
@@ -52,12 +48,12 @@ public class OnlineCommandProcessorTest {
     properties = new Properties();
     securityService = mock(SecurityService.class);
     executor = mock(CommandExecutor.class);
-    result = mock(Result.class);
+    result = mock(ResultModel.class);
     when(executor.execute(any())).thenReturn(result);
 
-    onlineCommandProcessor = new OnlineCommandProcessor(properties, securityService, executor);
+    onlineCommandProcessor =
+        new OnlineCommandProcessor(properties, securityService, executor, null);
   }
-
 
   @Test
   public void executeWithNullThrowsNPE() throws Exception {
@@ -72,13 +68,13 @@ public class OnlineCommandProcessorTest {
 
   @Test
   public void executeStripsComments() throws Exception {
-    Result commandResult = onlineCommandProcessor.executeCommand("/*comment*/");
+    Object commandResult = onlineCommandProcessor.executeCommand("/*comment*/");
     assertThat(commandResult).isNull();
   }
 
   @Test
   public void executeReturnsExecutorResult() throws Exception {
-    Result commandResult = onlineCommandProcessor.executeCommand("start locator");
+    ResultModel commandResult = onlineCommandProcessor.executeCommand("start locator");
     assertThat(commandResult).isSameAs(result);
   }
 
@@ -91,8 +87,8 @@ public class OnlineCommandProcessorTest {
 
   @Test
   public void handlesParsingError() throws Exception {
-    Result commandResult = onlineCommandProcessor.executeCommand("foo --bar");
-    assertThat(commandResult).isInstanceOf(CommandResult.class);
+    ResultModel commandResult = onlineCommandProcessor.executeCommand("foo --bar");
+    assertThat(commandResult).isInstanceOf(ResultModel.class);
     assertThat(commandResult.toString()).contains("Could not parse command string. foo --bar");
   }
 }

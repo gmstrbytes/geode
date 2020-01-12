@@ -16,7 +16,6 @@ package org.apache.geode.internal.lang;
 
 import java.util.Optional;
 
-import org.apache.geode.annotations.Experimental;
 
 /**
  * The SystemPropertyHelper class is an helper class for accessing system properties used in geode.
@@ -24,29 +23,26 @@ import org.apache.geode.annotations.Experimental;
  *
  * @since Geode 1.4.0
  */
-
 public class SystemPropertyHelper {
-  private static final String GEODE_PREFIX = "geode.";
-  private static final String GEMFIRE_PREFIX = "gemfire.";
 
+  public static final String GEODE_PREFIX = "geode.";
+  public static final String GEMFIRE_PREFIX = "gemfire.";
 
   /**
-   * Setting this to "true" enables a new asynchronous eviction algorithm. For more details see
-   * {@link org.apache.geode.internal.cache.eviction.LRUListWithSyncSorting}.
+   * When set to "true" enables asynchronous eviction algorithm (defaults to true). For more details
+   * see {@link org.apache.geode.internal.cache.eviction.LRUListWithAsyncSorting}.
    *
    * @since Geode 1.4.0
    */
-  @Experimental
   public static final String EVICTION_SCAN_ASYNC = "EvictionScanAsync";
 
   /**
    * This property allows the maximum number of threads used for asynchronous eviction scanning to
    * be configured. It defaults to "Math.max((Runtime.getRuntime().availableProcessors() / 4), 1)".
-   * For more details see {@link org.apache.geode.internal.cache.eviction.LRUListWithSyncSorting}.
+   * For more details see {@link org.apache.geode.internal.cache.eviction.LRUListWithAsyncSorting}.
    *
    * @since Geode 1.4.0
    */
-  @Experimental
   public static final String EVICTION_SCAN_MAX_THREADS = "EvictionScanMaxThreads";
 
   /**
@@ -54,30 +50,56 @@ public class SystemPropertyHelper {
    * started. If the number of entries that have been recently used since the previous scan divided
    * by total number of entries exceeds the threshold then a scan is started. The default threshold
    * is 25. If the threshold is less than 0 or greater than 100 then the default threshold is used.
-   * For more details see {@link org.apache.geode.internal.cache.eviction.LRUListWithSyncSorting}.
+   * For more details see {@link org.apache.geode.internal.cache.eviction.LRUListWithAsyncSorting}.
    *
    * @since Geode 1.4.0
    */
-  @Experimental
   public static final String EVICTION_SCAN_THRESHOLD_PERCENT = "EvictionScanThresholdPercent";
 
   public static final String EVICTION_SEARCH_MAX_ENTRIES = "lru.maxSearchEntries";
+
+  public static final String EARLY_ENTRY_EVENT_SERIALIZATION = "earlyEntryEventSerialization";
+
+  public static final String DEFAULT_DISK_DIRS_PROPERTY = "defaultDiskDirs";
+
+  public static final String HA_REGION_QUEUE_EXPIRY_TIME_PROPERTY = "MessageTimeToLive";
+
+  public static final String THREAD_ID_EXPIRY_TIME_PROPERTY = "threadIdExpiryTime";
+
+  public static final String PERSISTENT_VIEW_RETRY_TIMEOUT_SECONDS =
+      "PERSISTENT_VIEW_RETRY_TIMEOUT_SECONDS";
+
+  public static final String USE_HTTP_SYSTEM_PROPERTY = "useHTTP";
+
+  /**
+   * a comma separated string to list out the packages to scan. If not specified, the entire
+   * classpath is scanned.
+   * This is used by the FastPathScanner to scan for:
+   * 1. XSDRootElement annotation
+   *
+   * @since Geode 1.7.0
+   */
+  public static final String PACKAGES_TO_SCAN = "packagesToScan";
 
   /**
    * This method will try to look up "geode." and "gemfire." versions of the system property. It
    * will check and prefer "geode." setting first, then try to check "gemfire." setting.
    *
    * @param name system property name set in Geode
-   * @return a boolean value of the system property
+   * @return an Optional containing the Boolean value of the system property
    */
-  public static boolean getProductBooleanProperty(String name) {
-    String property = System.getProperty(GEODE_PREFIX + name);
-    if (property != null) {
-      return Boolean.getBoolean(GEODE_PREFIX + name);
-    }
-    return Boolean.getBoolean(GEMFIRE_PREFIX + name);
+  public static Optional<Boolean> getProductBooleanProperty(String name) {
+    String property = getProperty(name);
+    return property != null ? Optional.of(Boolean.parseBoolean(property)) : Optional.empty();
   }
 
+  /**
+   * This method will try to look up "geode." and "gemfire." versions of the system property. It
+   * will check and prefer "geode." setting first, then try to check "gemfire." setting.
+   *
+   * @param name system property name set in Geode
+   * @return an Optional containing the Integer value of the system property
+   */
   public static Optional<Integer> getProductIntegerProperty(String name) {
     Integer propertyValue = Integer.getInteger(GEODE_PREFIX + name);
     if (propertyValue == null) {
@@ -92,6 +114,31 @@ public class SystemPropertyHelper {
   }
 
   /**
+   * This method will try to look up "geode." and "gemfire." versions of the system property. It
+   * will check and prefer "geode." setting first, then try to check "gemfire." setting.
+   *
+   * @param name system property name set in Geode
+   * @return an Optional containing the String value of the system property
+   */
+  public static Optional<String> getProductStringProperty(String name) {
+    String property = getProperty(name);
+    return property != null ? Optional.of(property) : Optional.empty();
+  }
+
+  public static String getProperty(String name) {
+    String property = getGeodeProperty(name);
+    return property != null ? property : getGemfireProperty(name);
+  }
+
+  private static String getGeodeProperty(String name) {
+    return System.getProperty(GEODE_PREFIX + name);
+  }
+
+  private static String getGemfireProperty(String name) {
+    return System.getProperty(GEMFIRE_PREFIX + name);
+  }
+
+  /**
    * As of Geode 1.4.0, a region set operation will be in a transaction even if it is the first
    * operation in the transaction.
    *
@@ -103,7 +150,7 @@ public class SystemPropertyHelper {
    * @since Geode 1.4.0
    */
   public static boolean restoreSetOperationTransactionBehavior() {
-    return getProductBooleanProperty("restoreSetOperationTransactionBehavior");
+    return getProductBooleanProperty("restoreSetOperationTransactionBehavior").orElse(false);
   }
 
   /**
@@ -116,6 +163,6 @@ public class SystemPropertyHelper {
    * @since Geode 1.4.0
    */
   public static boolean restoreIdleExpirationBehavior() {
-    return getProductBooleanProperty("restoreIdleExpirationBehavior");
+    return getProductBooleanProperty("restoreIdleExpirationBehavior").orElse(false);
   }
 }

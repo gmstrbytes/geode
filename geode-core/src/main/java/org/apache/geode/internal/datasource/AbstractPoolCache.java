@@ -30,20 +30,14 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.CancelException;
 import org.apache.geode.SystemFailure;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.LoggingThreadGroup;
+import org.apache.geode.logging.internal.executors.LoggingThread;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * AbstractPoolCache implements the ConnectionPoolCache interface. This is base class for the all
  * connection pools. The class also implements the Serializable interface. The pool maintain a list
  * for keeping the available connections(not assigned to user) and the active connections(assigned
  * to user) This is a thread safe class.
- *
- * Second Version .Modified the synchronization code & objects on which locks were being taken.
- * Changed the logic of retrieval of connection & returning of connection. The beahviour of cleaner
- * thread has been modified such that it waits on activeCache if it is empty. Prevention of
- * deadlocks & optmization of code.
  */
 public abstract class AbstractPoolCache implements ConnectionPoolCache, Serializable {
 
@@ -56,11 +50,9 @@ public abstract class AbstractPoolCache implements ConnectionPoolCache, Serializ
   protected EventListener connEventListner;
   // private String error = "";
   protected ConfiguredDataSourceProperties configProps;
-  // Asif:expirationTime is for the available
-  // connection which are expired in milliseconds
+  // expirationTime is for the available connection which are expired in milliseconds
   protected int expirationTime;
-  // Asif:timeOut is for the Active connection which are time out in
-  // milliseconds
+  // timeOut is for the Active connection which are time out in milliseconds
   protected int timeOut;
   // Client Timeout in milliseconds
   protected int loginTimeOut;
@@ -78,7 +70,6 @@ public abstract class AbstractPoolCache implements ConnectionPoolCache, Serializ
    * @param eventListner The event listner for the database connections.
    * @param configs The ConfiguredDataSourceProperties object containing the configuration for the
    *        pool.
-   * @throws PoolException
    */
   @edu.umd.cs.findbugs.annotations.SuppressWarnings(value = "SC_START_IN_CTOR",
       justification = "the thread started is a cleanup thread and is not active until there is a timeout tx")
@@ -95,9 +86,7 @@ public abstract class AbstractPoolCache implements ConnectionPoolCache, Serializ
     INIT_LIMIT = Math.min(configs.getInitialPoolSize(), MAX_LIMIT);
     configProps = configs;
     cleaner = this.new ConnectionCleanUpThread();
-    ThreadGroup group = LoggingThreadGroup.createThreadGroup("Cleaner threads");
-    th = new Thread(group, cleaner);
-    th.setDaemon(true);
+    th = new LoggingThread("ConnectionCleanUpThread", cleaner);
     th.start();
   }
 
@@ -118,19 +107,6 @@ public abstract class AbstractPoolCache implements ConnectionPoolCache, Serializ
     }
   }
 
-  /**
-   * Authenticates the username and password for the database connection.
-   *
-   * @param user The username for the database connection
-   * @param pass The password for the database connection
-   * @throws SQLException
-   *
-   *         public abstract void checkCredentials(String user, String pass)
-   */
-  /**
-   * @throws PoolException
-   * @return ???
-   */
   public abstract Object getNewPoolConnection() throws PoolException;
 
   /**
@@ -141,6 +117,7 @@ public abstract class AbstractPoolCache implements ConnectionPoolCache, Serializ
    * @param connectionObject PooledConnection object for return.
    *
    */
+  @Override
   public void returnPooledConnectionToPool(Object connectionObject) {
     boolean returnedHappened = false;
     if (connectionObject != null) {
@@ -155,7 +132,7 @@ public abstract class AbstractPoolCache implements ConnectionPoolCache, Serializ
       // returning their own connections
       synchronized (connectionObject) {
         if (this.activeCache.containsKey(connectionObject)) {
-          // Asif: Remove teh connection from activeCache
+          // Asif: Remove the connection from activeCache
           // Don't add it to availabel pool now. Add it when we have
           // taken a lock on availableCache & then we will modify the
           // count.
@@ -180,7 +157,6 @@ public abstract class AbstractPoolCache implements ConnectionPoolCache, Serializ
   /**
    * Expires connection in the available pool.
    *
-   * @param connectionObject
    */
   abstract void destroyPooledConnection(Object connectionObject);
 
@@ -212,6 +188,7 @@ public abstract class AbstractPoolCache implements ConnectionPoolCache, Serializ
    *        or not
    *
    */
+  @Override
   public void expirePooledConnection(Object connectionObject) {
     synchronized (connectionObject) {
       if (this.activeCache.containsKey(connectionObject)) {
@@ -239,9 +216,9 @@ public abstract class AbstractPoolCache implements ConnectionPoolCache, Serializ
    * this iteslf guarantees that atleast one connection expired so the current thread can safely
    * demand one new connection.
    *
-   * @throws PoolException
    * @return Object connection object from the pool.
    */
+  @Override
   public Object getPooledConnectionFromPool() throws PoolException {
     Object poolConn = null;
     // checkCredentials(username, password);
@@ -258,8 +235,7 @@ public abstract class AbstractPoolCache implements ConnectionPoolCache, Serializ
           long duration = newtime - now;
           if (duration > loginTimeOut)
             throw new PoolException(
-                LocalizedStrings.AbstractPoolCache_ABSTRACTPOOLEDCACHEGETPOOLEDCONNECTIONFROMPOOLLOGIN_TIMEOUT_EXCEEDED
-                    .toLocalizedString());
+                "AbstractPooledCache::getPooledConnectionFromPool:Login time-out exceeded");
         } catch (InterruptedException e) {
           Thread.currentThread().interrupt();
           // TODO add a cancellation check?
@@ -268,8 +244,7 @@ public abstract class AbstractPoolCache implements ConnectionPoolCache, Serializ
                 "AbstractPooledCache::getPooledConnectionFromPool:InterruptedException in waiting thread");
           }
           throw new PoolException(
-              LocalizedStrings.AbstractPoolCache_ABSTRACTPOOLEDCACHEGETPOOLEDCONNECTIONFROMPOOLINTERRUPTEDEXCEPTION_IN_WAITING_THREAD
-                  .toLocalizedString());
+              "AbstractPooledCache::getPooledConnectionFromPool:InterruptedException in waiting thread");
         }
       }
       if ((totalConnections - activeConnections) > 0) {
@@ -297,7 +272,6 @@ public abstract class AbstractPoolCache implements ConnectionPoolCache, Serializ
   /**
    * Returns the max pool limit.
    *
-   * @return int
    */
   public int getMaxLimit() {
     return MAX_LIMIT;
@@ -308,7 +282,6 @@ public abstract class AbstractPoolCache implements ConnectionPoolCache, Serializ
    * block where the lock is taken on this.availableCache
    *
    * @param now Current time in milliseconds
-   * @throws PoolException
    * @return Object Connection object from the pool.
    */
   private Object checkOutConnection(long now) throws PoolException {
@@ -399,8 +372,8 @@ public abstract class AbstractPoolCache implements ConnectionPoolCache, Serializ
               // that destroy can be called on it.
               // We will first collect all the connections
               // which have timed out & then expire them.
-              // In that gap even if teh client genuinely closes
-              // teh connection , it will not be returned to the
+              // In that gap even if the client genuinely closes
+              // the connection , it will not be returned to the
               // pool as the active map no longer contains it
               this.activeCache.remove(conn);
               this.expiredConns.add(conn);
@@ -431,9 +404,9 @@ public abstract class AbstractPoolCache implements ConnectionPoolCache, Serializ
     // Asif : Create a temp list which copies the connections in
     // the expired list & releases the lock on expired list
     // immediately . Then it is safe to clear the expiredConnList
-    List temp = new ArrayList();
+    List temp;
     synchronized (this.expiredConns) {
-      temp.addAll(this.expiredConns);
+      temp = new ArrayList(this.expiredConns);
       this.expiredConns.clear();
     }
     // Asif: destroy the connections contained in the temp list
@@ -449,6 +422,7 @@ public abstract class AbstractPoolCache implements ConnectionPoolCache, Serializ
   /**
    * It will clean all the thread
    */
+  @Override
   public void clearUp() {
     cleaner.toContinueRunning = false;
     try {
@@ -491,6 +465,7 @@ public abstract class AbstractPoolCache implements ConnectionPoolCache, Serializ
     /*
      * public ConnectionCleanUpThread(int time) { // poolCache = pool; sleepTime = time;
      */
+    @Override
     public void run() {
       while (toContinueRunning) {
         SystemFailure.checkFailure();

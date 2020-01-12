@@ -18,13 +18,17 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ServiceLoader;
 
-import org.xml.sax.*;
+import org.xml.sax.Attributes;
+import org.xml.sax.ErrorHandler;
+import org.xml.sax.InputSource;
+import org.xml.sax.SAXException;
+import org.xml.sax.SAXNotRecognizedException;
+import org.xml.sax.SAXParseException;
 import org.xml.sax.ext.EntityResolver2;
 
 import org.apache.geode.cache.CacheXmlException;
 import org.apache.geode.distributed.ConfigurationProperties;
 import org.apache.geode.internal.ClassPathLoader;
-import org.apache.geode.internal.i18n.LocalizedStrings;
 
 /**
  * The abstract superclass of classes that convert XML into a {@link org.apache.geode.cache.Cache}
@@ -611,6 +615,7 @@ public abstract class CacheXml implements EntityResolver2, ErrorHandler {
   public static final String POOL_NAME = "pool-name";
   public static final String SERVER = "server";
   public static final String LOCATOR = "locator";
+  public static final String SUBSCRIPTION_TIMEOUT_MULTIPLIER = "subscription-timeout-multiplier";
   public static final String SOCKET_CONNECT_TIMEOUT = "socket-connect-timeout";
   public static final String FREE_CONNECTION_TIMEOUT = "free-connection-timeout";
   public static final String LOAD_CONDITIONING_INTERVAL = "load-conditioning-interval";
@@ -745,6 +750,7 @@ public abstract class CacheXml implements EntityResolver2, ErrorHandler {
 
   protected static final String ASYNC_EVENT_LISTENER = "async-event-listener";
   public static final String ASYNC_EVENT_QUEUE = "async-event-queue";
+  public static final String PAUSE_EVENT_PROCESSING = "pause-event-processing";
   protected static final String ASYNC_EVENT_QUEUE_IDS = "async-event-queue-ids";
   protected static final String FORWARD_EXPIRATION_DESTROY = "forward-expiration-destroy";
 
@@ -768,8 +774,8 @@ public abstract class CacheXml implements EntityResolver2, ErrorHandler {
    * Given a public id, attempt to resolve it to a DTD. Returns an <code>InputSoure</code> for the
    * DTD.
    *
-   * @throws IOException
    */
+  @Override
   public InputSource resolveEntity(String name, String publicId, String baseURI, String systemId)
       throws SAXException, IOException {
     if (publicId == null || systemId == null) {
@@ -833,7 +839,7 @@ public abstract class CacheXml implements EntityResolver2, ErrorHandler {
       result = new InputSource(stream);
     } else {
       throw new SAXNotRecognizedException(
-          LocalizedStrings.CacheXml_DTD_NOT_FOUND_0.toLocalizedString(location));
+          String.format("DTD not found: %s", location));
     }
     return result;
   }
@@ -863,11 +869,7 @@ public abstract class CacheXml implements EntityResolver2, ErrorHandler {
   /**
    * Resolve entity using discovered {@link EntityResolver2}s.
    *
-   * @param publicId
-   * @param systemId
    * @return {@link InputSource} for resolved entity if found, otherwise null.
-   * @throws IOException
-   * @throws SAXException
    * @since GemFire 8.1
    */
   private InputSource resolveEntityByEntityResolvers(String name, String publicId, String baseURI,
@@ -887,28 +889,29 @@ public abstract class CacheXml implements EntityResolver2, ErrorHandler {
   /**
    * Warnings are ignored
    */
+  @Override
   public void warning(SAXParseException ex) throws SAXException {}
 
   /**
    * Throws a {@link CacheXmlException}
    */
+  @Override
   public void error(SAXParseException ex) throws SAXException {
     throw new CacheXmlException(
-        LocalizedStrings.CacheXml_ERROR_WHILE_PARSING_XML.toLocalizedString(), ex);
+        "Error while parsing XML", ex);
   }
 
   /**
    * Throws a {@link CacheXmlException}
    */
+  @Override
   public void fatalError(SAXParseException ex) throws SAXException {
     throw new CacheXmlException(
-        LocalizedStrings.CacheXml_FATAL_ERROR_WHILE_PARSING_XML.toLocalizedString(), ex);
+        "Fatal error while parsing XML", ex);
   }
 
   /**
    *
-   * @param attributes
-   * @param name
    * @return String value for named attribute or null if attribute not defined.
    * @since GemFire 8.1
    */
@@ -918,9 +921,6 @@ public abstract class CacheXml implements EntityResolver2, ErrorHandler {
 
   /**
    *
-   * @param attributes
-   * @param name
-   * @param defaultValue
    * @return String value for named attribute or <code>defaultValue</code> if attribute not defined.
    * @since GemFire 8.1
    */
@@ -935,8 +935,6 @@ public abstract class CacheXml implements EntityResolver2, ErrorHandler {
 
   /**
    *
-   * @param attributes
-   * @param name
    * @return Integer value for named attribute or null if attribute not defined.
    * @since GemFire 8.1
    */
@@ -946,9 +944,6 @@ public abstract class CacheXml implements EntityResolver2, ErrorHandler {
 
   /**
    *
-   * @param attributes
-   * @param name
-   * @param defaultValue
    * @return Integer value for named attribute or <code>defaultValue</code> if attribute not
    *         defined.
    * @since GemFire 8.1
@@ -964,8 +959,6 @@ public abstract class CacheXml implements EntityResolver2, ErrorHandler {
 
   /**
    *
-   * @param attributes
-   * @param name
    * @return Boolean value for named attribute or null if attribute not defined.
    * @since GemFire 8.1
    */
@@ -975,9 +968,6 @@ public abstract class CacheXml implements EntityResolver2, ErrorHandler {
 
   /**
    *
-   * @param attributes
-   * @param name
-   * @param defaultValue
    * @return Boolean value for named attribute or <code>defaultValue</code> if attribute not
    *         defined.
    * @since GemFire 8.1
@@ -993,9 +983,6 @@ public abstract class CacheXml implements EntityResolver2, ErrorHandler {
 
   /**
    *
-   * @param attributes
-   * @param name
-   * @param clazz
    * @return Enum value for named attribute or null if attribute not defined.
    * @since GemFire 8.1
    */
@@ -1006,10 +993,6 @@ public abstract class CacheXml implements EntityResolver2, ErrorHandler {
 
   /**
    *
-   * @param attributes
-   * @param name
-   * @param clazz
-   * @param defaultValue
    * @return Enum value for named attribute or <code>defaultValue</code> if attribute not defined.
    * @since GemFire 8.1
    */

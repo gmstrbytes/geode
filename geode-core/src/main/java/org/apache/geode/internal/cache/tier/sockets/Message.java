@@ -29,18 +29,18 @@ import java.util.concurrent.TimeUnit;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.SerializationException;
+import org.apache.geode.annotations.Immutable;
+import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.internal.Assert;
 import org.apache.geode.internal.HeapDataOutputStream;
-import org.apache.geode.internal.Version;
 import org.apache.geode.internal.cache.TXManagerImpl;
 import org.apache.geode.internal.cache.tier.MessageType;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
-import org.apache.geode.internal.logging.log4j.LocalizedMessage;
 import org.apache.geode.internal.offheap.StoredObject;
 import org.apache.geode.internal.offheap.annotations.Unretained;
+import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.internal.util.BlobHelper;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * This class encapsulates the wire protocol. It provides accessors to encode and decode a message
@@ -106,7 +106,9 @@ public class Message {
 
   private static final int DEFAULT_CHUNK_SIZE = 1024;
 
+  @Immutable
   private static final byte[] TRUE = defineTrue();
+  @Immutable
   private static final byte[] FALSE = defineFalse();
 
   private static byte[] defineTrue() {
@@ -128,9 +130,16 @@ public class Message {
   }
 
   /**
-   * maximum size of an outgoing message. See GEODE-478
+   * The maximum size of an outgoing message. If the message is larger than this maximum, it may
+   * cause the receiver to throw an exception on message part length mismatch due to overflow in
+   * message size.
+   *
+   * This value is STATIC because getting a system property requires holding a lock. It is costly to
+   * do this for every message sent. If this value needs to be modified for testing, please add a
+   * new constructor.
    */
-  private final int maxMessageSize;
+  private static final int maxMessageSize =
+      Integer.getInteger(MAX_MESSAGE_SIZE_PROPERTY, DEFAULT_MAX_MESSAGE_SIZE);
 
   protected int messageType;
   private int payloadLength = 0;
@@ -166,7 +175,6 @@ public class Message {
    * Creates a new message with the given number of parts
    */
   public Message(int numberOfParts, Version destVersion) {
-    this.maxMessageSize = Integer.getInteger(MAX_MESSAGE_SIZE_PROPERTY, DEFAULT_MAX_MESSAGE_SIZE);
     this.version = destVersion;
     Assert.assertTrue(destVersion != null, "Attempt to create an unversioned message");
     this.partsList = new Part[numberOfParts];
@@ -189,7 +197,7 @@ public class Message {
     this.messageModified = true;
     if (!MessageType.validate(msgType)) {
       throw new IllegalArgumentException(
-          LocalizedStrings.Message_INVALID_MESSAGETYPE.toLocalizedString());
+          "Invalid MessageType");
     }
     this.messageType = msgType;
   }
@@ -269,6 +277,7 @@ public class Message {
     addStringPart(str, false);
   }
 
+  @MakeNotStatic("not tied to the cache lifecycle")
   private static final Map<String, byte[]> CACHED_STRINGS = new ConcurrentHashMap<>();
 
   public void addStringPart(String str, boolean enableCaching) {
@@ -418,6 +427,13 @@ public class Message {
     this.currentPart++;
   }
 
+  public void addBytePart(byte v) {
+    this.messageModified = true;
+    Part part = this.partsList[this.currentPart];
+    part.setByte(v);
+    this.currentPart++;
+  }
+
   /**
    * Adds a new part to this message that may contain a serialized object.
    */
@@ -550,7 +566,7 @@ public class Message {
       this.serverConnection.updateProcessingMessage();
     }
     if (this.socket == null) {
-      throw new IOException(LocalizedStrings.Message_DEAD_CONNECTION.toLocalizedString());
+      throw new IOException("Dead Connection");
     }
     try {
       final ByteBuffer commBuffer = getCommBuffer();
@@ -647,61 +663,24 @@ public class Message {
     cb.clear();
   }
 
-  private void read() throws IOException {
+  private void readHeaderAndBody(boolean setHeaderReadTimeout, int headerReadTimeoutMillis)
+      throws IOException {
     clearParts();
     // TODO: for server changes make sure sc is not null as this class also used by client
-    readHeaderAndPayload();
-  }
 
-  /**
-   * Read the actual bytes of the header off the socket
-   */
-  void fetchHeader() throws IOException {
-    final ByteBuffer cb = getCommBuffer();
-    cb.clear();
-
-    // messageType is invalidated here and can be used as an indicator
-    // of problems reading the message
-    this.messageType = MessageType.INVALID;
-
-    final int headerLength = getHeaderLength();
-    if (this.socketChannel != null) {
-      cb.limit(headerLength);
-      do {
-        int bytesRead = this.socketChannel.read(cb);
-        if (bytesRead == -1) {
-          throw new EOFException(
-              LocalizedStrings.Message_THE_CONNECTION_HAS_BEEN_RESET_WHILE_READING_THE_HEADER
-                  .toLocalizedString());
-        }
-        if (this.messageStats != null) {
-          this.messageStats.incReceivedBytes(bytesRead);
-        }
-      } while (cb.remaining() > 0);
-      cb.flip();
-
-    } else {
-      int hdr = 0;
-      do {
-        int bytesRead = this.inputStream.read(cb.array(), hdr, headerLength - hdr);
-        if (bytesRead == -1) {
-          throw new EOFException(
-              LocalizedStrings.Message_THE_CONNECTION_HAS_BEEN_RESET_WHILE_READING_THE_HEADER
-                  .toLocalizedString());
-        }
-        hdr += bytesRead;
-        if (this.messageStats != null) {
-          this.messageStats.incReceivedBytes(bytesRead);
-        }
-      } while (hdr < headerLength);
-
-      // now setup the commBuffer for the caller to parse it
-      cb.rewind();
+    int oldTimeout = -1;
+    if (setHeaderReadTimeout) {
+      oldTimeout = socket.getSoTimeout();
+      socket.setSoTimeout(headerReadTimeoutMillis);
     }
-  }
+    try {
+      fetchHeader();
+    } finally {
+      if (setHeaderReadTimeout) {
+        socket.setSoTimeout(oldTimeout);
+      }
+    }
 
-  private void readHeaderAndPayload() throws IOException {
-    fetchHeader();
     final ByteBuffer cb = getCommBuffer();
     final int type = cb.getInt();
     final int len = cb.getInt();
@@ -711,8 +690,8 @@ public class Message {
     cb.clear();
 
     if (!MessageType.validate(type)) {
-      throw new IOException(LocalizedStrings.Message_INVALID_MESSAGE_TYPE_0_WHILE_READING_HEADER
-          .toLocalizedString(type));
+      throw new IOException(String.format("Invalid message type %s while reading header",
+          type));
     }
 
     int timeToWait = 0;
@@ -736,8 +715,9 @@ public class Message {
                 ((CacheServerStats) this.messageStats).incConnectionsTimedOut();
               }
               throw new IOException(
-                  LocalizedStrings.Message_OPERATION_TIMED_OUT_ON_SERVER_WAITING_ON_CONCURRENT_MESSAGE_LIMITER_AFTER_WAITING_0_MILLISECONDS
-                      .toLocalizedString(timeToWait));
+                  String.format(
+                      "Operation timed out on server waiting on concurrent message limiter after waiting %s milliseconds",
+                      timeToWait));
             }
           }
           break;
@@ -753,8 +733,8 @@ public class Message {
 
     if (len > 0) {
       if (this.maxIncomingMessageLength > 0 && len > this.maxIncomingMessageLength) {
-        throw new IOException(LocalizedStrings.Message_MESSAGE_SIZE_0_EXCEEDED_MAX_LIMIT_OF_1
-            .toLocalizedString(new Object[] {len, this.maxIncomingMessageLength}));
+        throw new IOException(String.format("Message size %s exceeded max limit of %s",
+            new Object[] {len, this.maxIncomingMessageLength}));
       }
 
       if (this.dataLimiter != null) {
@@ -775,8 +755,9 @@ public class Message {
               if (newTimeToWait <= 0
                   || !this.messageLimiter.tryAcquire(1, newTimeToWait, TimeUnit.MILLISECONDS)) {
                 throw new IOException(
-                    LocalizedStrings.Message_OPERATION_TIMED_OUT_ON_SERVER_WAITING_ON_CONCURRENT_DATA_LIMITER_AFTER_WAITING_0_MILLISECONDS
-                        .toLocalizedString(timeToWait));
+                    String.format(
+                        "Operation timed out on server waiting on concurrent data limiter after waiting %s milliseconds",
+                        timeToWait));
               }
             }
             // makes sure payloadLength gets set now so we will release the semaphore
@@ -818,13 +799,58 @@ public class Message {
   }
 
   /**
+   * Read the actual bytes of the header off the socket
+   */
+  void fetchHeader() throws IOException {
+    final ByteBuffer cb = getCommBuffer();
+    cb.clear();
+
+    // messageType is invalidated here and can be used as an indicator
+    // of problems reading the message
+    this.messageType = MessageType.INVALID;
+
+    final int headerLength = getHeaderLength();
+    if (this.socketChannel != null) {
+      cb.limit(headerLength);
+      do {
+        int bytesRead = this.socketChannel.read(cb);
+        if (bytesRead == -1) {
+          throw new EOFException(
+              "The connection has been reset while reading the header");
+        }
+        if (this.messageStats != null) {
+          this.messageStats.incReceivedBytes(bytesRead);
+        }
+      } while (cb.remaining() > 0);
+      cb.flip();
+
+    } else {
+      int hdr = 0;
+      do {
+        int bytesRead = this.inputStream.read(cb.array(), hdr, headerLength - hdr);
+        if (bytesRead == -1) {
+          throw new EOFException(
+              "The connection has been reset while reading the header");
+        }
+        hdr += bytesRead;
+        if (this.messageStats != null) {
+          this.messageStats.incReceivedBytes(bytesRead);
+        }
+      } while (hdr < headerLength);
+
+      // now setup the commBuffer for the caller to parse it
+      cb.rewind();
+    }
+  }
+
+  /**
    * TODO: refactor overly long method readPayloadFields
    */
   void readPayloadFields(final int numParts, final int len) throws IOException {
     if (len > 0 && numParts <= 0 || len <= 0 && numParts > 0) {
       throw new IOException(
-          LocalizedStrings.Message_PART_LENGTH_0_AND_NUMBER_OF_PARTS_1_INCONSISTENT
-              .toLocalizedString(new Object[] {len, numParts}));
+          String.format("Part length ( %s ) and number of parts ( %s ) inconsistent",
+              new Object[] {len, numParts}));
     }
 
     Integer msgType = MESSAGE_TYPE.get();
@@ -845,8 +871,8 @@ public class Message {
     }
 
     if (len < 0) {
-      logger.info(LocalizedMessage.create(LocalizedStrings.Message_RPL_NEG_LEN__0, len));
-      throw new IOException(LocalizedStrings.Message_DEAD_CONNECTION.toLocalizedString());
+      logger.info("rpl: neg len: {}", len);
+      throw new IOException("Dead Connection");
     }
 
     final ByteBuffer cb = getCommBuffer();
@@ -906,8 +932,7 @@ public class Message {
               }
             } else {
               throw new EOFException(
-                  LocalizedStrings.Message_THE_CONNECTION_HAS_BEEN_RESET_WHILE_READING_A_PART
-                      .toLocalizedString());
+                  "The connection has been reset while reading a part");
             }
           } else {
             int res = this.inputStream.read(partBytes, off, remaining);
@@ -920,8 +945,7 @@ public class Message {
               }
             } else {
               throw new EOFException(
-                  LocalizedStrings.Message_THE_CONNECTION_HAS_BEEN_RESET_WHILE_READING_A_PART
-                      .toLocalizedString());
+                  "The connection has been reset while reading a part");
             }
           }
         }
@@ -980,8 +1004,7 @@ public class Message {
           }
         } else {
           throw new EOFException(
-              LocalizedStrings.Message_THE_CONNECTION_HAS_BEEN_RESET_WHILE_READING_THE_PAYLOAD
-                  .toLocalizedString());
+              "The connection has been reset while reading the payload");
         }
       }
 
@@ -1003,8 +1026,7 @@ public class Message {
           }
         } else {
           throw new EOFException(
-              LocalizedStrings.Message_THE_CONNECTION_HAS_BEEN_RESET_WHILE_READING_THE_PAYLOAD
-                  .toLocalizedString());
+              "The connection has been reset while reading the payload");
         }
       }
 
@@ -1043,12 +1065,14 @@ public class Message {
     return sb.toString();
   }
 
+  // Set up a message on the server side.
   void setComms(ServerConnection sc, Socket socket, ByteBuffer bb, MessageStats msgStats)
       throws IOException {
     this.serverConnection = sc;
     setComms(socket, bb, msgStats);
   }
 
+  // Set up a message on the client side.
   void setComms(Socket socket, ByteBuffer bb, MessageStats msgStats) throws IOException {
     this.socketChannel = socket.getChannel();
     if (this.socketChannel == null) {
@@ -1058,6 +1082,7 @@ public class Message {
     }
   }
 
+  // Set up a message on the client side.
   public void setComms(Socket socket, InputStream is, OutputStream os, ByteBuffer bb,
       MessageStats msgStats) {
     Assert.assertTrue(socket != null);
@@ -1104,25 +1129,41 @@ public class Message {
   }
 
   /**
-   * Populates the stats of this {@code Message} with information received via its socket
+   * Read a message, populating the state of this {@code Message} with information received via its
+   * socket
+   *
+   * @param timeoutMillis timeout setting for reading the header (0 = no timeout)
    */
-  public void recv() throws IOException {
+  public void receiveWithHeaderReadTimeout(int timeoutMillis) throws IOException {
     if (this.socket != null) {
       synchronized (getCommBuffer()) {
-        read();
+        readHeaderAndBody(true, timeoutMillis);
       }
     } else {
-      throw new IOException(LocalizedStrings.Message_DEAD_CONNECTION.toLocalizedString());
+      throw new IOException("Dead Connection");
     }
   }
 
-  public void recv(ServerConnection sc, int maxMessageLength, Semaphore dataLimiter,
+  /**
+   * Populates the state of this {@code Message} with information received via its socket
+   */
+  public void receive() throws IOException {
+    if (this.socket != null) {
+      synchronized (getCommBuffer()) {
+        readHeaderAndBody(false, -1);
+      }
+    } else {
+      throw new IOException("Dead Connection");
+    }
+  }
+
+  public void receive(ServerConnection sc, int maxMessageLength, Semaphore dataLimiter,
       Semaphore msgLimiter) throws IOException {
     this.serverConnection = sc;
     this.maxIncomingMessageLength = maxMessageLength;
     this.dataLimiter = dataLimiter;
     this.messageLimiter = msgLimiter;
-    recv();
+    receive();
   }
 
 }

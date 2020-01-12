@@ -28,7 +28,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.zip.GZIPInputStream;
+
+import org.apache.geode.internal.tcp.Connection;
+import org.apache.geode.management.internal.cli.commands.ExportStackTraceCommand;
 
 /**
  * PluckStacks is a replacement for the old pluckstacks.pl Perl script that we've used for years.
@@ -41,7 +46,7 @@ import java.util.zip.GZIPInputStream;
  */
 
 public class PluckStacks {
-  static boolean DEBUG = Boolean.getBoolean("PluckStacks.DEBUG");
+  static final boolean DEBUG = Boolean.getBoolean("PluckStacks.DEBUG");
 
   // only print one stack dump from each file
   static final boolean ONE_STACK = Boolean.getBoolean("oneDump");
@@ -49,14 +54,14 @@ public class PluckStacks {
   /**
    * @param args names of files to scan for suspicious threads in thread-dumps
    */
-  public static void main(String[] args) {
+  public static void main(String[] args) throws Exception {
     PluckStacks ps = new PluckStacks();
     for (int i = 0; i < args.length; i++) {
       ps.examineLog(new File(args[i]));
     }
   }
 
-  private void examineLog(File log) {
+  private void examineLog(File log) throws IOException {
 
     LineNumberReader reader = null;
 
@@ -73,23 +78,50 @@ public class PluckStacks {
       return;
     }
 
-    StringBuffer buffer = new StringBuffer();
+    try {
+      TreeMap<String, List<ThreadStack>> dumps = getThreadDumps(reader, log.getName());
+
+      StringBuffer buffer = new StringBuffer();
+      for (Map.Entry<String, List<ThreadStack>> dump : dumps.entrySet()) {
+        if (dump.getValue().size() > 0) {
+          buffer.append(dump.getKey());
+          for (ThreadStack stack : dump.getValue()) {
+            stack.appendToBuffer(buffer);
+            buffer.append("\n");
+          }
+          buffer.append("\n\n");
+        }
+        if (ONE_STACK) {
+          break;
+        }
+      }
+      String output = buffer.toString();
+      if (output.length() > 0) {
+        System.out.println(output);
+      }
+    } finally {
+      reader.close();
+    }
+  }
+
+  public TreeMap<String, List<ThreadStack>> getThreadDumps(LineNumberReader reader,
+      String logFileName) {
+    TreeMap<String, List<ThreadStack>> result = new TreeMap<>();
 
     String line = null;
     int stackNumber = 1;
     try {
       while ((line = reader.readLine()) != null) {
-        if (line.startsWith("Full thread dump")) {
+        if (line.startsWith("Full thread dump")
+            || line.startsWith(ExportStackTraceCommand.STACK_TRACE_FOR_MEMBER)) {
           int lineNumber = reader.getLineNumber();
           List<ThreadStack> stacks = getStacks(reader);
           if (stacks.size() > 0) {
+            StringBuffer buffer = new StringBuffer();
             buffer.append("[Stack #").append(stackNumber++)
-                .append(" from " + log + " line " + lineNumber + "]\n").append(line).append("\n");
-            for (ThreadStack stack : stacks) {
-              stack.appendToBuffer(buffer);
-              buffer.append("\n");
-            }
-            buffer.append("\n\n");
+                .append(" from " + logFileName + " line " + lineNumber + "]\n").append(line)
+                .append("\n");
+            result.put(buffer.toString(), stacks);
           }
           if (ONE_STACK) {
             break;
@@ -97,18 +129,9 @@ public class PluckStacks {
         }
       }
     } catch (IOException ioe) {
-      return;
-    } finally {
-      if (reader != null)
-        try {
-          reader.close();
-        } catch (IOException ignore) {
-        }
+      throw new RuntimeException("Something went wrong processing " + logFileName, ioe);
     }
-    String output = buffer.toString();
-    if (output.length() > 0) {
-      System.out.println(output);
-    }
+    return result;
   }
 
   /** parses each stack trace and returns any that are unexpected */
@@ -119,7 +142,16 @@ public class PluckStacks {
     do {
       String line = null;
       // find the start of the stack
-      while ((line = reader.readLine()) != null) {
+      do {
+        reader.mark(100000);
+        if ((line = reader.readLine()) == null) {
+          break;
+        }
+        if (line.startsWith(ExportStackTraceCommand.STACK_TRACE_FOR_MEMBER)) {
+          reader.reset();
+          Collections.sort(result);
+          return result;
+        }
         if (line.length() > 0 && line.charAt(0) == '"')
           break;
         if (lastStack != null) {
@@ -127,7 +159,7 @@ public class PluckStacks {
             lastStack.add(line);
           }
         }
-      }
+      } while (true);
       // cache the first two lines and examine the third to see if it starts with a tab and "at "
       String firstLine = line;
       String secondLine = null;
@@ -151,10 +183,6 @@ public class PluckStacks {
         Collections.sort(result);
         return result;
       }
-      if (!line.startsWith("\tat ")) {
-        Collections.sort(result);
-        return result;
-      }
 
       lastStack = new ThreadStack(firstLine, secondLine, line, reader);
       lastStack.addBreadcrumbs(breadcrumbs);
@@ -167,6 +195,10 @@ public class PluckStacks {
       }
       if (!isExpectedStack(lastStack)) {
         result.add(lastStack);
+      }
+      if (lastStack.getThreadName().equals("VM Thread")) {
+        Collections.sort(result);
+        return result;
       }
     } while (true);
   }
@@ -207,7 +239,7 @@ public class PluckStacks {
       return isIdleExecutor(thread);
     }
     if (threadName.startsWith("Geode Failure Detection Server")) {
-      return stackSize < 11 && thread.getFirstFrame().contains("socketAccept");
+      return stackSize < 12 && thread.getFirstFrame().contains("socketAccept");
     }
     if (threadName.startsWith("Geode Membership Timer")) {
       // System.out.println("gf timer stack size = " + stackSize + "; frame = " + thread.get(1));
@@ -233,7 +265,7 @@ public class PluckStacks {
       // thread.get(2));
       return (stackSize == 8 && thread.get(2).contains("SocketChannelImpl.accept"));
     }
-    if (threadName.startsWith("P2P message reader")) {
+    if (threadName.startsWith(Connection.THREAD_KIND_IDENTIFIER)) {
       return (stackSize <= 14 && (thread.getFirstFrame().contains("FileDispatcherImpl.read")
           || thread.getFirstFrame().contains("FileDispatcher.read")
           || thread.getFirstFrame().contains("SocketDispatcher.read")));
@@ -314,10 +346,10 @@ public class PluckStacks {
       return !thread.isRunnable() && stackSize <= 6;
     }
     if (threadName.startsWith("Replicate/Partition Region Garbage Collector")) {
-      return !thread.isRunnable() && (stackSize <= 7);
+      return !thread.isRunnable() && (stackSize <= 9);
     }
     if (threadName.startsWith("Non-replicate Region Garbage Collector")) {
-      return !thread.isRunnable() && (stackSize <= 7);
+      return !thread.isRunnable() && (stackSize <= 9);
     }
     if (threadName.equals("GemFire Time Service")) {
       return !thread.isRunnable();
@@ -388,6 +420,9 @@ public class PluckStacks {
     if (threadName.startsWith("ThresholdEventProcessor")) {
       return isIdleExecutor(thread);
     }
+    if (threadName.startsWith("ThreadsMonitor") && thread.getFirstFrame().contains("Object.wait")) {
+      return true;
+    }
     if (threadName.startsWith("Timer-")) {
       if (thread.isRunnable())
         return true;
@@ -413,19 +448,18 @@ public class PluckStacks {
 
 
   boolean isIdleExecutor(ThreadStack thread) {
-    if (thread.isRunnable())
+    if (thread.isRunnable()) {
       return false;
+    }
     int size = thread.size();
-    if (size > 8 && thread.get(7).contains("DMStats.take"))
+    if (size > 8 && thread.get(7).contains("DMStats.take")) {
       return true;
-    if (size > 3 && thread.get(size - 3).contains("getTask"))
-      return true; // locator request thread
-    if (size > 4 && thread.get(size - 4).contains("getTask"))
-      return true; // most executors match this
-    if (size > 5 && thread.get(size - 5).contains("getTask"))
-      return true; // View Message Processor
-    if (size > 6 && thread.get(size - 6).contains("getTask"))
-      return true; // View Message Processor
+    }
+    for (int i = 3; i < 12; i++) {
+      if (size > i && thread.get(size - i).contains("getTask")) {
+        return true;
+      }
+    }
     return false;
   }
 
@@ -445,9 +479,18 @@ public class PluckStacks {
       lines.add(thirdLine);
 
       String line = null;
-      while ((line = reader.readLine()) != null && line.trim().length() > 0) {
+      do {
+        reader.mark(100000);
+        line = reader.readLine();
+        if (line == null || line.trim().length() == 0) {
+          break;
+        }
+        if (line.startsWith("\"")) {
+          reader.reset();
+          break;
+        }
         lines.add(line);
-      }
+      } while (true);
     }
 
     void addBreadcrumbs(List crumbs) {

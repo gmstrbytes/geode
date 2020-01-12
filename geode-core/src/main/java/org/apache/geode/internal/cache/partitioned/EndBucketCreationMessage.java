@@ -20,13 +20,16 @@ import java.io.IOException;
 import java.util.Collection;
 
 import org.apache.geode.DataSerializer;
-import org.apache.geode.distributed.internal.DistributionManager;
+import org.apache.geode.distributed.internal.ClusterDistributionManager;
+import org.apache.geode.distributed.internal.OperationExecutors;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.Assert;
 import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.cache.ForceReattemptException;
 import org.apache.geode.internal.cache.PartitionedRegion;
+import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.SerializationContext;
 
 /**
  * This message is sent to a member to make it attempt to become primary. This message is sent at
@@ -54,7 +57,6 @@ public class EndBucketCreationMessage extends PartitionMessage {
   /**
    * Sends a message to make the recipient primary for the bucket.
    *
-   * @param acceptedMembers
    *
    * @param newPrimary the member to to become primary
    * @param pr the PartitionedRegion of the bucket
@@ -68,19 +70,20 @@ public class EndBucketCreationMessage extends PartitionMessage {
     ReplyProcessor21 response = new ReplyProcessor21(pr.getSystem(), acceptedMembers);
     EndBucketCreationMessage msg =
         new EndBucketCreationMessage(acceptedMembers, pr.getPRId(), response, bid, newPrimary);
+    msg.setTransactionDistributed(pr.getCache().getTxManager().isDistributed());
 
     pr.getDistributionManager().putOutgoing(msg);
   }
 
   public EndBucketCreationMessage(DataInput in) throws IOException, ClassNotFoundException {
-    fromData(in);
+    fromData(in, InternalDataSerializer.createDeserializationContext(in));
   }
 
   @Override
   public int getProcessorType() {
     // use the waiting pool because operateOnPartitionedRegion will
     // try to get a dlock
-    return DistributionManager.WAITING_POOL_EXECUTOR;
+    return OperationExecutors.WAITING_POOL_EXECUTOR;
   }
 
   @Override
@@ -95,8 +98,8 @@ public class EndBucketCreationMessage extends PartitionMessage {
   }
 
   @Override
-  protected boolean operateOnPartitionedRegion(DistributionManager dm, PartitionedRegion region,
-      long startTime) throws ForceReattemptException {
+  protected boolean operateOnPartitionedRegion(ClusterDistributionManager dm,
+      PartitionedRegion region, long startTime) throws ForceReattemptException {
 
     // this is executing in the WAITING_POOL_EXECUTOR
 
@@ -118,21 +121,24 @@ public class EndBucketCreationMessage extends PartitionMessage {
     buff.append("; newPrimary=").append(this.newPrimary);
   }
 
+  @Override
   public int getDSFID() {
     return END_BUCKET_CREATION_MESSAGE;
   }
 
   @Override
-  public void fromData(DataInput in) throws IOException, ClassNotFoundException {
-    super.fromData(in);
+  public void fromData(DataInput in,
+      DeserializationContext context) throws IOException, ClassNotFoundException {
+    super.fromData(in, context);
     this.bucketId = in.readInt();
     newPrimary = new InternalDistributedMember();
     InternalDataSerializer.invokeFromData(newPrimary, in);
   }
 
   @Override
-  public void toData(DataOutput out) throws IOException {
-    super.toData(out);
+  public void toData(DataOutput out,
+      SerializationContext context) throws IOException {
+    super.toData(out, context);
     out.writeInt(this.bucketId);
     InternalDataSerializer.invokeToData(newPrimary, out);
   }

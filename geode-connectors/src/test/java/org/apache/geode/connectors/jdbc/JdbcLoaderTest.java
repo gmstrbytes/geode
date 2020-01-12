@@ -22,14 +22,13 @@ import static org.mockito.Mockito.when;
 
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.experimental.categories.Category;
 
 import org.apache.geode.cache.LoaderHelper;
 import org.apache.geode.connectors.jdbc.internal.SqlHandler;
+import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.InternalRegion;
-import org.apache.geode.test.junit.categories.UnitTest;
+import org.apache.geode.test.fake.Fakes;
 
-@Category(UnitTest.class)
 public class JdbcLoaderTest {
 
   private SqlHandler sqlHandler;
@@ -37,18 +36,21 @@ public class JdbcLoaderTest {
 
   private JdbcLoader<Object, Object> loader;
 
+  private InternalCache cache;
+
   @Before
   public void setUp() throws Exception {
+    cache = Fakes.cache();
     sqlHandler = mock(SqlHandler.class);
     loaderHelper = mock(LoaderHelper.class);
 
     when(loaderHelper.getRegion()).thenReturn(mock(InternalRegion.class));
 
-    loader = new JdbcLoader<>(sqlHandler);
+    loader = new JdbcLoader<>(sqlHandler, cache);
   }
 
   @Test
-  public void loadReadsFromSqlHandler() {
+  public void loadReadsFromSqlHandler() throws Exception {
     loader.load(loaderHelper);
 
     verify(sqlHandler, times(1)).read(any(), any());

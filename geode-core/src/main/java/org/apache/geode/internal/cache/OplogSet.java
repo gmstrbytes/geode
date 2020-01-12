@@ -19,12 +19,11 @@ import org.apache.geode.internal.cache.entries.DiskEntry.Helper.ValueWrapper;
 
 public interface OplogSet {
 
+  void create(InternalRegion region, DiskEntry entry, ValueWrapper value, boolean async);
 
-  public void create(InternalRegion region, DiskEntry entry, ValueWrapper value, boolean async);
+  void modify(InternalRegion region, DiskEntry entry, ValueWrapper value, boolean async);
 
-  public void modify(InternalRegion region, DiskEntry entry, ValueWrapper value, boolean async);
+  CompactableOplog getChild(long oplogId);
 
-  public CompactableOplog getChild(long oplogId);
-
-  public void remove(InternalRegion region, DiskEntry entry, boolean async, boolean isClear);
+  void remove(InternalRegion region, DiskEntry entry, boolean async, boolean isClear);
 }

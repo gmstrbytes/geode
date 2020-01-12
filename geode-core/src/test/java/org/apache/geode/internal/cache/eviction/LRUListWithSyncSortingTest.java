@@ -24,14 +24,11 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.contrib.java.lang.system.RestoreSystemProperties;
-import org.junit.experimental.categories.Category;
 import org.junit.rules.ExpectedException;
 
 import org.apache.geode.internal.cache.BucketRegion;
 import org.apache.geode.internal.lang.SystemPropertyHelper;
-import org.apache.geode.test.junit.categories.UnitTest;
 
-@Category(UnitTest.class)
 public class LRUListWithSyncSortingTest {
 
   @Rule
@@ -41,24 +38,27 @@ public class LRUListWithSyncSortingTest {
   public RestoreSystemProperties restoreSystemProperties = new RestoreSystemProperties();
 
   private BucketRegion bucketRegion;
-  private InternalEvictionStatistics stats;
+  private EvictionCounters stats;
+  private EvictionController controller;
 
   @Before
   public void setup() {
     bucketRegion = mock(BucketRegion.class);
-    stats = mock(InternalEvictionStatistics.class);
+    stats = mock(EvictionCounters.class);
+    controller = mock(EvictionController.class);
+    when(controller.getCounters()).thenReturn(stats);
   }
 
   @Test
   public void evictingFromEmptyListTest() throws Exception {
-    LRUListWithSyncSorting list = new LRUListWithSyncSorting(stats, bucketRegion);
+    LRUListWithSyncSorting list = new LRUListWithSyncSorting(controller);
     assertThat(list.getEvictableEntry()).isNull();
     assertThat(list.size()).isZero();
   }
 
   @Test
   public void evictingFromNonEmptyListTest() throws Exception {
-    LRUListWithSyncSorting list = new LRUListWithSyncSorting(stats, bucketRegion);
+    LRUListWithSyncSorting list = new LRUListWithSyncSorting(controller);
     EvictionNode node = mock(EvictableEntry.class);
     list.appendEntry(node);
     assertThat(list.size()).isEqualTo(1);
@@ -71,7 +71,7 @@ public class LRUListWithSyncSortingTest {
 
   @Test
   public void doesNotEvictRecentlyUsed() throws Exception {
-    LRUListWithSyncSorting list = new LRUListWithSyncSorting(stats, bucketRegion);
+    LRUListWithSyncSorting list = new LRUListWithSyncSorting(controller);
     EvictionNode recentlyUsedNode = mock(EvictableEntry.class);
     list.appendEntry(recentlyUsedNode);
     when(recentlyUsedNode.isRecentlyUsed()).thenReturn(true);
@@ -91,7 +91,7 @@ public class LRUListWithSyncSortingTest {
 
   @Test
   public void doesNotEvictNodeInTransaction() throws Exception {
-    LRUListWithSyncSorting list = new LRUListWithSyncSorting(stats, bucketRegion);
+    LRUListWithSyncSorting list = new LRUListWithSyncSorting(controller);
     EvictionNode nodeInTransaction = mock(EvictableEntry.class, "nodeInTransaction");
     when(nodeInTransaction.isInUseByTransaction()).thenReturn(true);
     EvictionNode nodeNotInTransaction = mock(EvictableEntry.class, "nodeNotInTransaction");
@@ -109,7 +109,7 @@ public class LRUListWithSyncSortingTest {
 
   @Test
   public void doesNotEvictNodeThatIsEvicted() throws Exception {
-    LRUListWithSyncSorting list = new LRUListWithSyncSorting(stats, bucketRegion);
+    LRUListWithSyncSorting list = new LRUListWithSyncSorting(controller);
 
     EvictionNode evictedNode = mock(EvictableEntry.class);
     when(evictedNode.isEvicted()).thenReturn(true);
@@ -131,7 +131,7 @@ public class LRUListWithSyncSortingTest {
   public void verifyRecentlyUsedNodeIsGreedilyEvicted() throws Exception {
     System.setProperty("geode." + SystemPropertyHelper.EVICTION_SEARCH_MAX_ENTRIES, "1");
 
-    LRUListWithSyncSorting list = new LRUListWithSyncSorting(stats, bucketRegion);
+    LRUListWithSyncSorting list = new LRUListWithSyncSorting(controller);
     EvictionNode recentlyUsedNode1 = mock(EvictableEntry.class, "RecentlyUsed1");
     list.appendEntry(recentlyUsedNode1);
     when(recentlyUsedNode1.isRecentlyUsed()).thenReturn(true);

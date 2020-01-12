@@ -20,11 +20,10 @@ import java.util.WeakHashMap;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.distributed.LeaseExpiredException;
-import org.apache.geode.distributed.internal.DM;
+import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.internal.Assert;
-import org.apache.geode.internal.i18n.LocalizedStrings;
-import org.apache.geode.internal.logging.LogService;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
  * A DistributedLockService contains a collection of DLockToken instances, one for each name in that
@@ -46,9 +45,9 @@ public class DLockToken {
 
   /**
    * DistributionManager using this lock token. Reference is used to identify local member identity
-   * and to {@link DLockService#getLockTimeStamp(DM)}.
+   * and to {@link DLockService#getLockTimeStamp(DistributionManager)}.
    */
-  private final DM dm;
+  private final DistributionManager dm;
 
   /**
    * The reply processor id is used to identify the distinct lease which a thread has used to lease
@@ -112,7 +111,7 @@ public class DLockToken {
    * @param dm the DistributionManager for this member
    * @param name the identifying name of this lock
    */
-  public DLockToken(DM dm, Object name) {
+  public DLockToken(DistributionManager dm, Object name) {
     this.dm = dm;
     this.name = name;
   }
@@ -262,7 +261,7 @@ public class DLockToken {
     if (this.expiredLeases.containsKey(Thread.currentThread())) {
       this.expiredLeases.remove(Thread.currentThread());
       throw new LeaseExpiredException(
-          LocalizedStrings.DLockToken_THIS_THREADS_LEASE_EXPIRED_FOR_THIS_LOCK.toLocalizedString());
+          "This thread's lease expired for this lock");
     }
   }
 
@@ -280,9 +279,9 @@ public class DLockToken {
 
       long currentTime = getCurrentTime();
       if (currentTime > this.leaseExpireTime) {
-        if (logger.isTraceEnabled(LogMarker.DLS)) {
-          logger.trace(LogMarker.DLS, "[checkForExpiration] Expiring token at {}: {}", currentTime,
-              this);
+        if (logger.isTraceEnabled(LogMarker.DLS_VERBOSE)) {
+          logger.trace(LogMarker.DLS_VERBOSE, "[checkForExpiration] Expiring token at {}: {}",
+              currentTime, this);
         }
         noteExpiredLease();
         basicReleaseLock();
@@ -318,8 +317,8 @@ public class DLockToken {
     this.recursion = newRecursion;
     this.thread = Thread.currentThread();
 
-    if (logger.isTraceEnabled(LogMarker.DLS)) {
-      logger.trace(LogMarker.DLS, "[DLockToken.grantLock.client] granted {}", this);
+    if (logger.isTraceEnabled(LogMarker.DLS_VERBOSE)) {
+      logger.trace(LogMarker.DLS_VERBOSE, "[DLockToken.grantLock.client] granted {}", this);
     }
   }
 
@@ -415,8 +414,9 @@ public class DLockToken {
     else if (decRecursion && getRecursion() > 0) {
       incRecursion(-1);
       decUsage();
-      if (logger.isTraceEnabled(LogMarker.DLS)) {
-        logger.trace(LogMarker.DLS, "[DLockToken.releaseLock] decremented recursion: {}", this);
+      if (logger.isTraceEnabled(LogMarker.DLS_VERBOSE)) {
+        logger.trace(LogMarker.DLS_VERBOSE, "[DLockToken.releaseLock] decremented recursion: {}",
+            this);
       }
       return true;
     }
@@ -433,8 +433,9 @@ public class DLockToken {
    * token.
    */
   private void basicReleaseLock() {
-    if (logger.isTraceEnabled(LogMarker.DLS)) {
-      logger.trace(LogMarker.DLS, "[DLockToken.basicReleaseLock] releasing ownership: {}", this);
+    if (logger.isTraceEnabled(LogMarker.DLS_VERBOSE)) {
+      logger.trace(LogMarker.DLS_VERBOSE, "[DLockToken.basicReleaseLock] releasing ownership: {}",
+          this);
     }
 
     this.leaseId = -1;
@@ -499,7 +500,7 @@ public class DLockToken {
   private void checkDestroyed() {
     if (this.destroyed) {
       IllegalStateException e = new IllegalStateException(
-          LocalizedStrings.DLockToken_ATTEMPTING_TO_USE_DESTROYED_TOKEN_0.toLocalizedString(this));
+          String.format("Attempting to use destroyed token: %s", this));
       throw e;
     }
   }
@@ -510,8 +511,8 @@ public class DLockToken {
    * lock token.
    */
   private void noteExpiredLease() {
-    if (logger.isTraceEnabled(LogMarker.DLS)) {
-      logger.trace(LogMarker.DLS, "[noteExpiredLease] {}", this.thread);
+    if (logger.isTraceEnabled(LogMarker.DLS_VERBOSE)) {
+      logger.trace(LogMarker.DLS_VERBOSE, "[noteExpiredLease] {}", this.thread);
     }
     if (this.expiredLeases == null) {
       this.expiredLeases = new WeakHashMap();

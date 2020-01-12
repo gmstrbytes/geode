@@ -14,10 +14,12 @@
  */
 package org.apache.geode.cache.query.internal;
 
-import java.util.List;
-
-import org.apache.geode.cache.query.*;
-import org.apache.geode.internal.i18n.LocalizedStrings;
+import org.apache.geode.cache.query.AmbiguousNameException;
+import org.apache.geode.cache.query.FunctionDomainException;
+import org.apache.geode.cache.query.NameResolutionException;
+import org.apache.geode.cache.query.QueryInvocationTargetException;
+import org.apache.geode.cache.query.SelectResults;
+import org.apache.geode.cache.query.TypeMismatchException;
 
 /**
  * Class Description
@@ -29,9 +31,8 @@ public interface Filter {
   /**
    * Evaluates as a filter taking advantage of indexes if appropriate.
    *
-   * @return SelectResults
    */
-  public SelectResults filterEvaluate(ExecutionContext context, SelectResults iterationLimit)
+  SelectResults filterEvaluate(ExecutionContext context, SelectResults iterationLimit)
       throws FunctionDomainException, TypeMismatchException, NameResolutionException,
       QueryInvocationTargetException;
 
@@ -76,17 +77,10 @@ public interface Filter {
    *        iterators being that of CompositeGroupJunction. If the completeExpansion flag is true ,
    *        then this will be null as in that case , the position of iterators in the Results is
    *        decided by the actual order of iterators in the Query from clause .
-   * @param isIntersection
-   * @param conditioningNeeded
-   * @param evaluateProjection
    * @return Object of type SelectResults representing the Results obtained from evaluation of the
    *         condition
-   * @throws FunctionDomainException
-   * @throws TypeMismatchException
-   * @throws NameResolutionException
-   * @throws QueryInvocationTargetException
    */
-  public SelectResults filterEvaluate(ExecutionContext context, SelectResults iterationLimit,
+  SelectResults filterEvaluate(ExecutionContext context, SelectResults iterationLimit,
       boolean completeExpansionNeeded, CompiledValue iterOperands, RuntimeIterator[] indpndntItrs,
       boolean isIntersection, boolean conditioningNeeded, boolean evaluateProjection)
       throws FunctionDomainException, TypeMismatchException, NameResolutionException,
@@ -101,62 +95,35 @@ public interface Filter {
    *        ignored
    * @return Object of type SelectResults representing the Results obtained from evaluation of the
    *         condition
-   * @throws FunctionDomainException
-   * @throws TypeMismatchException
-   * @throws NameResolutionException
-   * @throws QueryInvocationTargetException
    */
-  public SelectResults auxFilterEvaluate(ExecutionContext context,
-      SelectResults intermediateResults) throws FunctionDomainException, TypeMismatchException,
-      NameResolutionException, QueryInvocationTargetException;
+  SelectResults auxFilterEvaluate(ExecutionContext context, SelectResults intermediateResults)
+      throws FunctionDomainException, TypeMismatchException, NameResolutionException,
+      QueryInvocationTargetException;
 
-  public int getSizeEstimate(ExecutionContext context) throws FunctionDomainException,
+  int getSizeEstimate(ExecutionContext context) throws FunctionDomainException,
       TypeMismatchException, NameResolutionException, QueryInvocationTargetException;
 
-  /**
-   *
-   * @param context
-   * @return boolean
-   * @throws FunctionDomainException
-   * @throws TypeMismatchException
-   * @throws NameResolutionException
-   * @throws QueryInvocationTargetException
-   */
-  public boolean isProjectionEvaluationAPossibility(ExecutionContext context)
+  boolean isProjectionEvaluationAPossibility(ExecutionContext context)
       throws FunctionDomainException, TypeMismatchException, NameResolutionException,
       QueryInvocationTargetException;
 
   /**
    * Only used by single base collection index
    *
-   * @param independentIter
-   * @param context
-   * @param completeExpnsNeeded
-   * @return boolean
-   * @throws AmbiguousNameException
-   * @throws TypeMismatchException
-   * @throws NameResolutionException
    */
-  public boolean isConditioningNeededForIndex(RuntimeIterator independentIter,
-      ExecutionContext context, boolean completeExpnsNeeded)
+  boolean isConditioningNeededForIndex(RuntimeIterator independentIter, ExecutionContext context,
+      boolean completeExpnsNeeded)
       throws AmbiguousNameException, TypeMismatchException, NameResolutionException;
 
   /**
    *
-   * @param comparedTo
-   * @param context
-   * @param thisSize
    * @return boolean true if this is the better filter as compared to the Filter passed as parameter
-   * @throws FunctionDomainException
-   * @throws TypeMismatchException
-   * @throws NameResolutionException
-   * @throws QueryInvocationTargetException
    */
   boolean isBetterFilter(Filter comparedTo, ExecutionContext context, int thisSize)
       throws FunctionDomainException, TypeMismatchException, NameResolutionException,
       QueryInvocationTargetException;
 
-  public int getOperator();
+  int getOperator();
 
   /**
    * This method returns the boolean indicating whether limit can be applied at index level. It
@@ -166,11 +133,10 @@ public interface Filter {
    *
    * @return true if limit can be applied at index level
    */
-  public boolean isLimitApplicableAtIndexLevel(ExecutionContext context)
-      throws FunctionDomainException, TypeMismatchException, NameResolutionException,
-      QueryInvocationTargetException;
+  boolean isLimitApplicableAtIndexLevel(ExecutionContext context) throws FunctionDomainException,
+      TypeMismatchException, NameResolutionException, QueryInvocationTargetException;
 
-  public boolean isOrderByApplicableAtIndexLevel(ExecutionContext context,
+  boolean isOrderByApplicableAtIndexLevel(ExecutionContext context,
       String canonicalizedOrderByClause) throws FunctionDomainException, TypeMismatchException,
       NameResolutionException, QueryInvocationTargetException;
 }

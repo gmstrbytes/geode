@@ -16,11 +16,9 @@
 package org.apache.geode.internal.cache.execute;
 
 import java.util.Map;
-import java.util.Set;
 
 import org.apache.geode.cache.PartitionAttributesFactory;
 import org.apache.geode.cache.Region;
-import org.apache.geode.cache.execute.Function;
 import org.apache.geode.cache.execute.RegionFunctionContext;
 import org.apache.geode.cache.partition.PartitionRegionHelper;
 import org.apache.geode.internal.cache.LocalDataSet;
@@ -42,7 +40,7 @@ public interface InternalRegionFunctionContext extends RegionFunctionContext {
    *
    * @return a region for efficient reads or null if the region is not a partitioned region
    */
-  public <K, V> Region<K, V> getLocalDataSet(Region<K, V> r);
+  <K, V> Region<K, V> getLocalDataSet(Region<K, V> r);
 
   /**
    * Return a map of {@link PartitionAttributesFactory#setColocatedWith(String)} colocated Regions
@@ -55,15 +53,16 @@ public interface InternalRegionFunctionContext extends RegionFunctionContext {
    *
    * @return an unmodifiable map of {@linkplain Region#getFullPath() region name} to {@link Region}
    */
-  public Map<String, LocalDataSet> getColocatedLocalDataSets();
+  Map<String, LocalDataSet> getColocatedLocalDataSets();
 
   /**
-   * Get the set of bucket IDs for this node as specified by the {@link #getFilter()} method of the
+   * Get the int array of bucket IDs for this node as specified by the {@link #getFilter()} method
+   * of the
    * function context for the given region.
    *
    * @param region region to get the local bucket IDs for
    *
    * @return the set of bucket IDs for this node in this function context for the given region
    */
-  public <K, V> Set<Integer> getLocalBucketSet(Region<K, V> region);
+  <K, V> int[] getLocalBucketArray(Region<K, V> region);
 }

@@ -19,26 +19,19 @@ import java.util.Set;
 
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.Region;
-import org.apache.geode.cache.execute.Function;
 import org.apache.geode.cache.execute.FunctionContext;
-import org.apache.geode.internal.InternalEntity;
+import org.apache.geode.internal.cache.execute.InternalFunction;
 import org.apache.geode.management.internal.cli.domain.RegionInformation;
 
 /**
  * Function that retrieves regions hosted on every member
  */
-public class GetRegionsFunction implements Function, InternalEntity {
+public class GetRegionsFunction implements InternalFunction<Void> {
 
   private static final long serialVersionUID = 1L;
 
   @Override
-  public String getId() {
-    // TODO Auto-generated method stub
-    return GetRegionsFunction.class.toString();
-  }
-
-  @Override
-  public void execute(FunctionContext functionContext) {
+  public void execute(FunctionContext<Void> functionContext) {
     try {
       Cache cache = functionContext.getCache();
       Set<Region<?, ?>> regions = cache.rootRegions(); // should never return a null
@@ -52,11 +45,11 @@ public class GetRegionsFunction implements Function, InternalEntity {
           RegionInformation regInfo = new RegionInformation(region, true);
           regionInformationSet.add(regInfo);
         }
-        functionContext.getResultSender().lastResult(regionInformationSet.toArray());
+        functionContext.getResultSender()
+            .lastResult(regionInformationSet.toArray(new RegionInformation[0]));
       }
     } catch (Exception e) {
       functionContext.getResultSender().sendException(e);
     }
   }
-
 }
