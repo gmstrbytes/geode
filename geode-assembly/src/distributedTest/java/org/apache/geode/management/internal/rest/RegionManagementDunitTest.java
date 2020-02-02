@@ -36,6 +36,7 @@ import org.apache.geode.cache.configuration.CacheConfig;
 import org.apache.geode.cache.configuration.EnumActionDestroyOverflow;
 import org.apache.geode.cache.configuration.RegionAttributesType;
 import org.apache.geode.cache.configuration.RegionConfig;
+import org.apache.geode.management.api.BaseConnectionConfig;
 import org.apache.geode.management.api.ClusterManagementRealizationResult;
 import org.apache.geode.management.api.ClusterManagementResult;
 import org.apache.geode.management.api.ClusterManagementService;
@@ -68,8 +69,8 @@ public class RegionManagementDunitTest {
     restClient =
         new GeodeDevRestClient("/management/v1", "localhost", locator.getHttpPort(),
             false);
-    cms = ClusterManagementServiceBuilder.buildWithHostAddress()
-        .setHostAddress("localhost", locator.getHttpPort())
+    cms = new ClusterManagementServiceBuilder().setConnectionConfig(
+        new BaseConnectionConfig("localhost", locator.getHttpPort()))
         .build();
   }
 
@@ -103,7 +104,7 @@ public class RegionManagementDunitTest {
     config.setValueConstraint("java.lang.Integer");
     cms.create(config);
 
-    Region config1 = cms.get(config).getConfigResult();
+    Region config1 = cms.get(config).getResult().getConfigurations().get(0);
 
     assertThat(config1.getType()).isEqualTo(RegionType.PARTITION);
     assertThat(config1.getValueConstraint()).isEqualTo("java.lang.Integer");
@@ -271,7 +272,7 @@ public class RegionManagementDunitTest {
       assertThat(attributes.getCustomEntryTimeToLive()).isNull();
     });
 
-    Region regionResult = cms.get(region).getConfigResult();
+    Region regionResult = cms.get(region).getResult().getConfigurations().get(0);
     List<Region.Expiration> expirations = regionResult.getExpirations();
     assertThat(expirations).hasSize(2);
     assertThat(expirations.get(0).getTimeInSeconds()).isEqualTo(10000);
@@ -322,7 +323,7 @@ public class RegionManagementDunitTest {
 
     });
 
-    Region regionResult = cms.get(region).getConfigResult();
+    Region regionResult = cms.get(region).getResult().getConfigurations().get(0);
     Region.Eviction eviction2 = regionResult.getEviction();
     assertThat(eviction2).isNotNull();
     assertThat(eviction2.getType()).isEqualTo(Region.EvictionType.ENTRY_COUNT);

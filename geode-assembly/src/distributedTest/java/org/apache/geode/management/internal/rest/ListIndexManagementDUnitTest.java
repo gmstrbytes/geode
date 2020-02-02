@@ -29,11 +29,12 @@ import org.junit.ClassRule;
 import org.junit.Test;
 
 import org.apache.geode.cache.query.QueryService;
+import org.apache.geode.management.api.BaseConnectionConfig;
 import org.apache.geode.management.api.ClusterManagementGetResult;
 import org.apache.geode.management.api.ClusterManagementListResult;
 import org.apache.geode.management.api.ClusterManagementRealizationResult;
 import org.apache.geode.management.api.ClusterManagementService;
-import org.apache.geode.management.api.ConfigurationResult;
+import org.apache.geode.management.api.EntityGroupInfo;
 import org.apache.geode.management.client.ClusterManagementServiceBuilder;
 import org.apache.geode.management.configuration.Index;
 import org.apache.geode.management.configuration.IndexType;
@@ -62,8 +63,8 @@ public class ListIndexManagementDUnitTest {
     MemberVM server2 = lsRule.startServerVM(2, locator.getPort());
     MemberVM server3 = lsRule.startServerVM(3, "group1", locator.getPort());
 
-    cms = ClusterManagementServiceBuilder.buildWithHostAddress()
-        .setHostAddress("localhost", locator.getHttpPort())
+    cms = new ClusterManagementServiceBuilder().setConnectionConfig(
+        new BaseConnectionConfig("localhost", locator.getHttpPort()))
         .build();
 
     Region config = new Region();
@@ -114,7 +115,7 @@ public class ListIndexManagementDUnitTest {
   @Test
   public void getRegion_succeeds_with_region_name_filter() {
     regionConfig.setName("region1");
-    Region region = cms.get(regionConfig).getConfigResult();
+    Region region = cms.get(regionConfig).getResult().getConfigurations().get(0);
     assertThat(region).isNotNull();
   }
 
@@ -144,8 +145,8 @@ public class ListIndexManagementDUnitTest {
     indexConfig.setRegionPath("/region1");
     indexConfig.setName("index1");
     ClusterManagementGetResult<Index, IndexInfo> clusterManagementGetResult = cms.get(indexConfig);
-    Index indexConfig = clusterManagementGetResult.getConfigResult();
-    List<IndexInfo> runtimeResult = clusterManagementGetResult.getRuntimeResult();
+    Index indexConfig = clusterManagementGetResult.getResult().getConfigurations().get(0);
+    List<IndexInfo> runtimeResult = clusterManagementGetResult.getResult().getRuntimeInfos();
 
     assertSoftly(softly -> {
       softly.assertThat(indexConfig.getRegionName()).as("get index: region name")
@@ -154,9 +155,9 @@ public class ListIndexManagementDUnitTest {
       softly.assertThat(indexConfig.getRegionPath()).as("get index: region path")
           .isEqualTo("/region1");
       softly.assertThat(indexConfig.getExpression()).as("get index: expression").isEqualTo("id");
-      ConfigurationResult<Index, IndexInfo> configurationResult =
-          cms.get(this.indexConfig).getResult();
-      Index indexConfigTwo = configurationResult.getConfiguration();
+      EntityGroupInfo<Index, IndexInfo> entityGroupInfo =
+          cms.get(this.indexConfig).getResult().getConfigurationByGroup().get(0);
+      Index indexConfigTwo = entityGroupInfo.getConfiguration();
       softly.assertThat(indexConfigTwo.getLinks().getLinks()).as("get index: links key")
           .containsKey("region");
       softly.assertThat(indexConfigTwo.getLinks().getLinks().get("region"))
@@ -256,8 +257,8 @@ public class ListIndexManagementDUnitTest {
     cms.create(index);
 
     ClusterManagementGetResult<Index, IndexInfo> indexResult = cms.get(index);
-    Index fetchedIndexConfig = indexResult.getConfigResult();
-    List<IndexInfo> runtimeResult = indexResult.getRuntimeResult();
+    Index fetchedIndexConfig = indexResult.getResult().getConfigurations().get(0);
+    List<IndexInfo> runtimeResult = indexResult.getResult().getRuntimeInfos();
     assertSoftly(softly -> {
       softly.assertThat(fetchedIndexConfig.getRegionName()).as("index create: region name")
           .isEqualTo("region2");
@@ -301,8 +302,8 @@ public class ListIndexManagementDUnitTest {
     cms.create(index);
 
     ClusterManagementGetResult<Index, IndexInfo> indexResult = cms.get(index);
-    Index fetchedIndexConfig = indexResult.getConfigResult();
-    List<IndexInfo> runtimeResult = indexResult.getRuntimeResult();
+    Index fetchedIndexConfig = indexResult.getResult().getConfigurations().get(0);
+    List<IndexInfo> runtimeResult = indexResult.getResult().getRuntimeInfos();
     assertSoftly(softly -> {
       softly.assertThat(fetchedIndexConfig.getRegionName()).as("index create: region name")
           .isEqualTo("region2");

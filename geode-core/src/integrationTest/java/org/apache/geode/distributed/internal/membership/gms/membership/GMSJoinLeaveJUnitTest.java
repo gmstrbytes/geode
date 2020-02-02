@@ -40,6 +40,7 @@ import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -58,14 +59,15 @@ import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.distributed.internal.membership.adapter.ServiceConfig;
 import org.apache.geode.distributed.internal.membership.api.Authenticator;
+import org.apache.geode.distributed.internal.membership.api.MemberData;
 import org.apache.geode.distributed.internal.membership.api.MemberDataBuilder;
 import org.apache.geode.distributed.internal.membership.api.MemberIdentifier;
+import org.apache.geode.distributed.internal.membership.api.MemberIdentifierFactory;
 import org.apache.geode.distributed.internal.membership.api.MemberStartupException;
 import org.apache.geode.distributed.internal.membership.api.MembershipConfig;
 import org.apache.geode.distributed.internal.membership.api.MembershipConfigurationException;
 import org.apache.geode.distributed.internal.membership.gms.GMSMembershipView;
 import org.apache.geode.distributed.internal.membership.gms.GMSUtil;
-import org.apache.geode.distributed.internal.membership.gms.MemberIdentifierFactoryImpl;
 import org.apache.geode.distributed.internal.membership.gms.Services;
 import org.apache.geode.distributed.internal.membership.gms.Services.Stopper;
 import org.apache.geode.distributed.internal.membership.gms.interfaces.HealthMonitor;
@@ -142,7 +144,18 @@ public class GMSJoinLeaveJUnitTest {
     when(services.getCancelCriterion()).thenReturn(stopper);
     when(services.getManager()).thenReturn(manager);
     when(services.getHealthMonitor()).thenReturn(healthMonitor);
-    when(services.getMemberFactory()).thenReturn(new MemberIdentifierFactoryImpl());
+    when(services.getMemberFactory())
+        .thenReturn(new MemberIdentifierFactory<InternalDistributedMember>() {
+          @Override
+          public InternalDistributedMember create(MemberData memberInfo) {
+            return new InternalDistributedMember(memberInfo);
+          }
+
+          @Override
+          public Comparator<InternalDistributedMember> getComparator() {
+            return InternalDistributedMember::compareTo;
+          }
+        });
 
     gmsJoinLeaveMemberId = services.getMemberFactory().create(
         MemberDataBuilder.newBuilderForLocalHost("localhost")
@@ -619,7 +632,7 @@ public class GMSJoinLeaveJUnitTest {
             .setMembershipPort(gmsJoinLeaveMemberId.getMembershipPort())
             .build());
     previousMemberId.setVmViewId(0);
-    previousMemberId.getMemberData().setUUID(gmsJoinLeaveMemberId.getMemberData().getUUID());
+    previousMemberId.setUUID(gmsJoinLeaveMemberId.getUUID());
     GMSMembershipView view = new GMSMembershipView(mockMembers[0], 1,
         createMemberList(mockMembers[0], previousMemberId, mockMembers[1]));
     InstallViewMessage viewMessage = new InstallViewMessage(view, 0, false);
@@ -854,7 +867,7 @@ public class GMSJoinLeaveJUnitTest {
     mbrs.add(mockMembers[2]);
     mbrs.add(gmsJoinLeaveMemberId);
 
-    mockMembers[1].getMemberData().setMemberWeight((byte) 20);
+    mockMembers[1].setMemberWeight((byte) 20);
 
     GMSMembershipView newView =
         new GMSMembershipView(mockMembers[0], gmsJoinLeave.getView().getViewId() + 1, mbrs);
@@ -904,7 +917,7 @@ public class GMSJoinLeaveJUnitTest {
     mbrs.add(mockMembers[2]);
     mbrs.add(gmsJoinLeaveMemberId);
 
-    mockMembers[1].getMemberData().setMemberWeight((byte) 20);
+    mockMembers[1].setMemberWeight((byte) 20);
 
     GMSMembershipView newView =
         new GMSMembershipView(mockMembers[0], gmsJoinLeave.getView().getViewId() + 1, mbrs,

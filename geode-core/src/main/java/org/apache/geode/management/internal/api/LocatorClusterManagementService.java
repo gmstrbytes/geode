@@ -57,7 +57,8 @@ import org.apache.geode.management.api.ClusterManagementRealizationResult;
 import org.apache.geode.management.api.ClusterManagementResult;
 import org.apache.geode.management.api.ClusterManagementResult.StatusCode;
 import org.apache.geode.management.api.ClusterManagementService;
-import org.apache.geode.management.api.ConfigurationResult;
+import org.apache.geode.management.api.EntityGroupInfo;
+import org.apache.geode.management.api.EntityInfo;
 import org.apache.geode.management.api.RealizationResult;
 import org.apache.geode.management.configuration.AbstractConfiguration;
 import org.apache.geode.management.configuration.Deployment;
@@ -329,11 +330,11 @@ public class LocatorClusterManagementService implements ClusterManagementService
     }
 
     // gather the runtime info for each configuration objects
-    List<ConfigurationResult<T, R>> responses = new ArrayList<>();
+    List<EntityGroupInfo<T, R>> responses = new ArrayList<>();
     boolean hasRuntimeInfo = hasRuntimeInfo(filter.getClass());
 
     for (T element : resultList) {
-      ConfigurationResult<T, R> response = new ConfigurationResult<>(element);
+      EntityGroupInfo<T, R> response = new EntityGroupInfo<>(element);
 
       responses.add(response);
       if (!hasRuntimeInfo) {
@@ -374,8 +375,7 @@ public class LocatorClusterManagementService implements ClusterManagementService
   public <T extends AbstractConfiguration<R>, R extends RuntimeInfo> ClusterManagementGetResult<T, R> get(
       T config) {
     ClusterManagementListResult<T, R> list = list(config);
-    List<ConfigurationResult<T, R>> result = list.getResult();
-
+    List<EntityGroupInfo<T, R>> result = list.getResult();
     int size = result.size();
     if (config instanceof Member) {
       size = result.get(0).getRuntimeInfo().size();
@@ -385,13 +385,8 @@ public class LocatorClusterManagementService implements ClusterManagementService
       raise(StatusCode.ENTITY_NOT_FOUND,
           config.getClass().getSimpleName() + " '" + config.getId() + "' does not exist.");
     }
-
-    if (size > 1) {
-      raise(StatusCode.ERROR,
-          "Expect only one matching " + config.getClass().getSimpleName() + ".");
-    }
-
-    return assertSuccessful(new ClusterManagementGetResult<>(list));
+    EntityInfo<T, R> entityInfo = new EntityInfo<>(config.getId(), result);
+    return new ClusterManagementGetResult<>(entityInfo);
   }
 
   @Override
