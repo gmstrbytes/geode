@@ -36,7 +36,7 @@ import static org.apache.geode.distributed.ConfigurationProperties.ROLES;
 import static org.apache.geode.distributed.ConfigurationProperties.SECURITY_MANAGER;
 import static org.apache.geode.distributed.ConfigurationProperties.START_LOCATOR;
 import static org.apache.geode.distributed.Locator.getLocator;
-import static org.apache.geode.distributed.internal.membership.gms.MembershipManagerHelper.getMembership;
+import static org.apache.geode.distributed.internal.membership.api.MembershipManagerHelper.getDistribution;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.getTimeout;
 import static org.apache.geode.test.dunit.Host.getHost;
@@ -91,8 +91,7 @@ import org.apache.geode.distributed.internal.InternalDistributedSystem.Reconnect
 import org.apache.geode.distributed.internal.InternalLocator;
 import org.apache.geode.distributed.internal.ServerLocator;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.distributed.internal.membership.adapter.GMSMembershipManager;
-import org.apache.geode.distributed.internal.membership.gms.MembershipManagerHelper;
+import org.apache.geode.distributed.internal.membership.api.MembershipManagerHelper;
 import org.apache.geode.examples.SimpleSecurityManager;
 import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.AvailablePortHelper;
@@ -250,9 +249,8 @@ public class ReconnectDUnitTest extends JUnit4CacheTestCase {
     locatorVm.invoke(new SerializableRunnable("disable force-disconnect") {
       @Override
       public void run() {
-        GMSMembershipManager mgr = (GMSMembershipManager) MembershipManagerHelper
-            .getMembership(Locator.getLocator().getDistributedSystem());
-        mgr.disableDisconnectOnQuorumLossForTesting();
+        MembershipManagerHelper
+            .disableDisconnectOnQuorumLossForTesting(Locator.getLocator().getDistributedSystem());
       }
     });
 
@@ -407,7 +405,7 @@ public class ReconnectDUnitTest extends JUnit4CacheTestCase {
             System.out.println("ds.isReconnecting() = " + ds.isReconnecting());
             boolean failure = true;
             try {
-              ds.waitUntilReconnected(getTimeout().getValueInMS(), MILLISECONDS);
+              ds.waitUntilReconnected(getTimeout().toMillis(), MILLISECONDS);
               savedSystem = ds.getReconnectedSystem();
               locator = (InternalLocator) getLocator();
               assertTrue("Expected system to be restarted", ds.getReconnectedSystem() != null);
@@ -418,10 +416,6 @@ public class ReconnectDUnitTest extends JUnit4CacheTestCase {
               failure = false;
               cache = ((InternalLocator) locator).getCache();
               system = cache.getInternalDistributedSystem();
-              assertTrue(
-                  ((GMSMembershipManager) getMembership(system))
-                      .getServices().getMessenger()
-                      .isOldMembershipIdentifier(dm));
               return ds.getReconnectedSystem().getDistributedMember();
             } catch (InterruptedException e) {
               System.err.println("interrupted while waiting for reconnect");
@@ -527,7 +521,7 @@ public class ReconnectDUnitTest extends JUnit4CacheTestCase {
             }
             assertTrue("expected system to be reconnected", ds.getReconnectedSystem() != null);
             int oldViewId =
-                getMembership(ds).getLocalMember().getVmViewId();
+                getDistribution(ds).getLocalMember().getVmViewId();
             int newViewId =
                 ((InternalDistributedMember) ds.getReconnectedSystem().getDistributedMember())
                     .getVmViewId();
@@ -1163,7 +1157,7 @@ public class ReconnectDUnitTest extends JUnit4CacheTestCase {
         return "waiting for cache to begin reconnecting";
       }
     });
-    assertThatThrownBy(() -> cache.waitUntilReconnected(getTimeout().getValueInMS(), MILLISECONDS))
+    assertThatThrownBy(() -> cache.waitUntilReconnected(getTimeout().toMillis(), MILLISECONDS))
         .isInstanceOf(CacheClosedException.class)
         .hasMessageContaining("Cache could not be recreated")
         .hasCauseExactlyInstanceOf(DistributedSystemDisconnectedException.class);

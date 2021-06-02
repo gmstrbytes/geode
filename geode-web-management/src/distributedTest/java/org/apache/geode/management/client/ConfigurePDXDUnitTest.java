@@ -19,6 +19,8 @@ package org.apache.geode.management.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.List;
+
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
@@ -29,6 +31,7 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringRunner;
 import org.springframework.test.context.web.WebAppConfiguration;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.web.context.WebApplicationContext;
 
 import org.apache.geode.cache.configuration.CacheConfig;
@@ -36,13 +39,16 @@ import org.apache.geode.cache.configuration.PdxType;
 import org.apache.geode.distributed.internal.InternalConfigurationPersistenceService;
 import org.apache.geode.distributed.internal.InternalLocator;
 import org.apache.geode.management.api.ClusterManagementException;
+import org.apache.geode.management.api.ClusterManagementGetResult;
 import org.apache.geode.management.api.ClusterManagementRealizationResult;
 import org.apache.geode.management.api.ClusterManagementResult;
 import org.apache.geode.management.api.ClusterManagementService;
 import org.apache.geode.management.api.RealizationResult;
+import org.apache.geode.management.api.RestTemplateClusterManagementServiceTransport;
 import org.apache.geode.management.configuration.Pdx;
 import org.apache.geode.management.internal.rest.LocatorWebContext;
 import org.apache.geode.management.internal.rest.PlainLocatorContextLoader;
+import org.apache.geode.management.runtime.PdxInfo;
 import org.apache.geode.test.dunit.rules.ClusterStartupRule;
 import org.apache.geode.test.dunit.rules.MemberVM;
 
@@ -67,8 +73,10 @@ public class ConfigurePDXDUnitTest {
   public void before() {
     cluster.setSkipLocalDistributedSystemCleanup(true);
     webContext = new LocatorWebContext(webApplicationContext);
-    client = ClusterManagementServiceBuilder.buildWithRequestFactory()
-        .setRequestFactory(webContext.getRequestFactory()).build();
+    client = new ClusterManagementServiceBuilder().setTransport(
+        new RestTemplateClusterManagementServiceTransport(
+            new RestTemplate(webContext.getRequestFactory())))
+        .build();
     pdxType = new Pdx();
   }
 
@@ -89,6 +97,11 @@ public class ConfigurePDXDUnitTest {
 
   @Test
   public void configureWithNoServer() throws Exception {
+    // verify the get
+    assertThatThrownBy(() -> client.get(new Pdx())).isInstanceOf(ClusterManagementException.class)
+        .hasMessageContaining("ENTITY_NOT_FOUND");
+
+    pdxType.setReadSerialized(true);
     ClusterManagementRealizationResult result = client.create(pdxType);
     assertThat(result.isSuccessful()).isTrue();
     assertThat(result.getStatusCode()).isEqualTo(ClusterManagementResult.StatusCode.OK);
@@ -98,13 +111,21 @@ public class ConfigurePDXDUnitTest {
     pdxType.setDiskStoreName("diskstore");
     assertThatThrownBy(() -> client.create(pdxType))
         .isInstanceOf(ClusterManagementException.class)
-        .hasMessageContaining("ENTITY_EXISTS: Pdx 'PDX' already exists in group cluster");
+        .hasMessageContaining("ENTITY_EXISTS: Pdx 'PDX' already exists");
+
+    // verify the get
+    ClusterManagementGetResult<Pdx, PdxInfo> getResult = client.get(new Pdx());
+    Pdx configResult = getResult.getResult().getConfigurations().get(0);
+    assertThat(configResult.isReadSerialized()).isTrue();
+    assertThat(getResult.getResult().getRuntimeInfos()).hasSize(0);
   }
 
   @Test
   public void configureWithARunningServer() {
+    assertThatThrownBy(() -> client.get(new Pdx())).isInstanceOf(ClusterManagementException.class)
+        .hasMessageContaining("ENTITY_NOT_FOUND");
     MemberVM server = cluster.startServerVM(1, webContext.getLocator().getPort());
-
+    pdxType.setReadSerialized(true);
     ClusterManagementRealizationResult result = client.create(pdxType);
     assertThat(result.isSuccessful()).isTrue();
     assertThat(result.getStatusCode()).isEqualTo(ClusterManagementResult.StatusCode.OK);
@@ -123,7 +144,15 @@ public class ConfigurePDXDUnitTest {
     pdxType.setDiskStoreName("diskstore");
     assertThatThrownBy(() -> client.create(pdxType))
         .isInstanceOf(ClusterManagementException.class)
-        .hasMessageContaining("ENTITY_EXISTS: Pdx 'PDX' already exists in group cluster");
+        .hasMessageContaining("ENTITY_EXISTS: Pdx 'PDX' already exists");
+
+    // verify the get
+    ClusterManagementGetResult<Pdx, PdxInfo> getResult = client.get(new Pdx());
+    Pdx configResult = getResult.getResult().getConfigurations().get(0);
+    assertThat(configResult.isReadSerialized()).isTrue();
+    List<PdxInfo> runtimeResults = getResult.getResult().getRuntimeInfos();
+    assertThat(runtimeResults).hasSize(1);
+    assertThat(runtimeResults.get(0).isReadSerialized()).isFalse();
 
     server.stop();
   }

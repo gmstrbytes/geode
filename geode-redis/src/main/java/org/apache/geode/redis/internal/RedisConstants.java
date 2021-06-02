@@ -63,6 +63,13 @@ public class RedisConstants {
       "Attemping to authenticate with an invalid password";
   public static final String ERROR_NOT_AUTH = "Must authenticate before sending any requests";
   public static final String ERROR_ZSET_MEMBER_NOT_FOUND = "could not decode requested zset member";
+  public static final String ERROR_WRONG_TYPE =
+      "Operation against a key holding the wrong kind of value";
+  public static final String ERROR_NOT_INTEGER = "value is not an integer or out of range";
+  public static final String ERROR_OVERFLOW = "increment or decrement would overflow";
+  public static final String ERROR_NO_SUCH_KEY = "no such key";
+  public static final String ERROR_SYNTAX = "syntax error";
+  public static final String ERROR_INVALID_EXPIRE_TIME = "invalid expire time in set";
 
   public static class ArityDef {
 
@@ -199,7 +206,7 @@ public class RedisConstants {
     public static final String SMOVE =
         "The wrong number of arguments or syntax was provided, the format for the SMOVE command is \"SMOVE source destination member\"";
     public static final String SPOP =
-        "The wrong number of arguments or syntax was provided, the format for the SPOP command is \"SPOP key\"";
+        "The wrong number of arguments or syntax was provided, the format for the SPOP command is \"SPOP key [count]\"";
     public static final String SRANDMEMBER =
         "The wrong number of arguments or syntax was provided, the format for the SRANDMEMBER command is \"SRANDMEMBER key [count]\"";
     public static final String SREM =
@@ -304,6 +311,8 @@ public class RedisConstants {
         "The wrong number of arguments or syntax was provided, the format for the MSETNX command is \"MSETNX key value [key value ...]\", or not every key matches a value";
     public static final String PSETEX =
         "The wrong number of arguments or syntax was provided, the format for the PSETEX command is \"PSETEX key milliseconds value\"";
+    public static final String PUBLISH =
+        "The wrong number of arguments or syntax was provided, the format for the PUBLISH command is \"PUBLISH channel message\"";
     public static final String SETBIT =
         "The wrong number of arguments or syntax was provided, the format for the SETBIT command is \"SETBIT key offset value\"";
     public static final String SET =

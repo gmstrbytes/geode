@@ -33,6 +33,8 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -71,6 +73,7 @@ import org.apache.geode.internal.serialization.DeserializationContext;
 import org.apache.geode.internal.serialization.SerializationContext;
 import org.apache.geode.internal.util.StopWatch;
 import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * Specialized {@link CacheDistributionAdvisor} for {@link BucketRegion BucketRegions}. The
@@ -163,7 +166,7 @@ public class BucketAdvisor extends CacheDistributionAdvisor {
 
   private PartitionedRegion pRegion;
 
-  private volatile boolean shadowBucketDestroyed;
+  final ConcurrentMap<String, Boolean> destroyedShadowBuckets = new ConcurrentHashMap<>();
 
   /**
    * Constructs a new BucketAdvisor for the Bucket owned by RegionAdvisor.
@@ -540,7 +543,7 @@ public class BucketAdvisor extends CacheDistributionAdvisor {
    * @see #adviseProfileUpdate()
    */
   @Override
-  public boolean putProfile(Profile profile, boolean forceProfile) {
+  public synchronized boolean putProfile(Profile profile, boolean forceProfile) {
     assert profile instanceof BucketProfile;
     BucketProfile bp = (BucketProfile) profile;
 
@@ -817,7 +820,7 @@ public class BucketAdvisor extends CacheDistributionAdvisor {
     // failure detection period
     long timeout = config.getMemberTimeout() * 3L;
     // plus time for a new member to become primary
-    timeout += Long.getLong(DistributionConfig.GEMFIRE_PREFIX + "BucketAdvisor.getPrimaryTimeout",
+    timeout += Long.getLong(GeodeGlossary.GEMFIRE_PREFIX + "BucketAdvisor.getPrimaryTimeout",
         15000L);
     return waitForPrimaryMember(timeout);
   }
@@ -2302,7 +2305,7 @@ public class BucketAdvisor extends CacheDistributionAdvisor {
    */
   public static class ServerBucketProfile extends BucketProfile {
 
-    public Set<BucketServerLocation66> bucketServerLocations;
+    private Set<BucketServerLocation66> bucketServerLocations;
 
     private int bucketId;
 
@@ -2741,11 +2744,19 @@ public class BucketAdvisor extends CacheDistributionAdvisor {
     }
   }
 
-  void setShadowBucketDestroyed(boolean destroyed) {
-    shadowBucketDestroyed = destroyed;
+  void markAllShadowBucketsAsNonDestroyed() {
+    destroyedShadowBuckets.clear();
   }
 
-  public boolean getShadowBucketDestroyed() {
-    return shadowBucketDestroyed;
+  void markAllShadowBucketsAsDestroyed() {
+    destroyedShadowBuckets.forEach((k, v) -> destroyedShadowBuckets.put(k, true));
+  }
+
+  void markShadowBucketAsDestroyed(String shadowBucketPath) {
+    destroyedShadowBuckets.put(shadowBucketPath, true);
+  }
+
+  public boolean isShadowBucketDestroyed(String shadowBucketPath) {
+    return destroyedShadowBuckets.getOrDefault(shadowBucketPath, false);
   }
 }

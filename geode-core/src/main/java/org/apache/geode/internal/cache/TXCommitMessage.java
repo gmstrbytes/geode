@@ -74,6 +74,7 @@ import org.apache.geode.internal.cache.versions.VersionTag;
 import org.apache.geode.internal.offheap.annotations.Released;
 import org.apache.geode.internal.serialization.DeserializationContext;
 import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.internal.serialization.StaticSerialization;
 import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.logging.internal.executors.LoggingThread;
 import org.apache.geode.logging.internal.log4j.api.LogService;
@@ -930,11 +931,11 @@ public class TXCommitMessage extends PooledDistributionMessage
   }
 
   private boolean hasFlagsField(final DataOutput out) {
-    return hasFlagsField(InternalDataSerializer.getVersionForDataStream(out));
+    return hasFlagsField(StaticSerialization.getVersionForDataStream(out));
   }
 
   private boolean hasFlagsField(final DataInput in) {
-    return hasFlagsField(InternalDataSerializer.getVersionForDataStream(in));
+    return hasFlagsField(StaticSerialization.getVersionForDataStream(in));
   }
 
   private boolean hasFlagsField(final Version version) {
@@ -1230,7 +1231,7 @@ public class TXCommitMessage extends PooledDistributionMessage
 
     LocalRegion getRegionByPath(DistributionManager dm, String regionPath) {
       InternalCache cache = dm.getCache();
-      return cache == null ? null : (LocalRegion) cache.getRegionByPath(regionPath);
+      return cache == null ? null : (LocalRegion) cache.getInternalRegionByPath(regionPath);
     }
 
     /**
@@ -1520,7 +1521,7 @@ public class TXCommitMessage extends PooledDistributionMessage
         this.preserializedBuffer.rewind();
         this.preserializedBuffer.sendTo(out);
       } else if (this.refCount > 1) {
-        Version v = InternalDataSerializer.getVersionForDataStream(out);
+        Version v = StaticSerialization.getVersionForDataStream(out);
         HeapDataOutputStream hdos = new HeapDataOutputStream(1024, v);
         basicToData(hdos, context, useShadowKey);
         this.preserializedBuffer = hdos;
@@ -1659,7 +1660,7 @@ public class TXCommitMessage extends PooledDistributionMessage
 
       @Override
       public boolean equals(Object o) {
-        if (o == null || !(o instanceof FarSideEntryOp)) {
+        if (!(o instanceof FarSideEntryOp)) {
           return false;
         }
         return compareTo(o) == 0;
@@ -2169,7 +2170,7 @@ public class TXCommitMessage extends PooledDistributionMessage
     }
 
     @Override
-    protected void processException(DistributionMessage msg, ReplyException ex) {
+    protected synchronized void processException(DistributionMessage msg, ReplyException ex) {
       if (msg instanceof ReplyMessage) {
         synchronized (this) {
           if (this.exception == null) {

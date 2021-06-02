@@ -50,6 +50,7 @@ import org.apache.geode.CancelCriterion;
 import org.apache.geode.GemFireIOException;
 import org.apache.geode.LogWriter;
 import org.apache.geode.annotations.Immutable;
+import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.cache.AttributesFactory;
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.CacheClosedException;
@@ -88,8 +89,13 @@ import org.apache.geode.cache.query.Query;
 import org.apache.geode.cache.query.QueryInvalidException;
 import org.apache.geode.cache.query.QueryService;
 import org.apache.geode.cache.query.internal.InternalQueryService;
+import org.apache.geode.cache.query.internal.QueryConfigurationService;
+import org.apache.geode.cache.query.internal.QueryConfigurationServiceException;
+import org.apache.geode.cache.query.internal.QueryConfigurationServiceImpl;
 import org.apache.geode.cache.query.internal.QueryMonitor;
 import org.apache.geode.cache.query.internal.cq.CqService;
+import org.apache.geode.cache.query.internal.xml.QueryConfigurationServiceCreation;
+import org.apache.geode.cache.query.internal.xml.QueryMethodAuthorizerCreation;
 import org.apache.geode.cache.query.security.MethodInvocationAuthorizer;
 import org.apache.geode.cache.server.CacheServer;
 import org.apache.geode.cache.snapshot.CacheSnapshotService;
@@ -128,6 +134,7 @@ import org.apache.geode.internal.cache.InternalCacheForClientAccess;
 import org.apache.geode.internal.cache.InternalCacheServer;
 import org.apache.geode.internal.cache.InternalRegion;
 import org.apache.geode.internal.cache.InternalRegionArguments;
+import org.apache.geode.internal.cache.InternalRegionFactory;
 import org.apache.geode.internal.cache.LocalRegion;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.PoolFactoryImpl;
@@ -140,6 +147,8 @@ import org.apache.geode.internal.cache.backup.BackupService;
 import org.apache.geode.internal.cache.control.InternalResourceManager;
 import org.apache.geode.internal.cache.control.ResourceAdvisor;
 import org.apache.geode.internal.cache.event.EventTrackerExpiryTask;
+import org.apache.geode.internal.cache.eviction.HeapEvictor;
+import org.apache.geode.internal.cache.eviction.OffHeapEvictor;
 import org.apache.geode.internal.cache.extension.Extensible;
 import org.apache.geode.internal.cache.extension.ExtensionPoint;
 import org.apache.geode.internal.cache.extension.SimpleExtensionPoint;
@@ -307,6 +316,8 @@ public class CacheCreation implements InternalCache {
 
   private final InternalQueryService queryService = createInternalQueryService();
 
+  private QueryConfigurationServiceCreation queryConfigurationServiceCreation;
+
   /**
    * Creates a new {@code CacheCreation} with no root regions
    */
@@ -459,7 +470,8 @@ public class CacheCreation implements InternalCache {
    * Fills in the contents of a {@link Cache} based on this creation object's state.
    */
   void create(InternalCache cache)
-      throws TimeoutException, CacheWriterException, GatewayException, RegionExistsException {
+      throws TimeoutException, CacheWriterException, GatewayException, RegionExistsException,
+      QueryConfigurationServiceException {
     extensionPoint.beforeCreate(cache);
 
     cache.setDeclarativeCacheConfig(cacheConfig);
@@ -599,6 +611,18 @@ public class CacheCreation implements InternalCache {
       GatewayReceiver receiver = factory.create();
       if (receiver.isManualStart()) {
         logger.info("{} is not being started since it is configured for manual start", receiver);
+      }
+    }
+
+    if (queryConfigurationServiceCreation != null) {
+      QueryConfigurationServiceImpl queryConfigService =
+          (QueryConfigurationServiceImpl) cache.getService(QueryConfigurationService.class);
+      if (queryConfigService != null) {
+        QueryMethodAuthorizerCreation authorizerCreation =
+            queryConfigurationServiceCreation.getMethodAuthorizerCreation();
+        if (authorizerCreation != null) {
+          queryConfigService.updateMethodAuthorizer(cache, true, authorizerCreation);
+        }
       }
     }
 
@@ -1055,8 +1079,22 @@ public class CacheCreation implements InternalCache {
   }
 
   @Override
-  public InternalQueryService getQueryService() {
+  public QueryService getQueryService() {
     return queryService;
+  }
+
+  @Override
+  public InternalQueryService getInternalQueryService() {
+    return queryService;
+  }
+
+  public QueryConfigurationServiceCreation getQueryConfigurationServiceCreation() {
+    return queryConfigurationServiceCreation;
+  }
+
+  public void setQueryConfigurationServiceCreation(
+      QueryConfigurationServiceCreation queryConfigurationServiceCreation) {
+    this.queryConfigurationServiceCreation = queryConfigurationServiceCreation;
   }
 
   @Override
@@ -1064,36 +1102,34 @@ public class CacheCreation implements InternalCache {
     return new JSONFormatter();
   }
 
-  /**
-   * @since GemFire 6.5
-   */
+  private void throwIfClient() {
+    if (isClient()) {
+      throw new UnsupportedOperationException("operation is not supported on a client cache");
+    }
+  }
+
   @Override
   public <K, V> RegionFactory<K, V> createRegionFactory(RegionShortcut shortcut) {
-    throw new UnsupportedOperationException("Should not be invoked");
+    throwIfClient();
+    return new InternalRegionFactory<>(this, shortcut);
   }
 
-  /**
-   * @since GemFire 6.5
-   */
   @Override
   public <K, V> RegionFactory<K, V> createRegionFactory() {
-    throw new UnsupportedOperationException("Should not be invoked");
+    throwIfClient();
+    return new InternalRegionFactory<>(this);
   }
 
-  /**
-   * @since GemFire 6.5
-   */
   @Override
   public <K, V> RegionFactory<K, V> createRegionFactory(String regionAttributesId) {
-    throw new UnsupportedOperationException("Should not be invoked");
+    throwIfClient();
+    return new InternalRegionFactory<>(this, regionAttributesId);
   }
 
-  /**
-   * @since GemFire 6.5
-   */
   @Override
   public <K, V> RegionFactory<K, V> createRegionFactory(RegionAttributes<K, V> regionAttributes) {
-    throw new UnsupportedOperationException("Should not be invoked");
+    throwIfClient();
+    return new InternalRegionFactory<>(this, regionAttributes);
   }
 
   @Override
@@ -1144,6 +1180,7 @@ public class CacheCreation implements InternalCache {
   }
 
   @Override
+  @VisibleForTesting
   public boolean removeCacheServer(final CacheServer cacheServer) {
     throw new UnsupportedOperationException("Should not be invoked");
   }
@@ -1159,6 +1196,7 @@ public class CacheCreation implements InternalCache {
   }
 
   @Override
+  @VisibleForTesting
   public void setReadSerializedForTest(final boolean value) {
     throw new UnsupportedOperationException("Should not be invoked");
   }
@@ -1215,7 +1253,7 @@ public class CacheCreation implements InternalCache {
 
   @Override
   public void close(final String reason, final Throwable systemFailureCause,
-      final boolean keepAlive, final boolean keepDS) {
+      final boolean keepAlive, final boolean keepDS, boolean skipAwait) {
     throw new UnsupportedOperationException("Should not be invoked");
   }
 
@@ -1230,7 +1268,7 @@ public class CacheCreation implements InternalCache {
   }
 
   @Override
-  public int getUpTime() {
+  public long getUpTime() {
     throw new UnsupportedOperationException("Should not be invoked");
   }
 
@@ -1325,6 +1363,7 @@ public class CacheCreation implements InternalCache {
   }
 
   @Override
+  @VisibleForTesting
   public RestAgent getRestAgent() {
     throw new UnsupportedOperationException("Should not be invoked");
   }
@@ -1390,11 +1429,13 @@ public class CacheCreation implements InternalCache {
   }
 
   @Override
+  @VisibleForTesting
   public Set<AsyncEventQueue> getAsyncEventQueues(boolean visibleOnly) {
     return asyncEventQueues;
   }
 
   @Override
+  @VisibleForTesting
   public void closeDiskStores() {
     throw new UnsupportedOperationException("Should not be invoked");
   }
@@ -1597,7 +1638,12 @@ public class CacheCreation implements InternalCache {
   }
 
   @Override
-  public LocalRegion getRegionByPath(final String path) {
+  public <K, V> Region<K, V> getRegionByPath(String path) {
+    return null;
+  }
+
+  @Override
+  public InternalRegion getInternalRegionByPath(String path) {
     return null;
   }
 
@@ -1774,11 +1820,6 @@ public class CacheCreation implements InternalCache {
   }
 
   @Override
-  public void determineDefaultPool() {
-    throw new UnsupportedOperationException("Should not be invoked");
-  }
-
-  @Override
   public <K, V> Region<K, V> basicCreateRegion(final String name,
       final RegionAttributes<K, V> attrs) throws RegionExistsException, TimeoutException {
     throw new UnsupportedOperationException("Should not be invoked");
@@ -1790,6 +1831,7 @@ public class CacheCreation implements InternalCache {
   }
 
   @Override
+  @VisibleForTesting
   public Throwable getDisconnectCause() {
     throw new UnsupportedOperationException("Should not be invoked");
   }
@@ -2422,6 +2464,18 @@ public class CacheCreation implements InternalCache {
 
   @Override
   public void saveCacheXmlForReconnect() {
+    throw new UnsupportedOperationException("Should not be invoked");
+  }
+
+  @Override
+  @VisibleForTesting
+  public HeapEvictor getHeapEvictor() {
+    throw new UnsupportedOperationException("Should not be invoked");
+  }
+
+  @Override
+  @VisibleForTesting
+  public OffHeapEvictor getOffHeapEvictor() {
     throw new UnsupportedOperationException("Should not be invoked");
   }
 

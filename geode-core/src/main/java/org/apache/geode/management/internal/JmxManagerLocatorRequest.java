@@ -17,13 +17,14 @@ package org.apache.geode.management.internal;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.util.Properties;
 
 import org.apache.geode.annotations.Immutable;
+import org.apache.geode.distributed.internal.tcpserver.HostAndPort;
 import org.apache.geode.distributed.internal.tcpserver.TcpClient;
-import org.apache.geode.internal.admin.SSLConfig;
+import org.apache.geode.distributed.internal.tcpserver.TcpSocketFactory;
+import org.apache.geode.internal.InternalDataSerializer;
+import org.apache.geode.internal.net.SSLConfig;
 import org.apache.geode.internal.net.SSLConfigurationFactory;
 import org.apache.geode.internal.net.SocketCreator;
 import org.apache.geode.internal.security.SecurableCommunicationChannel;
@@ -76,15 +77,17 @@ public class JmxManagerLocatorRequest implements DataSerializableFixedID {
    */
   public static JmxManagerLocatorResponse send(String locatorHost, int locatorPort, int msTimeout,
       Properties sslConfigProps) throws IOException, ClassNotFoundException {
-    InetAddress networkAddress = InetAddress.getByName(locatorHost);
-    InetSocketAddress inetSockAddr = new InetSocketAddress(networkAddress, locatorPort);
 
     // simply need to turn sslConfigProps into sslConfig for locator
     SSLConfig sslConfig = SSLConfigurationFactory.getSSLConfigForComponent(sslConfigProps,
         SecurableCommunicationChannel.LOCATOR);
     SocketCreator socketCreator = new SocketCreator(sslConfig);
-    TcpClient client = new TcpClient(socketCreator);
-    Object responseFromServer = client.requestToServer(inetSockAddr, SINGLETON, msTimeout, true);
+    TcpClient client = new TcpClient(socketCreator,
+        InternalDataSerializer.getDSFIDSerializer().getObjectSerializer(),
+        InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer(),
+        TcpSocketFactory.DEFAULT);
+    Object responseFromServer = client.requestToServer(new HostAndPort(locatorHost, locatorPort),
+        SINGLETON, msTimeout, true);
 
     if (responseFromServer instanceof JmxManagerLocatorResponse)
       return (JmxManagerLocatorResponse) responseFromServer;

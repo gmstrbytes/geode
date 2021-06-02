@@ -51,7 +51,7 @@ import org.apache.geode.internal.cache.partitioned.rebalance.BucketOperator.Comp
 import org.apache.geode.internal.cache.partitioned.rebalance.model.AddressComparor;
 import org.apache.geode.internal.cache.partitioned.rebalance.model.PartitionedRegionLoadModel;
 import org.apache.geode.internal.cache.persistence.PersistentMemberID;
-import org.apache.geode.internal.net.SocketCreator;
+import org.apache.geode.internal.inet.LocalHostUtil;
 
 @RunWith(JUnitParamsRunner.class)
 public class PartitionedRegionLoadModelJUnitTest {
@@ -207,7 +207,7 @@ public class PartitionedRegionLoadModelJUnitTest {
     InternalDistributedMember member2 =
         new InternalDistributedMember(InetAddress.getByName("127.0.0.1"), 2);
     InternalDistributedMember member3 =
-        new InternalDistributedMember(SocketCreator.getLocalHost(), 3);
+        new InternalDistributedMember(LocalHostUtil.getLocalHost(), 3);
 
     // Create some buckets with low redundancy on members 1 and 2
     PartitionMemberInfoImpl details1 =
@@ -1497,8 +1497,8 @@ public class PartitionedRegionLoadModelJUnitTest {
   }
 
   private int doMoves(RebalanceDirector director, PartitionedRegionLoadModel model) {
-    float initialVariance = model.getVarianceForTest();
-    float initialPrimaryVariance = model.getPrimaryVarianceForTest();
+    double initialVariance = model.getVarianceForTest();
+    double initialPrimaryVariance = model.getPrimaryVarianceForTest();
     if (DEBUG) {
       System.out.println("Initial Model\n" + model + "\nVariance= " + initialVariance
           + ", Primary variance=" + initialPrimaryVariance + "\n---------------");
@@ -1509,8 +1509,8 @@ public class PartitionedRegionLoadModelJUnitTest {
     while (director.nextStep() && moveCount < MAX_MOVES) {
 
       moveCount++;
-      float variance = model.getVarianceForTest();
-      float primaryVariance = model.getPrimaryVarianceForTest();
+      double variance = model.getVarianceForTest();
+      double primaryVariance = model.getPrimaryVarianceForTest();
       if (DEBUG) {
         System.out.println("---------------\nMove " + moveCount + "\n" + model + "\nVariance= "
             + variance + ", Primary variance=" + primaryVariance + "\n---------------");

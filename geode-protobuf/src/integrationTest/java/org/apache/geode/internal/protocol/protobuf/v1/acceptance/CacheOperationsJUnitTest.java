@@ -53,8 +53,9 @@ import org.apache.geode.cache.CacheFactory;
 import org.apache.geode.cache.RegionFactory;
 import org.apache.geode.cache.server.CacheServer;
 import org.apache.geode.distributed.ConfigurationProperties;
+import org.apache.geode.distributed.internal.tcpserver.HostAndPort;
 import org.apache.geode.internal.AvailablePortHelper;
-import org.apache.geode.internal.admin.SSLConfig;
+import org.apache.geode.internal.net.SSLConfig;
 import org.apache.geode.internal.net.SocketCreator;
 import org.apache.geode.internal.net.SocketCreatorFactory;
 import org.apache.geode.internal.protocol.protobuf.v1.BasicTypes;
@@ -389,18 +390,19 @@ public class CacheOperationsJUnitTest {
         createTempFileFromResource(CacheOperationsJUnitTest.class, DEFAULT_STORE)
             .getAbsolutePath();
 
-    SSLConfig sslConfig = new SSLConfig();
-    sslConfig.setEnabled(true);
-    sslConfig.setCiphers(SSL_CIPHERS);
-    sslConfig.setProtocols(SSL_PROTOCOLS);
-    sslConfig.setRequireAuth(true);
-    sslConfig.setKeystoreType("jks");
-    sslConfig.setKeystore(keyStorePath);
-    sslConfig.setKeystorePassword("password");
-    sslConfig.setTruststore(trustStorePath);
-    sslConfig.setKeystorePassword("password");
+    SSLConfig.Builder sslConfigBuilder = new SSLConfig.Builder();
+    sslConfigBuilder.setEnabled(true);
+    sslConfigBuilder.setCiphers(SSL_CIPHERS);
+    sslConfigBuilder.setProtocols(SSL_PROTOCOLS);
+    sslConfigBuilder.setRequireAuth(true);
+    sslConfigBuilder.setKeystoreType("jks");
+    sslConfigBuilder.setKeystore(keyStorePath);
+    sslConfigBuilder.setKeystorePassword("password");
+    sslConfigBuilder.setTruststore(trustStorePath);
+    sslConfigBuilder.setKeystorePassword("password");
 
-    SocketCreator socketCreator = new SocketCreator(sslConfig);
-    return socketCreator.connectForClient("localhost", cacheServerPort, 5000);
+    SocketCreator socketCreator = new SocketCreator(sslConfigBuilder.build());
+    return socketCreator.forClient().connect(new HostAndPort("localhost", cacheServerPort),
+        5000);
   }
 }

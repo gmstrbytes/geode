@@ -19,7 +19,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>org.apache.geode</groupId>
   <artifactId>geode-core</artifactId>
-  <version>1.11.0</version>
+  <version>${version}</version>
   <name>Apache Geode</name>
   <description>Apache Geode provides a database-like consistency model, reliable transaction processing and a shared-nothing architecture to maintain very low latency performance with high concurrency processing</description>
   <url>http://geode.apache.org</url>
@@ -39,7 +39,7 @@
       <dependency>
         <groupId>org.apache.geode</groupId>
         <artifactId>geode-all-bom</artifactId>
-        <version>1.11.0</version>
+        <version>${version}</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>
@@ -52,6 +52,11 @@
       <scope>compile</scope>
     </dependency>
     <dependency>
+      <groupId>commons-io</groupId>
+      <artifactId>commons-io</artifactId>
+      <scope>compile</scope>
+    </dependency>
+    <dependency>
       <groupId>io.micrometer</groupId>
       <artifactId>micrometer-core</artifactId>
       <scope>compile</scope>
@@ -60,41 +65,6 @@
       <groupId>javax.resource</groupId>
       <artifactId>javax.resource-api</artifactId>
       <scope>compile</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.shell</groupId>
-      <artifactId>spring-shell</artifactId>
-      <scope>compile</scope>
-      <exclusions>
-        <exclusion>
-          <artifactId>cglib</artifactId>
-          <groupId>*</groupId>
-        </exclusion>
-        <exclusion>
-          <artifactId>spring-core</artifactId>
-          <groupId>*</groupId>
-        </exclusion>
-        <exclusion>
-          <artifactId>asm</artifactId>
-          <groupId>*</groupId>
-        </exclusion>
-        <exclusion>
-          <artifactId>spring-aop</artifactId>
-          <groupId>*</groupId>
-        </exclusion>
-        <exclusion>
-          <artifactId>guava</artifactId>
-          <groupId>*</groupId>
-        </exclusion>
-        <exclusion>
-          <artifactId>aopalliance</artifactId>
-          <groupId>*</groupId>
-        </exclusion>
-        <exclusion>
-          <artifactId>spring-context-support</artifactId>
-          <groupId>*</groupId>
-        </exclusion>
-      </exclusions>
     </dependency>
     <dependency>
       <groupId>org.apache.shiro</groupId>
@@ -112,8 +82,8 @@
       <scope>compile</scope>
     </dependency>
     <dependency>
-      <groupId>com.github.stephenc.findbugs</groupId>
-      <artifactId>findbugs-annotations</artifactId>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-web</artifactId>
       <scope>runtime</scope>
     </dependency>
     <dependency>
@@ -129,11 +99,6 @@
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
-      <scope>runtime</scope>
-    </dependency>
-    <dependency>
-      <groupId>commons-io</groupId>
-      <artifactId>commons-io</artifactId>
       <scope>runtime</scope>
     </dependency>
     <dependency>
@@ -211,6 +176,11 @@
       <scope>runtime</scope>
     </dependency>
     <dependency>
+      <groupId>net.java.dev.jna</groupId>
+      <artifactId>jna-platform</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
       <groupId>net.sf.jopt-simple</groupId>
       <artifactId>jopt-simple</artifactId>
       <scope>runtime</scope>
@@ -221,8 +191,8 @@
       <scope>runtime</scope>
     </dependency>
     <dependency>
-      <groupId>org.springframework</groupId>
-      <artifactId>spring-core</artifactId>
+      <groupId>io.swagger</groupId>
+      <artifactId>swagger-annotations</artifactId>
       <scope>runtime</scope>
       <optional>true</optional>
     </dependency>
@@ -249,12 +219,22 @@
     </dependency>
     <dependency>
       <groupId>org.apache.geode</groupId>
+      <artifactId>geode-membership</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.geode</groupId>
       <artifactId>geode-unsafe</artifactId>
       <scope>runtime</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.geode</groupId>
       <artifactId>geode-serialization</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.geode</groupId>
+      <artifactId>geode-tcp-server</artifactId>
       <scope>runtime</scope>
     </dependency>
     <dependency>
@@ -272,18 +252,6 @@
           <groupId>*</groupId>
         </exclusion>
       </exclusions>
-    </dependency>
-    <dependency>
-      <groupId>org.fusesource.jansi</groupId>
-      <artifactId>jansi</artifactId>
-      <scope>runtime</scope>
-      <optional>true</optional>
-    </dependency>
-    <dependency>
-      <groupId>io.swagger</groupId>
-      <artifactId>swagger-annotations</artifactId>
-      <scope>runtime</scope>
-      <optional>true</optional>
     </dependency>
     <dependency>
       <groupId>org.apache.geode</groupId>

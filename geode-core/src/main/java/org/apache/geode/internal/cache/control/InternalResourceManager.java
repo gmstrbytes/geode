@@ -19,12 +19,12 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -42,9 +42,9 @@ import org.apache.geode.cache.Region;
 import org.apache.geode.cache.control.RebalanceFactory;
 import org.apache.geode.cache.control.RebalanceOperation;
 import org.apache.geode.cache.control.ResourceManager;
+import org.apache.geode.cache.control.RestoreRedundancyOperation;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.internal.DistributionAdvisor.Profile;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.internal.ClassPathLoader;
 import org.apache.geode.internal.cache.InternalCache;
@@ -56,6 +56,8 @@ import org.apache.geode.internal.logging.CoreLoggingExecutors;
 import org.apache.geode.internal.monitoring.ThreadsMonitoring;
 import org.apache.geode.logging.internal.executors.LoggingExecutors;
 import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.management.runtime.RestoreRedundancyResults;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * Implementation of ResourceManager with additional internal-only methods.
@@ -66,7 +68,7 @@ public class InternalResourceManager implements ResourceManager {
   private static final Logger logger = LogService.getLogger();
 
   final int MAX_RESOURCE_MANAGER_EXE_THREADS =
-      Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "resource.manager.threads", 1);
+      Integer.getInteger(GeodeGlossary.GEMFIRE_PREFIX + "resource.manager.threads", 1);
 
   private final Collection<CompletableFuture<Void>> startupTasks = new ArrayList<>();
 
@@ -80,15 +82,20 @@ public class InternalResourceManager implements ResourceManager {
     }
   }
 
-  private Map<ResourceType, Set<ResourceListener>> listeners =
-      new HashMap<ResourceType, Set<ResourceListener>>();
+  private Map<ResourceType, Set<ResourceListener>> listeners = new HashMap<>();
 
   private final ScheduledExecutorService scheduledExecutor;
   private final ExecutorService notifyExecutor;
 
-  // The set of in progress rebalance operations.
-  private final Set<RebalanceOperation> inProgressOperations = new HashSet<RebalanceOperation>();
-  private final Object inProgressOperationsLock = new Object();
+  // A map of in progress rebalance operations. The value is Boolean because ConcurrentHashMap does
+  // not support null values.
+  private final Map<RebalanceOperation, Boolean> inProgressRebalanceOperations =
+      new ConcurrentHashMap<>();
+
+  // A map of in progress restore redundancy completable futures. The value is Boolean because
+  // ConcurrentHashMap does not support null values.
+  private final Map<CompletableFuture<RestoreRedundancyResults>, Boolean> inProgressRedundancyOperations =
+      new ConcurrentHashMap<>();
 
   final InternalCache cache;
 
@@ -104,7 +111,7 @@ public class InternalResourceManager implements ResourceManager {
   private static ResourceObserver observer = new ResourceObserverAdapter();
 
   private static final String PR_LOAD_PROBE_CLASS =
-      System.getProperty(DistributionConfig.GEMFIRE_PREFIX + "ResourceManager.PR_LOAD_PROBE_CLASS",
+      System.getProperty(GeodeGlossary.GEMFIRE_PREFIX + "ResourceManager.PR_LOAD_PROBE_CLASS",
           SizedBasedLoadProbe.class.getName());
 
   public static InternalResourceManager getInternalResourceManager(Cache cache) {
@@ -288,21 +295,15 @@ public class InternalResourceManager implements ResourceManager {
 
   @Override
   public Set<RebalanceOperation> getRebalanceOperations() {
-    synchronized (this.inProgressOperationsLock) {
-      return new HashSet<RebalanceOperation>(this.inProgressOperations);
-    }
+    return Collections.unmodifiableSet(inProgressRebalanceOperations.keySet());
   }
 
   void addInProgressRebalance(RebalanceOperation op) {
-    synchronized (this.inProgressOperationsLock) {
-      this.inProgressOperations.add(op);
-    }
+    inProgressRebalanceOperations.put(op, Boolean.TRUE);
   }
 
   void removeInProgressRebalance(RebalanceOperation op) {
-    synchronized (this.inProgressOperationsLock) {
-      this.inProgressOperations.remove(op);
-    }
+    inProgressRebalanceOperations.remove(op);
   }
 
   class RebalanceFactoryImpl implements RebalanceFactory {
@@ -339,7 +340,26 @@ public class InternalResourceManager implements ResourceManager {
       this.includedRegions = regions;
       return this;
     }
+  }
 
+  @Override
+  public RestoreRedundancyOperation createRestoreRedundancyOperation() {
+    return new RestoreRedundancyOperationImpl(cache);
+  }
+
+  @Override
+  public Set<CompletableFuture<RestoreRedundancyResults>> getRestoreRedundancyFutures() {
+    return Collections.unmodifiableSet(inProgressRedundancyOperations.keySet());
+  }
+
+  void addInProgressRestoreRedundancy(
+      CompletableFuture<RestoreRedundancyResults> completableFuture) {
+    inProgressRedundancyOperations.put(completableFuture, Boolean.TRUE);
+  }
+
+  void removeInProgressRestoreRedundancy(
+      CompletableFuture<RestoreRedundancyResults> completableFuture) {
+    inProgressRedundancyOperations.remove(completableFuture);
   }
 
   void stopExecutor(ExecutorService executor) {
@@ -348,7 +368,7 @@ public class InternalResourceManager implements ResourceManager {
     }
     executor.shutdown();
     final int secToWait = Integer
-        .getInteger(DistributionConfig.GEMFIRE_PREFIX + "prrecovery-close-timeout", 5).intValue();
+        .getInteger(GeodeGlossary.GEMFIRE_PREFIX + "prrecovery-close-timeout", 5).intValue();
     try {
       executor.awaitTermination(secToWait, TimeUnit.SECONDS);
     } catch (InterruptedException x) {
@@ -379,7 +399,6 @@ public class InternalResourceManager implements ResourceManager {
    * For testing only, an observer which is called when rebalancing is started and finished for a
    * particular region. This observer is called even the "rebalancing" is actually redundancy
    * recovery for a particular region.
-   *
    */
   public static void setResourceObserver(ResourceObserver observer) {
     if (observer == null) {
@@ -402,25 +421,21 @@ public class InternalResourceManager implements ResourceManager {
   public interface ResourceObserver {
     /**
      * Indicates that rebalancing has started on a given region.
-     *
      */
     void rebalancingStarted(Region region);
 
     /**
      * Indicates that rebalancing has finished on a given region.
-     *
      */
     void rebalancingFinished(Region region);
 
     /**
      * Indicates that recovery has started on a given region.
-     *
      */
     void recoveryStarted(Region region);
 
     /**
      * Indicates that recovery has finished on a given region.
-     *
      */
     void recoveryFinished(Region region);
 
@@ -428,7 +443,6 @@ public class InternalResourceManager implements ResourceManager {
      * Indicated that a membership event triggered a recovery operation, but the recovery operation
      * will not be executed because there is already an existing recovery operation waiting to
      * happen on this region.
-     *
      */
     void recoveryConflated(PartitionedRegion region);
 

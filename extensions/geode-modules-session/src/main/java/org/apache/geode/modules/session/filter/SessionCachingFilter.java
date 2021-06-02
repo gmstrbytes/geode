@@ -31,6 +31,7 @@ import javax.servlet.ServletException;
 import javax.servlet.ServletRequest;
 import javax.servlet.ServletRequestWrapper;
 import javax.servlet.ServletResponse;
+import javax.servlet.SessionCookieConfig;
 import javax.servlet.http.Cookie;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletRequestWrapper;
@@ -41,12 +42,12 @@ import javax.servlet.http.HttpSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.modules.session.internal.filter.GemfireHttpSession;
 import org.apache.geode.modules.session.internal.filter.GemfireSessionManager;
 import org.apache.geode.modules.session.internal.filter.SessionManager;
 import org.apache.geode.modules.session.internal.filter.attributes.DeltaQueuedSessionAttributes;
 import org.apache.geode.modules.session.internal.filter.attributes.DeltaSessionAttributes;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * Primary class which orchestrates everything. This is the class which gets configured in the
@@ -75,7 +76,7 @@ public class SessionCachingFilter implements Filter {
    * Can be overridden during testing.
    */
   private static final AtomicInteger started = new AtomicInteger(
-      Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "override.session.manager.count", 1));
+      Integer.getInteger(GeodeGlossary.GEMFIRE_PREFIX + "override.session.manager.count", 1));
 
   /**
    * This latch ensures that at least one thread/instance has fired up the session manager before
@@ -203,8 +204,11 @@ public class SessionCachingFilter implements Filter {
         return;
       }
 
+      SessionCookieConfig cookieConfig = context.getSessionCookieConfig();
       Cookie cookie = new Cookie(manager.getSessionCookieName(), session.getId());
       cookie.setPath("".equals(getContextPath()) ? "/" : getContextPath());
+      cookie.setHttpOnly(cookieConfig.isHttpOnly());
+      cookie.setSecure(cookieConfig.isSecure());
       response.addCookie(cookie);
     }
 

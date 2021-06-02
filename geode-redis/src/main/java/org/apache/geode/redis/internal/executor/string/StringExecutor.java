@@ -14,32 +14,24 @@
  */
 package org.apache.geode.redis.internal.executor.string;
 
+import org.apache.geode.cache.TimeoutException;
+import org.apache.geode.redis.internal.AutoCloseableLock;
 import org.apache.geode.redis.internal.ByteArrayWrapper;
 import org.apache.geode.redis.internal.ExecutionHandlerContext;
 import org.apache.geode.redis.internal.RedisDataType;
-import org.apache.geode.redis.internal.RedisDataTypeMismatchException;
+import org.apache.geode.redis.internal.RedisLockService;
 import org.apache.geode.redis.internal.executor.AbstractExecutor;
 
 public abstract class StringExecutor extends AbstractExecutor {
 
-  protected void checkAndSetDataType(ByteArrayWrapper key, ExecutionHandlerContext context) {
-    Object oldVal = context.getRegionProvider().metaPutIfAbsent(key, RedisDataType.REDIS_STRING);
-    if (oldVal == RedisDataType.REDIS_PROTECTED)
-      throw new RedisDataTypeMismatchException("The key name \"" + key + "\" is protected");
-    if (oldVal != null && oldVal != RedisDataType.REDIS_STRING)
-      throw new RedisDataTypeMismatchException(
-          "The key name \"" + key + "\" is already used by a " + oldVal.toString());
+  public void checkAndSetDataType(ByteArrayWrapper key, ExecutionHandlerContext context) {
+    context.getKeyRegistrar().register(key, RedisDataType.REDIS_STRING);
   }
 
-  protected void checkDataType(ByteArrayWrapper key, ExecutionHandlerContext context) {
-    RedisDataType currentType = context.getRegionProvider().getRedisDataType(key);
-    if (currentType == null)
-      return;
-    if (currentType == RedisDataType.REDIS_PROTECTED)
-      throw new RedisDataTypeMismatchException("The key name \"" + key + "\" is protected");
-    if (currentType != RedisDataType.REDIS_STRING)
-      throw new RedisDataTypeMismatchException(
-          "The key name \"" + key + "\" is already used by a " + currentType.toString());
-  }
+  protected AutoCloseableLock withRegionLock(ExecutionHandlerContext context, ByteArrayWrapper key)
+      throws InterruptedException, TimeoutException {
+    RedisLockService lockService = context.getLockService();
 
+    return lockService.lock(key);
+  }
 }

@@ -23,6 +23,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
@@ -84,7 +85,7 @@ import org.apache.geode.management.internal.beans.stats.GatewayReceiverClusterSt
 import org.apache.geode.management.internal.beans.stats.GatewaySenderClusterStatsMonitor;
 import org.apache.geode.management.internal.beans.stats.MemberClusterStatsMonitor;
 import org.apache.geode.management.internal.beans.stats.ServerClusterStatsMonitor;
-import org.apache.geode.management.internal.cli.CliUtil;
+import org.apache.geode.management.internal.util.ManagementUtils;
 
 /**
  * This is the gateway to distributed system as a whole. Aggregated metrics and stats are shown
@@ -283,6 +284,8 @@ public class DistributedSystemBridge {
     }
 
     if (mapOfMembers != null) {
+      Objects.requireNonNull(objectName);
+      Objects.requireNonNull(proxy);
       mapOfMembers.put(objectName, proxy);
       memberSetSize = mapOfMembers.values().size();
 
@@ -1136,7 +1139,8 @@ public class DistributedSystemBridge {
 
   public ObjectName[] listGatewaySenderObjectNames(String member) throws Exception {
     validateMember(member);
-    DistributedMember distributedMember = CliUtil.getDistributedMemberByNameOrId(member, cache);
+    DistributedMember distributedMember = ManagementUtils
+        .getDistributedMemberByNameOrId(member, cache);
 
     List<ObjectName> listName = null;
 

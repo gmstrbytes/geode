@@ -14,7 +14,6 @@
  */
 package org.apache.geode.connectors.jdbc.internal.cli;
 
-import static junitparams.JUnitParamsRunner.$;
 import static org.apache.geode.connectors.jdbc.internal.cli.CreateMappingCommand.CREATE_MAPPING;
 import static org.apache.geode.connectors.jdbc.internal.cli.DescribeMappingCommand.DESCRIBE_MAPPING;
 import static org.apache.geode.connectors.jdbc.internal.cli.DestroyMappingCommand.DESTROY_MAPPING;
@@ -62,8 +61,8 @@ import org.apache.geode.connectors.jdbc.internal.configuration.RegionMapping;
 import org.apache.geode.distributed.internal.InternalLocator;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.jndi.JNDIInvoker;
-import org.apache.geode.management.internal.cli.i18n.CliStrings;
 import org.apache.geode.management.internal.cli.util.CommandStringBuilder;
+import org.apache.geode.management.internal.i18n.CliStrings;
 import org.apache.geode.pdx.FieldType;
 import org.apache.geode.pdx.PdxReader;
 import org.apache.geode.pdx.PdxSerializable;
@@ -111,7 +110,7 @@ public class CreateMappingCommandForProxyRegionDUnitTest {
   }
 
   @After
-  public void after() throws Exception {
+  public void after() {
     teardownDatabase();
   }
 
@@ -168,10 +167,8 @@ public class CreateMappingCommandForProxyRegionDUnitTest {
     RegionConfig regionConfig = cacheConfig.getRegions().stream()
         .filter(region -> region.getName().equals(convertRegionPathToName(regionName))).findFirst()
         .orElse(null);
-    RegionMapping regionMapping =
-        (RegionMapping) regionConfig.getCustomRegionElements().stream()
-            .filter(element -> element instanceof RegionMapping).findFirst().orElse(null);
-    return regionMapping;
+    return (RegionMapping) regionConfig.getCustomRegionElements().stream()
+        .filter(element -> element instanceof RegionMapping).findFirst().orElse(null);
   }
 
   private static RegionMapping getRegionMappingFromService(String regionName) {
@@ -252,6 +249,7 @@ public class CreateMappingCommandForProxyRegionDUnitTest {
     }
   }
 
+  @SuppressWarnings("deprecation")
   @Test
   @Parameters(method = "parametersToTestPRDR")
   public void createMappingTogetherForMultiServerGroupWithEmptyRegion(boolean isPR) {
@@ -320,6 +318,7 @@ public class CreateMappingCommandForProxyRegionDUnitTest {
     gfsh.executeAndAssertThat(csb.toString()).statusIsSuccess();
   }
 
+  @SuppressWarnings("deprecation")
   @Test
   @Parameters(method = "parametersToTestPRDR")
   public void createMappingSeparatelyForMultiServerGroupWithEmptyRegion(boolean isPR) {
@@ -416,6 +415,7 @@ public class CreateMappingCommandForProxyRegionDUnitTest {
     gfsh.executeAndAssertThat(csb.toString()).statusIsSuccess();
   }
 
+  @SuppressWarnings("deprecation")
   @Test
   @Parameters(method = "parametersToTestPRDR")
   public void createEmptyRegionAfterCreateMapping(boolean isPR) {
@@ -519,8 +519,9 @@ public class CreateMappingCommandForProxyRegionDUnitTest {
     gfsh.executeAndAssertThat(csb.toString()).statusIsSuccess();
   }
 
+  @SuppressWarnings("unused")
   private Object[] parametersToTestPRDR() {
-    return $(true, false);
+    return new Object[] {true, false};
   }
 
   private static void assertValidMappingOnServer(RegionMapping mapping, String regionName,
@@ -580,14 +581,14 @@ public class CreateMappingCommandForProxyRegionDUnitTest {
 
     @Override
     public void toData(PdxWriter writer) {
-      writer.writeString("myid", this.id);
-      writer.writeString("name", this.name);
+      writer.writeString("myid", id);
+      writer.writeString("name", name);
     }
 
     @Override
     public void fromData(PdxReader reader) {
-      this.id = reader.readString("myid");
-      this.name = reader.readString("name");
+      id = reader.readString("myid");
+      name = reader.readString("name");
     }
   }
 

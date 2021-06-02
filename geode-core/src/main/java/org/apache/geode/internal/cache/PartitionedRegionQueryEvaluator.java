@@ -63,7 +63,6 @@ import org.apache.geode.cache.query.internal.utils.PDXUtils;
 import org.apache.geode.cache.query.types.ObjectType;
 import org.apache.geode.cache.query.types.StructType;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.ReplyException;
@@ -77,6 +76,7 @@ import org.apache.geode.internal.cache.partitioned.RegionAdvisor;
 import org.apache.geode.internal.cache.partitioned.StreamingPartitionOperation;
 import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * This class sends the query on various <code>PartitionedRegion</code> data store nodes and
@@ -114,7 +114,7 @@ public class PartitionedRegionQueryEvaluator extends StreamingPartitionOperation
   }
 
   private static final int MAX_PR_QUERY_RETRIES =
-      Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "MAX_PR_QUERY_RETRIES", 10).intValue();
+      Integer.getInteger(GeodeGlossary.GEMFIRE_PREFIX + "MAX_PR_QUERY_RETRIES", 10).intValue();
 
   private final PartitionedRegion pr;
   private volatile Map<InternalDistributedMember, List<Integer>> node2bucketIds;
@@ -186,7 +186,7 @@ public class PartitionedRegionQueryEvaluator extends StreamingPartitionOperation
     // we will have to sort it
     boolean sortNeeded = false;
     List<CompiledSortCriterion> orderByAttribs = null;
-    if (sender.getVersionObject().compareTo(Version.GFE_90) < 0) {
+    if (sender.getVersionOrdinalObject().isOlderThan(Version.GFE_90)) {
       CompiledSelect cs = this.query.getSimpleSelect();
       if (cs != null && cs.isOrderBy()) {
         sortNeeded = true;

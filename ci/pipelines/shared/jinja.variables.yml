@@ -17,18 +17,21 @@
 
 benchmarks:
   baseline_branch: ''
-  baseline_version: '1.10.0'
-  benchmark_branch: develop
+  baseline_version: '1.12.0'
+  benchmark_branch: ((geode-build-branch))
   flavors:
   - title: '_base'
     flag: ''
     options: ''
+    max_in_flight: 4
   - title: '_with_ssl'
-    flag: '-PwithSsl'
+    flag: '-PwithSsl -PtestJVM=/usr/lib/jvm/bellsoft-java11-amd64'
     options: '--tests=*GetBenchmark --tests=*PutBenchmark'
+    max_in_flight: 1
   - title: '_with_security_manager'
     flag: '-PwithSecurityManager'
     options: '--tests=Partitioned*'
+    max_in_flight: 2
 
 build_test:
   ARTIFACT_SLUG: build
@@ -37,8 +40,10 @@ build_test:
   DUNIT_PARALLEL_FORKS: '4'
   EXECUTE_TEST_TIMEOUT: 20m
   GRADLE_TASK: build
+  MAX_IN_FLIGHT: 2
   PARALLEL_DUNIT: 'false'
   PARALLEL_GRADLE: 'false'
+  PLATFORM: linux
   RAM: '16'
   name: Build
 
@@ -64,7 +69,7 @@ java_test_versions:
   version: 11
 
 metadata:
-  initial_version: 1.11.0
+  initial_version: 1.13.0-((semver-prerelease-token))
 
 publish_artifacts:
   CPUS: '8'
@@ -82,6 +87,8 @@ tests:
   DUNIT_PARALLEL_FORKS: '0'
   EXECUTE_TEST_TIMEOUT: 30m
   GRADLE_TASK: test
+  MAX_IN_FLIGHT: 1
+  ONLY_JDK: 8
   PARALLEL_DUNIT: 'false'
   PARALLEL_GRADLE: 'true'
   PLATFORM: linux
@@ -93,6 +100,7 @@ tests:
   DUNIT_PARALLEL_FORKS: '0'
   EXECUTE_TEST_TIMEOUT: 1h30m
   GRADLE_TASK: acceptanceTest
+  MAX_IN_FLIGHT: 2
   PARALLEL_DUNIT: 'false'
   PARALLEL_GRADLE: 'false'
   PLATFORM: linux
@@ -104,6 +112,7 @@ tests:
   DUNIT_PARALLEL_FORKS: '24'
   EXECUTE_TEST_TIMEOUT: 3h00m
   GRADLE_TASK: distributedTest
+  MAX_IN_FLIGHT: 3
   PARALLEL_DUNIT: 'true'
   PLATFORM: linux
   RAM: '250'
@@ -114,6 +123,7 @@ tests:
   DUNIT_PARALLEL_FORKS: '48'
   EXECUTE_TEST_TIMEOUT: 40m
   GRADLE_TASK: integrationTest
+  MAX_IN_FLIGHT: 1
   PARALLEL_DUNIT: 'true'
   PLATFORM: linux
   RAM: '90'
@@ -124,15 +134,16 @@ tests:
   DUNIT_PARALLEL_FORKS: '48'
   EXECUTE_TEST_TIMEOUT: 1h
   GRADLE_TASK: upgradeTest
+  MAX_IN_FLIGHT: 2
   PARALLEL_DUNIT: 'true'
   PLATFORM: linux
   RAM: '210'
   name: Upgrade
 - ARTIFACT_SLUG: stressnewtestfiles
-  CALL_STACK_TIMEOUT: '7200'
+  CALL_STACK_TIMEOUT: '20700'
   CPUS: '96'
   DUNIT_PARALLEL_FORKS: '24'
-  EXECUTE_TEST_TIMEOUT: 2h15m
+  EXECUTE_TEST_TIMEOUT: 10h
   GRADLE_TASK: repeatTest
   PARALLEL_DUNIT: 'true'
   PARALLEL_GRADLE: 'false'
@@ -144,6 +155,7 @@ tests:
   DUNIT_PARALLEL_FORKS: '0'
   EXECUTE_TEST_TIMEOUT: 6h
   GRADLE_TASK: :geode-assembly:acceptanceTest
+  MAX_IN_FLIGHT: 3
   PARALLEL_DUNIT: 'false'
   PARALLEL_GRADLE: 'false'
   PLATFORM: windows
@@ -155,6 +167,7 @@ tests:
   EXECUTE_TEST_TIMEOUT: 6h
   GRADLE_TASK: distributedTest
   GRADLE_TASK_OPTIONS: -PtestCategory=org.apache.geode.test.junit.categories.GfshTest
+  MAX_IN_FLIGHT: 5
   PARALLEL_DUNIT: 'false'
   PARALLEL_GRADLE: 'false'
   PLATFORM: windows
@@ -166,6 +179,7 @@ tests:
   EXECUTE_TEST_TIMEOUT: 6h
   GRADLE_TASK: integrationTest
   GRADLE_TASK_OPTIONS: -x geode-core:integrationTest
+  MAX_IN_FLIGHT: 2
   PARALLEL_DUNIT: 'false'
   PARALLEL_GRADLE: 'false'
   PLATFORM: windows
@@ -176,6 +190,7 @@ tests:
   DUNIT_PARALLEL_FORKS: '0'
   EXECUTE_TEST_TIMEOUT: 6h
   GRADLE_TASK: geode-core:integrationTest
+  MAX_IN_FLIGHT: 6
   PARALLEL_DUNIT: 'false'
   PARALLEL_GRADLE: 'false'
   PLATFORM: windows
@@ -186,7 +201,21 @@ tests:
   DUNIT_PARALLEL_FORKS: '0'
   EXECUTE_TEST_TIMEOUT: 6h
   GRADLE_TASK: test
+  MAX_IN_FLIGHT: 1
   PARALLEL_DUNIT: 'false'
   PLATFORM: windows
   RAM: '64'
   name: WindowsUnit
+- ARTIFACT_SLUG: apicheck
+  CALL_STACK_TIMEOUT: '20700'
+  CPUS: '4'
+  DUNIT_PARALLEL_FORKS: '0'
+  EXECUTE_TEST_TIMEOUT: 1h
+  GRADLE_TASK: geode-assembly:japicmp
+  MAX_IN_FLIGHT: 1
+  ONLY_JDK: 8
+  PARALLEL_DUNIT: 'false'
+  PARALLEL_GRADLE: 'false'
+  PLATFORM: linux
+  RAM: '16'
+  name: ApiCheck

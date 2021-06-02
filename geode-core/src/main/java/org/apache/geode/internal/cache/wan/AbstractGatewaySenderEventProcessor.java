@@ -40,7 +40,6 @@ import org.apache.geode.cache.RegionDestroyedException;
 import org.apache.geode.cache.wan.GatewayEventFilter;
 import org.apache.geode.cache.wan.GatewayQueueEvent;
 import org.apache.geode.cache.wan.GatewaySender;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.internal.cache.BucketRegion;
 import org.apache.geode.internal.cache.Conflatable;
 import org.apache.geode.internal.cache.DistributedRegion;
@@ -58,6 +57,7 @@ import org.apache.geode.internal.monitoring.ThreadsMonitoring;
 import org.apache.geode.logging.internal.executors.LoggingThread;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.pdx.internal.PeerTypeRegistration;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * EventProcessor responsible for peeking from queue and handling over the events to the dispatcher.
@@ -264,15 +264,7 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
   }
 
   public int eventQueueSize() {
-    if (queue == null) {
-      return 0;
-    }
-
-    // This should be local size instead of pr size
-    if (this.queue instanceof ConcurrentParallelGatewaySenderQueue) {
-      return ((ConcurrentParallelGatewaySenderQueue) queue).localSize();
-    }
-    return this.queue.size();
+    return getQueue() == null ? 0 : getQueue().size();
   }
 
   public int secondaryEventQueueSize() {
@@ -363,13 +355,13 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
    * instances. Hopefully this should never happen in practice.
    */
   protected static final int FAILURE_MAP_MAXSIZE = Integer
-      .getInteger(DistributionConfig.GEMFIRE_PREFIX + "GatewaySender.FAILURE_MAP_MAXSIZE", 1000000);
+      .getInteger(GeodeGlossary.GEMFIRE_PREFIX + "GatewaySender.FAILURE_MAP_MAXSIZE", 1000000);
 
   /**
    * The maximum interval for logging failures of the same event in millis.
    */
   protected static final int FAILURE_LOG_MAX_INTERVAL = Integer.getInteger(
-      DistributionConfig.GEMFIRE_PREFIX + "GatewaySender.FAILURE_LOG_MAX_INTERVAL", 300000);
+      GeodeGlossary.GEMFIRE_PREFIX + "GatewaySender.FAILURE_LOG_MAX_INTERVAL", 300000);
 
   public boolean skipFailureLogging(Integer batchId) {
     boolean skipLogging = false;
@@ -969,7 +961,9 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
 
     filteredList.clear();
     eventQueueRemove(events.size());
-    final GatewaySenderStats statistics = this.sender.getStatistics();
+
+    logThresholdExceededAlerts(events);
+
     int queueSize = eventQueueSize();
 
     if (this.eventQueueSizeWarning && queueSize <= AbstractGatewaySender.QUEUE_SIZE_THRESHOLD) {
@@ -1036,24 +1030,27 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
       }
       eventQueueRemove(events.size());
 
-      final GatewaySenderStats statistics = this.sender.getStatistics();
+      logThresholdExceededAlerts(events);
+    }
+  }
 
-      // Log an alert for each event if necessary
-      if (this.sender.getAlertThreshold() > 0) {
-        Iterator it = events.iterator();
-        long currentTime = System.currentTimeMillis();
-        while (it.hasNext()) {
-          Object o = it.next();
-          if (o != null && o instanceof GatewaySenderEventImpl) {
-            GatewaySenderEventImpl ge = (GatewaySenderEventImpl) o;
-            if (ge.getCreationTime() + this.sender.getAlertThreshold() < currentTime) {
-              logger.warn(
-                  "{} event for region={} key={} value={} was in the queue for {} milliseconds",
-                  new Object[] {ge.getOperation(), ge.getRegionPath(), ge.getKey(),
-                      ge.getValueAsString(true), currentTime - ge.getCreationTime()});
-              statistics.incEventsExceedingAlertThreshold();
-            }
+  protected void logThresholdExceededAlerts(List<GatewaySenderEventImpl> events) {
+    // Log an alert for each event if necessary
+    if (getSender().getAlertThreshold() > 0) {
+      long currentTime = System.currentTimeMillis();
+      for (GatewaySenderEventImpl event : events) {
+        try {
+          if (event.getCreationTime() + getSender().getAlertThreshold() < currentTime) {
+            logger.warn(
+                "{} event for region={} key={} value={} was in the queue for {} milliseconds",
+                new Object[] {event.getOperation(), event.getRegionPath(), event.getKey(),
+                    event.getValueAsString(true), currentTime - event.getCreationTime()});
+            getSender().getStatistics().incEventsExceedingAlertThreshold();
           }
+        } catch (Exception e) {
+          logger.warn("Caught the following exception attempting to log threshold exceeded alert:",
+              e);
+          getSender().getStatistics().incEventsExceedingAlertThreshold();
         }
       }
     }

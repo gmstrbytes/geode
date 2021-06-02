@@ -605,7 +605,10 @@ limitations under the License.
                                         <a href="/docs/guide/<%=vars.product_version_nodot%>/managing/security/implementing_authorization.html">Implementing Authorization</a>
                                     </li>
                                     <li>
-                                        <a href="/docs/guide/<%=vars.product_version_nodot%>/managing/security/authorization_example.html">Authorization Example</a>
+                                        <a href="/docs/guide/<%=vars.product_version_nodot%>/managing/security/method_invocation_authorizers.html">Method Invocation Authorizers</a>
+                                    </li>
+                                    <li>
+                                        <a href="/docs/guide/<%=vars.product_version_nodot%>/managing/security/authorization_example.html">Authorization Examples</a>
                                     </li>
                                 </ul>
                             </li>
@@ -679,9 +682,6 @@ limitations under the License.
                                     </li>
                                     <li>
                                         <a href="/docs/guide/<%=vars.product_version_nodot%>/managing/monitor_tune/system_member_performance_garbage.html">Garbage Collection and System Performance</a>
-                                    </li>
-                                    <li>
-                                        <a href="/docs/guide/<%=vars.product_version_nodot%>/managing/monitor_tune/system_member_performance_connection_thread_settings.html">Connection Thread Settings and Performance</a>
                                     </li>
                                 </ul>
                             </li>
@@ -927,6 +927,9 @@ limitations under the License.
                             </li>
                             <li>
                                 <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/partitioned_regions/checking_region_redundancy.html">Checking Redundancy in Partitioned Regions</a>
+                            </li>
+                            <li>
+                                <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/partitioned_regions/restoring_region_redundancy.html">Restoring Redundancy in Partitioned Regions</a>
                             </li>
                             <li>
                                 <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/partitioned_regions/moving_partitioned_data.html">Moving Partitioned Region Data to Another Member</a>
@@ -1640,6 +1643,9 @@ gfsh</a>
                                                 <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/gfsh/command-pages/alter.html#topic_99BCAD98BDB5470189662D2F308B68EB">alter disk-store</a>
                                             </li>
                                             <li>
+                                                <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/gfsh/command-pages/alter.html#topic_alter_query_service">alter query-service</a>
+                                            </li>
+                                            <li>
                                                 <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/gfsh/command-pages/alter.html#topic_E74ED23CB60342538B2175C326E7D758">alter region</a>
                                             </li>
                                             <li>
@@ -1752,6 +1758,9 @@ gfsh</a>
                                             </li>
                                             <li>
                                                 <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/gfsh/command-pages/describe.html#topic_kys_yvk_2l">describe offline-disk-store</a>
+                                            </li>
+                                            <li>
+                                                <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/gfsh/command-pages/describe.html#topic_describe_query_service">describe query-service</a>
                                             </li>
                                             <li>
                                                 <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/gfsh/command-pages/describe.html#topic_DECF7D3D33F54071B6B8AD4EA7E3F90B">describe region
@@ -1922,6 +1931,9 @@ gfsh</a>
                                     <li>
                                         <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/gfsh/command-pages/remove.html">remove</a>
                                     </li>
+                                    <li>
+                                        <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/gfsh/command-pages/restore.html">restore redundancy</a>
+                                    </li>
                                     <li class="has_submenu">
                                         <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/gfsh/command-pages/resume.html">resume</a>
                                         <ul>
@@ -2015,6 +2027,9 @@ gfsh</a>
                                             </li>
                                             <li>
                                                 <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/gfsh/command-pages/status.html#topic_E96D0EFA513C4CD79B833FCCDD69C832">status locator</a>
+                                            </li>
+                                            <li>
+                                                <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/gfsh/command-pages/status.html#topic_status_redundancy">status redundancy</a>
                                             </li>
                                             <li>
                                                 <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/gfsh/command-pages/status.html#topic_E5DB49044978404D9D6B1971BF5D400D">status server</a>
@@ -2170,19 +2185,8 @@ gfsh</a>
                             </li>
                         </ul>
                     </li>
-                    <li class="has_submenu">
-                        <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/redis_adapter.html">Geode Redis Adapter</a>
-                        <ul>
-                            <li>
-                                <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/redis_adapter.html#using-the-redis-adapter">Using the Redis Adapter</a>
-                            </li>
-                            <li>
-                                <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/redis_adapter.html#how-the-redis-adapter-works">How the Redis Adapter Works</a>
-                            </li>
-                            <li>
-                                <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/redis_adapter.html#advantages-of-geode-over-redis">Advantages of Geode over a Redis Server</a>
-                            </li>
-                        </ul>
+                    <li>
+                        <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/redis_api_for_geode.html">Redis API for <%=vars.product_name%></a>
                     </li>
                     <li class="has_submenu">
                         <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/lucene_integration.html">Apache Lucene Integration</a>
@@ -2203,7 +2207,7 @@ gfsh</a>
                             </li>
                             <li>
                                 <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/micrometer/micrometer-meters.html">Micrometer Meters and Tags</a>
-                            </li>                    
+                            </li>
                         </ul>
                     </li>
                 </ul>

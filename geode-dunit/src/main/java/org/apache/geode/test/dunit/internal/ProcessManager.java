@@ -15,7 +15,7 @@
 package org.apache.geode.test.dunit.internal;
 
 import static org.apache.geode.distributed.ConfigurationProperties.ENABLE_NETWORK_PARTITION_DETECTION;
-import static org.apache.geode.distributed.internal.DistributionConfig.GEMFIRE_PREFIX;
+import static org.apache.geode.util.internal.GeodeGlossary.GEMFIRE_PREFIX;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -97,7 +97,11 @@ class ProcessManager implements ChildVMLauncher {
 
     // TODO - delete directory contents, preferably with commons io FileUtils
     try {
-      Process process = Runtime.getRuntime().exec(cmd, null, workingDir);
+      String[] envp = null;
+      if (!VersionManager.isCurrentVersion(version)) {
+        envp = new String[] {"GEODE_HOME=" + versionManager.getInstall(version)};
+      }
+      Process process = Runtime.getRuntime().exec(cmd, envp, workingDir);
       pendingVMs++;
       ProcessHolder holder = new ProcessHolder(process);
       processes.put(vmNum, holder);
@@ -253,9 +257,10 @@ class ProcessManager implements ChildVMLauncher {
     } else {
       // remove current-version product classes and resources from the classpath
       dunitClasspath =
-          removeModulesFromPath(dunitClasspath, "geode-common", "geode-core", "geode-cq",
-              "geode-http-service", "geode-json", "geode-log4j", "geode-lucene",
-              "geode-serialization", "geode-wan");
+          dunitClasspath =
+              removeModulesFromPath(dunitClasspath, "geode-common", "geode-core", "geode-cq",
+                  "geode-http-service", "geode-json", "geode-log4j", "geode-lucene",
+                  "geode-serialization", "geode-wan", "geode-gfsh");
       classPath = versionManager.getClasspath(version) + File.pathSeparator + dunitClasspath;
     }
 

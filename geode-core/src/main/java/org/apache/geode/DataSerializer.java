@@ -213,7 +213,7 @@ public abstract class DataSerializer {
     }
 
     if (c == null || c.isPrimitive()) {
-      InternalDataSerializer.writePrimitiveClass(c, out);
+      StaticSerialization.writePrimitiveClass(c, out);
     } else {
       // non-primitive classes have a second CLASS byte
       // if readObject/writeObject is called:
@@ -263,7 +263,7 @@ public abstract class DataSerializer {
       String className = readString(in);
       return InternalDataSerializer.getCachedClass(className);
     } else {
-      return InternalDataSerializer.decodePrimitiveClass(typeCode);
+      return StaticSerialization.decodePrimitiveClass(typeCode);
     }
   }
 
@@ -1235,7 +1235,7 @@ public abstract class DataSerializer {
       if (object instanceof HeapDataOutputStream) {
         hdos = (HeapDataOutputStream) object;
       } else {
-        Version v = InternalDataSerializer.getVersionForDataStreamOrNull(out);
+        Version v = StaticSerialization.getVersionForDataStreamOrNull(out);
         if (v == null) {
           v = Version.CURRENT;
         }
@@ -1741,7 +1741,7 @@ public abstract class DataSerializer {
         if (typeCode == DSCODE.CLASS.toByte()) {
           c = InternalDataSerializer.getCachedClass(typeString);
         } else {
-          c = InternalDataSerializer.decodePrimitiveClass(typeCode);
+          c = StaticSerialization.decodePrimitiveClass(typeCode);
         }
       }
       Object o = null;

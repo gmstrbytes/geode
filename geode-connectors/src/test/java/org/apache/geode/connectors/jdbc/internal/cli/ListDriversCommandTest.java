@@ -32,8 +32,8 @@ import org.junit.Test;
 
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.management.cli.Result;
-import org.apache.geode.management.internal.cli.functions.CliFunctionResult;
 import org.apache.geode.management.internal.cli.result.model.ResultModel;
+import org.apache.geode.management.internal.functions.CliFunctionResult;
 
 public class ListDriversCommandTest {
 
@@ -42,6 +42,7 @@ public class ListDriversCommandTest {
   private List<CliFunctionResult> resultList = new ArrayList<>();
   private CliFunctionResult result;
 
+  @SuppressWarnings("unchecked")
   @Before
   public void setUp() {
     command = spy(new ListDriversCommand());

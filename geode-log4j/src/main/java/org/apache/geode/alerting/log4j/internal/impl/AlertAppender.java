@@ -28,6 +28,7 @@ import org.apache.logging.log4j.core.Filter;
 import org.apache.logging.log4j.core.Layout;
 import org.apache.logging.log4j.core.LogEvent;
 import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Property;
 import org.apache.logging.log4j.core.config.plugins.Plugin;
 import org.apache.logging.log4j.core.config.plugins.PluginBuilderAttribute;
 import org.apache.logging.log4j.core.config.plugins.PluginBuilderFactory;
@@ -77,7 +78,7 @@ public class AlertAppender extends AbstractAppender
       final boolean startPaused,
       final boolean debug,
       final AlertingSessionRegistry alertingSessionRegistry) {
-    super(name, filter, layout);
+    super(name, filter, layout, true, Property.EMPTY_ARRAY);
     this.debug = debug;
     if (debug) {
       events = Collections.synchronizedList(new ArrayList<>());
@@ -149,7 +150,7 @@ public class AlertAppender extends AbstractAppender
       LOGGER.trace("Skipping append of {} because {} is alerting.", event, Thread.currentThread());
       return;
     }
-    AlertingAction.execute(() -> doAppend(event));
+    doAppend(event);
   }
 
   private void doAppend(final LogEvent event) {

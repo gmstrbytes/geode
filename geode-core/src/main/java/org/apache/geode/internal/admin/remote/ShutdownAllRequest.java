@@ -17,7 +17,6 @@ package org.apache.geode.internal.admin.remote;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
@@ -31,7 +30,6 @@ import org.apache.geode.InternalGemFireError;
 import org.apache.geode.SystemFailure;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.internal.ClusterDistributionManager;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
@@ -45,6 +43,7 @@ import org.apache.geode.internal.serialization.SerializationContext;
 import org.apache.geode.internal.tcp.ConnectionTable;
 import org.apache.geode.logging.internal.executors.LoggingThread;
 import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * An instruction to all members with cache that their PR should gracefully close and disconnect DS
@@ -54,7 +53,7 @@ public class ShutdownAllRequest extends AdminRequest {
   private static final Logger logger = LogService.getLogger();
 
   private static final long SLEEP_TIME_BEFORE_DISCONNECT_DS =
-      Long.getLong(DistributionConfig.GEMFIRE_PREFIX + "sleep-before-disconnect-ds", 1000);
+      Long.getLong(GeodeGlossary.GEMFIRE_PREFIX + "sleep-before-disconnect-ds", 1000);
 
   public ShutdownAllRequest() {
     // do nothing
@@ -236,7 +235,7 @@ public class ShutdownAllRequest extends AdminRequest {
 
   @Override
   public String toString() {
-    return "ShutdownAllRequest sent to " + Arrays.toString(this.getRecipients()) + " from "
+    return "ShutdownAllRequest sent to " + this.getRecipientsDescription() + " from "
         + this.getSender();
   }
 

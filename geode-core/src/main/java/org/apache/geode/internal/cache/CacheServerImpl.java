@@ -34,7 +34,6 @@ import org.apache.geode.GemFireIOException;
 import org.apache.geode.InternalGemFireError;
 import org.apache.geode.InvalidValueException;
 import org.apache.geode.annotations.internal.MakeNotStatic;
-import org.apache.geode.cache.AttributesFactory;
 import org.apache.geode.cache.ClientSession;
 import org.apache.geode.cache.DataPolicy;
 import org.apache.geode.cache.DiskStoreFactory;
@@ -42,7 +41,6 @@ import org.apache.geode.cache.DynamicRegionFactory;
 import org.apache.geode.cache.EvictionAction;
 import org.apache.geode.cache.EvictionAttributes;
 import org.apache.geode.cache.InterestRegistrationListener;
-import org.apache.geode.cache.RegionAttributes;
 import org.apache.geode.cache.RegionExistsException;
 import org.apache.geode.cache.Scope;
 import org.apache.geode.cache.server.CacheServer;
@@ -53,14 +51,12 @@ import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.internal.DistributionAdvisee;
 import org.apache.geode.distributed.internal.DistributionAdvisor;
 import org.apache.geode.distributed.internal.DistributionAdvisor.Profile;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.ResourceEvent;
 import org.apache.geode.distributed.internal.ServerLocation;
-import org.apache.geode.distributed.internal.membership.gms.api.MemberDataBuilder;
+import org.apache.geode.distributed.internal.membership.api.MemberDataBuilder;
 import org.apache.geode.internal.Assert;
-import org.apache.geode.internal.OSProcess;
 import org.apache.geode.internal.admin.ClientHealthMonitoringRegion;
 import org.apache.geode.internal.cache.CacheServerAdvisor.CacheServerProfile;
 import org.apache.geode.internal.cache.ha.HARegionQueue;
@@ -77,9 +73,11 @@ import org.apache.geode.internal.cache.tier.sockets.ServerConnectionFactory;
 import org.apache.geode.internal.net.SocketCreator;
 import org.apache.geode.internal.security.SecurityService;
 import org.apache.geode.internal.statistics.StatisticsClock;
+import org.apache.geode.logging.internal.OSProcess;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.management.membership.ClientMembership;
 import org.apache.geode.management.membership.ClientMembershipListener;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * An implementation of the{@code CacheServer} interface that delegates most of the heavy lifting to
@@ -92,7 +90,7 @@ public class CacheServerImpl extends AbstractCacheServer implements Distribution
   private static final Logger logger = LogService.getLogger();
 
   private static final int FORCE_LOAD_UPDATE_FREQUENCY = getInteger(
-      DistributionConfig.GEMFIRE_PREFIX + "BridgeServer.FORCE_LOAD_UPDATE_FREQUENCY", 10);
+      GeodeGlossary.GEMFIRE_PREFIX + "BridgeServer.FORCE_LOAD_UPDATE_FREQUENCY", 10);
 
   static final String CACHE_SERVER_BIND_ADDRESS_NOT_AVAILABLE_EXCEPTION_MESSAGE =
       "A cache server's bind address is only available if it has been started";
@@ -145,7 +143,7 @@ public class CacheServerImpl extends AbstractCacheServer implements Distribution
   private final Function<DistributionAdvisee, CacheServerAdvisor> cacheServerAdvisorProvider;
 
   public static final boolean ENABLE_NOTIFY_BY_SUBSCRIPTION_FALSE = Boolean.getBoolean(
-      DistributionConfig.GEMFIRE_PREFIX + "cache-server.enable-notify-by-subscription-false");
+      GeodeGlossary.GEMFIRE_PREFIX + "cache-server.enable-notify-by-subscription-false");
 
   CacheServerImpl(final InternalCache cache,
       final SecurityService securityService,
@@ -593,17 +591,15 @@ public class CacheServerImpl extends AbstractCacheServer implements Distribution
    */
   public static String clientMessagesRegion(InternalCache cache, String ePolicy, int capacity,
       int port, String overFlowDir, boolean isDiskStore) {
-    AttributesFactory factory =
-        getAttribFactoryForClientMessagesRegion(cache, ePolicy, capacity, overFlowDir, isDiskStore);
-    RegionAttributes attr = factory.create();
-
-    return createClientMessagesRegion(attr, cache, capacity, port);
+    InternalRegionFactory factory =
+        getRegionFactoryForClientMessagesRegion(cache, ePolicy, capacity, overFlowDir, isDiskStore);
+    return createClientMessagesRegion(factory, port);
   }
 
-  public static AttributesFactory getAttribFactoryForClientMessagesRegion(InternalCache cache,
+  private static InternalRegionFactory getRegionFactoryForClientMessagesRegion(InternalCache cache,
       String ePolicy, int capacity, String overflowDir, boolean isDiskStore)
       throws InvalidValueException, GemFireIOException {
-    AttributesFactory factory = new AttributesFactory();
+    InternalRegionFactory factory = cache.createInternalRegionFactory();
     factory.setScope(Scope.LOCAL);
 
     if (isDiskStore) {
@@ -655,27 +651,16 @@ public class CacheServerImpl extends AbstractCacheServer implements Distribution
     return factory;
   }
 
-  private static String createClientMessagesRegion(RegionAttributes attr, InternalCache cache,
-      int capacity, int port) {
+  private static String createClientMessagesRegion(InternalRegionFactory factory, int port) {
     // generating unique name in VM for ClientMessagesRegion
     String regionName = generateNameForClientMsgsRegion(port);
     try {
-      cache.createVMRegion(regionName, attr,
-          new InternalRegionArguments().setDestroyLockFlag(true).setRecreateFlag(false)
-              .setSnapshotInputStream(null).setImageTarget(null).setIsUsedForMetaRegion(true));
+      factory.setDestroyLockFlag(true).setRecreateFlag(false)
+          .setSnapshotInputStream(null).setImageTarget(null).setIsUsedForMetaRegion(true);
+      factory.create(regionName);
     } catch (RegionExistsException ree) {
       InternalGemFireError assErr = new InternalGemFireError("unexpected exception");
       assErr.initCause(ree);
-      throw assErr;
-    } catch (IOException e) {
-      // only if loading snapshot, not here
-      InternalGemFireError assErr = new InternalGemFireError("unexpected exception");
-      assErr.initCause(e);
-      throw assErr;
-    } catch (ClassNotFoundException e) {
-      // only if loading snapshot, not here
-      InternalGemFireError assErr = new InternalGemFireError("unexpected exception");
-      assErr.initCause(e);
       throw assErr;
     }
     return regionName;

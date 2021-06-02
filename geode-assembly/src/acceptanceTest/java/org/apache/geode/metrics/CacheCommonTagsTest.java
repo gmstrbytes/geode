@@ -29,7 +29,7 @@ import org.junit.Test;
 
 import org.apache.geode.cache.CacheFactory;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.net.SocketCreator;
+import org.apache.geode.internal.inet.LocalHostUtil;
 
 public class CacheCommonTagsTest {
 
@@ -56,7 +56,7 @@ public class CacheCommonTagsTest {
 
       assertThat(meter.getId().getTags())
           .as("Tags for meter with name " + meterId.getName())
-          .contains(Tag.of("host", SocketCreator.getHostName(SocketCreator.getLocalHost())));
+          .contains(Tag.of("host", LocalHostUtil.getLocalHostName()));
     }
   }
 

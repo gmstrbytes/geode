@@ -48,7 +48,6 @@ import org.apache.geode.cache.client.internal.pooling.ConnectionDestroyedExcepti
 import org.apache.geode.cache.client.internal.pooling.ConnectionManager;
 import org.apache.geode.cache.execute.FunctionException;
 import org.apache.geode.cache.execute.FunctionInvocationTargetException;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.ServerLocation;
 import org.apache.geode.internal.cache.PoolManagerImpl;
 import org.apache.geode.internal.cache.PutAllPartialResultException;
@@ -60,6 +59,7 @@ import org.apache.geode.internal.logging.log4j.LogMarker;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.security.AuthenticationRequiredException;
 import org.apache.geode.security.GemFireSecurityException;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * Called from the client and execute client to server requests against servers. Handles retrying to
@@ -71,13 +71,15 @@ public class OpExecutorImpl implements ExecutablePool {
   private static final Logger logger = LogService.getLogger();
 
   private static final boolean TRY_SERVERS_ONCE =
-      Boolean.getBoolean(DistributionConfig.GEMFIRE_PREFIX + "PoolImpl.TRY_SERVERS_ONCE");
+      Boolean.getBoolean(GeodeGlossary.GEMFIRE_PREFIX + "PoolImpl.TRY_SERVERS_ONCE");
   static final int TX_RETRY_ATTEMPT =
-      Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "txRetryAttempt", 500);
+      Integer.getInteger(GeodeGlossary.GEMFIRE_PREFIX + "txRetryAttempt", 500);
 
   private final ConnectionManager connectionManager;
   private final int retryAttempts;
   private final long serverTimeout;
+  private final long singleServerTimeout;
+
   private final EndpointManager endpointManager;
   private final RegisterInterestTracker riTracker;
   private final QueueManager queueManager;
@@ -91,7 +93,7 @@ public class OpExecutorImpl implements ExecutablePool {
 
   public OpExecutorImpl(ConnectionManager connectionManager, QueueManager queueManager,
       EndpointManager endpointManager, RegisterInterestTracker riTracker, int retryAttempts,
-      long serverTimeout, CancelCriterion cancelCriterion,
+      long serverTimeout, long singleServerTimeout, CancelCriterion cancelCriterion,
       PoolImpl pool) {
     this.connectionManager = connectionManager;
     this.queueManager = queueManager;
@@ -99,6 +101,7 @@ public class OpExecutorImpl implements ExecutablePool {
     this.riTracker = riTracker;
     this.retryAttempts = retryAttempts;
     this.serverTimeout = serverTimeout;
+    this.singleServerTimeout = singleServerTimeout;
     this.cancelCriterion = cancelCriterion;
     this.pool = pool;
   }
@@ -323,7 +326,7 @@ public class OpExecutorImpl implements ExecutablePool {
       }
     }
     if (conn == null) {
-      conn = connectionManager.borrowConnection(p_server, onlyUseExistingCnx);
+      conn = connectionManager.borrowConnection(p_server, singleServerTimeout, onlyUseExistingCnx);
     }
     try {
       return executeWithPossibleReAuthentication(conn, op);

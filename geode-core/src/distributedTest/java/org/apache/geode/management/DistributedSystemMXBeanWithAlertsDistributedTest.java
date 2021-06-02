@@ -39,7 +39,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyZeroInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -70,8 +70,8 @@ import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.test.dunit.IgnoredException;
 import org.apache.geode.test.dunit.VM;
+import org.apache.geode.test.dunit.rules.DistributedErrorCollector;
 import org.apache.geode.test.dunit.rules.DistributedRule;
-import org.apache.geode.test.dunit.rules.SharedErrorCollector;
 import org.apache.geode.test.junit.categories.AlertingTest;
 import org.apache.geode.test.junit.categories.ManagementTest;
 import org.apache.geode.test.junit.rules.serializable.SerializableTestName;
@@ -88,7 +88,7 @@ public class DistributedSystemMXBeanWithAlertsDistributedTest implements Seriali
 
   private static final String MANAGER_NAME = "managerVM";
   private static final String MEMBER_NAME = "memberVM-";
-  private static final long TIMEOUT = getTimeout().getValueInMS();
+  private static final long TIMEOUT = getTimeout().toMillis();
   private static final NotificationFilter SYSTEM_ALERT_FILTER =
       notification -> notification.getType().equals(SYSTEM_ALERT);
 
@@ -119,7 +119,7 @@ public class DistributedSystemMXBeanWithAlertsDistributedTest implements Seriali
   public SerializableTestName testName = new SerializableTestName();
 
   @Rule
-  public SharedErrorCollector errorCollector = new SharedErrorCollector();
+  public DistributedErrorCollector errorCollector = new DistributedErrorCollector();
 
   @Before
   public void setUp() throws Exception {
@@ -137,6 +137,7 @@ public class DistributedSystemMXBeanWithAlertsDistributedTest implements Seriali
     memberVM3 = getVM(3);
 
     managerMember = managerVM.invoke(() -> createManager());
+    IgnoredException.addIgnoredException("Cannot form connection to alert listener");
 
     for (VM memberVM : toArray(memberVM1, memberVM2, memberVM3)) {
       memberVM.invoke(() -> {
@@ -197,7 +198,7 @@ public class DistributedSystemMXBeanWithAlertsDistributedTest implements Seriali
     });
 
     managerVM.invoke(() -> {
-      verifyZeroInteractions(notificationListener);
+      verifyNoMoreInteractions(notificationListener);
     });
   }
 
@@ -244,7 +245,7 @@ public class DistributedSystemMXBeanWithAlertsDistributedTest implements Seriali
     });
 
     managerVM.invoke(() -> {
-      verifyZeroInteractions(notificationListener);
+      verifyNoMoreInteractions(notificationListener);
     });
   }
 
@@ -332,7 +333,7 @@ public class DistributedSystemMXBeanWithAlertsDistributedTest implements Seriali
     }
 
     managerVM.invoke(() -> {
-      verifyZeroInteractions(notificationListener);
+      verifyNoMoreInteractions(notificationListener);
     });
   }
 
@@ -362,7 +363,7 @@ public class DistributedSystemMXBeanWithAlertsDistributedTest implements Seriali
     // managerVM should have missed the alerts from BEFORE it started
 
     managerVM.invoke(() -> {
-      verifyZeroInteractions(notificationListener);
+      verifyNoMoreInteractions(notificationListener);
     });
 
     // managerVM should now receive any new alerts though

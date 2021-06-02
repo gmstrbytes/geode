@@ -39,6 +39,10 @@ Check the status of the cluster configuration service and <%=vars.product_name%>
 
     Displays the status of the specified locator.
 
+-   **[status redundancy](#topic_status_redundancy)**
+
+    Displays the redundancy status of partitioned regions.
+
 -   **[status server](#topic_E5DB49044978404D9D6B1971BF5D400D)**
 
     Display the status of the specified <%=vars.product_name%> cache server.
@@ -212,7 +216,7 @@ The status will be one of the following:
 **Syntax:**
 
 ``` pre
-status locator [--name=value] [--host=value] [--port=value] [--dir=value]
+status locator [--name=value] [--host=value] [--port=value] [--dir=value] [--security-properties-file=value]
 ```
 
 <a id="topic_E96D0EFA513C4CD79B833FCCDD69C832__table_s44_w3f_2w"></a>
@@ -223,6 +227,7 @@ status locator [--name=value] [--host=value] [--port=value] [--dir=value]
 | <span class="keyword parmname">\\-\\-host</span> | Hostname or IP address on which the Locator is running.                                                                                                                                                                                                                                                                                                                                                                        |                   |
 | <span class="keyword parmname">\\-\\-port</span> | Port on which the locator is listening.                                                                                                                                                                                                                                                                                                                                                                                        | 10334             |
 | <span class="keyword parmname">\\-\\-dir</span>  | Directory in which the locator was started.                                                                                                                                                                                                                                                                                                                                                                                    | current directory |
+| <span class="keyword parmname">\\-\\-security\\-properties\\-file</span>  | The properties file for configuring SSL to connect to the SSL-enabled Locator. The file's path can be absolute or relative to the gfsh directory.                                                                                                                                                                                                                                                                                                                                                                                    | current directory |
 
 <span class="tablecap">Table 3. Status Locator Parameters</span>
 
@@ -231,6 +236,48 @@ status locator [--name=value] [--host=value] [--port=value] [--dir=value]
 ``` pre
 status locator
 status locator --name=locator1
+```
+
+## <a id="topic_status_redundancy" class="no-quick-link"></a>status redundancy
+
+Display the redundancy status of partitioned regions.
+
+The default is to display the status of all partitioned regions.
+
+**Availability:** Online. You must be connected in `gfsh` to a JMX Manager member to use this command.
+
+**Syntax:**
+
+``` pre
+status redundancy [--include-region=value(,value)*] [--exclude-region=value(,value)*]
+```
+
+| Name | Description |
+|------|-------------|
+| &#8209;&#8209;include&#8209;region | Partitioned Region paths to be included in redundancy status output. Includes take precedence over excludes. |
+| &#8209;&#8209;exclude&#8209;region | Partitioned Region paths to be excluded in redundancy status output. |
+
+**Example Commands:**
+
+``` pre
+status redundancy
+status redundancy --include-region=/region3,/region2 --exclude-region=/region1
+```
+
+**Sample Output:**
+
+``` pre
+status redundancy --include-region=/region3,/region2 --exclude-region=/region1
+
+Number of regions with zero redundant copies = 0
+Number of regions with partially satisfied redundancy = 1
+Number of regions with fully satisfied redundancy = 1
+
+Redundancy is partially satisfied for regions:
+  region3 redundancy status: NOT_SATISFIED. Desired redundancy is 2 and actual redundancy is 1.
+
+Redundancy is fully satisfied for regions:
+  region2 redundancy status: SATISFIED. Desired redundancy is 1 and actual redundancy is 1.
 ```
 
 ## <a id="topic_E5DB49044978404D9D6B1971BF5D400D" class="no-quick-link"></a>status server

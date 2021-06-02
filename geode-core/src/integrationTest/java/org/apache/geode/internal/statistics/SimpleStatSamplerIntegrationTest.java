@@ -35,7 +35,7 @@ import org.junit.rules.TestName;
 import org.apache.geode.CancelCriterion;
 import org.apache.geode.Statistics;
 import org.apache.geode.StatisticsType;
-import org.apache.geode.internal.net.SocketCreator;
+import org.apache.geode.internal.inet.LocalHostUtil;
 import org.apache.geode.internal.stats50.VMStats50;
 import org.apache.geode.test.junit.categories.StatisticsTest;
 
@@ -99,7 +99,7 @@ public class SimpleStatSamplerIntegrationTest extends StatSamplerTestCase {
     assertTrue(statsCount > 0);
 
     assertTrue(statSampler.getSystemStartTime() <= System.currentTimeMillis());
-    assertEquals(SocketCreator.getHostName(SocketCreator.getLocalHost()),
+    assertEquals(LocalHostUtil.getLocalHostName(),
         statSampler.getSystemDirectoryPath());
 
     VMStatsContract vmStats = statSampler.getVMStats();

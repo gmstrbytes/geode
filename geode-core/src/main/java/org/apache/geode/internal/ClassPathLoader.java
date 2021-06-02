@@ -34,8 +34,8 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.annotations.internal.MakeNotStatic;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.internal.util.CollectionUtils;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * The delegating <tt>ClassLoader</tt> used by GemFire to load classes and other resources. This
@@ -73,12 +73,12 @@ public class ClassPathLoader {
   private static final Logger logger = LogManager.getLogger();
 
   static final String EXCLUDE_TCCL_PROPERTY =
-      DistributionConfig.GEMFIRE_PREFIX + "excludeThreadContextClassLoader";
+      GeodeGlossary.GEMFIRE_PREFIX + "excludeThreadContextClassLoader";
 
   @MakeNotStatic
   private static volatile ClassPathLoader latest;
 
-  private final HashMap<String, DeployJarChildFirstClassLoader> latestJarNamesToClassLoader =
+  private final HashMap<String, DeployJarChildFirstClassLoader> artifactIdsToClassLoader =
       new HashMap<>();
 
   private volatile DeployJarChildFirstClassLoader leafLoader;
@@ -138,12 +138,12 @@ public class ClassPathLoader {
   }
 
   synchronized void chainClassloader(DeployedJar jar) {
-    leafLoader = new DeployJarChildFirstClassLoader(latestJarNamesToClassLoader,
-        new URL[] {jar.getFileURL()}, jar.getJarName(), getLeafLoader());
+    leafLoader = new DeployJarChildFirstClassLoader(artifactIdsToClassLoader,
+        new URL[] {jar.getFileURL()}, jar.getArtifactId(), getLeafLoader());
   }
 
-  synchronized void unloadClassloaderForJar(String jarName) {
-    latestJarNamesToClassLoader.put(jarName, null);
+  synchronized void unloadClassloaderForArtifact(String artifactId) {
+    artifactIdsToClassLoader.put(artifactId, null);
   }
 
   public URL getResource(final String name) {
@@ -239,7 +239,8 @@ public class ClassPathLoader {
   public String toString() {
     final StringBuilder sb = new StringBuilder(getClass().getName());
     sb.append("@").append(System.identityHashCode(this)).append("{");
-    sb.append(", excludeTCCL=").append(excludeTCCL);
+    sb.append("excludeTCCL=").append(excludeTCCL);
+    sb.append(", jarDeployer=").append(jarDeployer);
     sb.append(", classLoaders=[");
     sb.append(getClassLoaders().stream().map(ClassLoader::toString).collect(joining(", ")));
     sb.append("]}");

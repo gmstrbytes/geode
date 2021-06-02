@@ -21,7 +21,7 @@ import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyZeroInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import org.junit.Before;
@@ -35,7 +35,6 @@ import org.apache.geode.cache.LowMemoryException;
 import org.apache.geode.cache.execute.Function;
 import org.apache.geode.cache.operations.ExecuteFunctionOperationContext;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.cache.InternalCache;
@@ -59,6 +58,7 @@ import org.apache.geode.security.NotAuthorizedException;
 import org.apache.geode.security.ResourcePermission.Operation;
 import org.apache.geode.security.ResourcePermission.Resource;
 import org.apache.geode.test.junit.categories.ClientServerTest;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 @Category(ClientServerTest.class)
 public class ExecuteFunction65Test {
@@ -84,7 +84,7 @@ public class ExecuteFunction65Test {
 
   @Before
   public void setUp() throws Exception {
-    System.setProperty(DistributionConfig.GEMFIRE_PREFIX + "statsDisabled", "true");
+    System.setProperty(GeodeGlossary.GEMFIRE_PREFIX + "statsDisabled", "true");
 
     authorizeRequest = mock(AuthorizeRequest.class);
     chunkedResponseMessage = mock(ChunkedMessage.class);
@@ -220,6 +220,6 @@ public class ExecuteFunction65Test {
     executeFunction65.cmdExecute(message, serverConnection, securityService, 0);
 
     verify(securityService).authorize(ResourcePermissions.DATA_WRITE);
-    verifyZeroInteractions(serverToClientFunctionResultSender65Factory);
+    verifyNoMoreInteractions(serverToClientFunctionResultSender65Factory);
   }
 }

@@ -17,7 +17,7 @@ package org.apache.geode.distributed.internal;
 
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
-import static org.apache.geode.distributed.internal.DistributionConfig.GEMFIRE_PREFIX;
+import static org.apache.geode.util.internal.GeodeGlossary.GEMFIRE_PREFIX;
 
 import java.io.File;
 import java.io.IOException;
@@ -76,10 +76,9 @@ import org.apache.geode.distributed.DistributedSystemDisconnectedException;
 import org.apache.geode.distributed.DurableClientAttributes;
 import org.apache.geode.distributed.internal.locks.GrantorRequestProcessor;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.distributed.internal.membership.MembershipManager;
-import org.apache.geode.distributed.internal.membership.QuorumChecker;
-import org.apache.geode.distributed.internal.membership.adapter.GMSMembershipManager;
-import org.apache.geode.distributed.internal.membership.gms.messenger.MembershipInformation;
+import org.apache.geode.distributed.internal.membership.api.MembershipInformation;
+import org.apache.geode.distributed.internal.membership.api.MembershipLocator;
+import org.apache.geode.distributed.internal.membership.api.QuorumChecker;
 import org.apache.geode.internal.Assert;
 import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.InternalInstantiator;
@@ -200,6 +199,9 @@ public class InternalDistributedSystem extends DistributedSystem
   private final AtomicReference<ClusterAlertMessaging> clusterAlertMessaging =
       new AtomicReference<>();
 
+  // captured in initialize() when starting so that we can hand it to new instance when restarting
+  private MembershipLocator<InternalDistributedMember> membershipLocator;
+
   /**
    * If the experimental multiple-system feature is enabled, always create a new system.
    *
@@ -207,8 +209,25 @@ public class InternalDistributedSystem extends DistributedSystem
    * Otherwise, create a new InternalDistributedSystem with the given properties, or connect to an
    * existing one with the same properties.
    */
-  public static InternalDistributedSystem connectInternal(Properties config,
-      SecurityConfig securityConfig, MetricsService.Builder metricsSessionBuilder) {
+  public static InternalDistributedSystem connectInternal(
+      Properties config,
+      SecurityConfig securityConfig,
+      MetricsService.Builder metricsSessionBuilder) {
+    return connectInternal(config, securityConfig, metricsSessionBuilder, null);
+  }
+
+  /**
+   * If the experimental multiple-system feature is enabled, always create a new system.
+   *
+   * <p>
+   * Otherwise, create a new InternalDistributedSystem with the given properties, or connect to an
+   * existing one with the same properties.
+   */
+  public static InternalDistributedSystem connectInternal(
+      Properties config,
+      SecurityConfig securityConfig,
+      MetricsService.Builder metricsSessionBuilder,
+      final MembershipLocator<InternalDistributedMember> locator) {
     if (config == null) {
       config = new Properties();
     }
@@ -216,6 +235,7 @@ public class InternalDistributedSystem extends DistributedSystem
     if (Boolean.getBoolean(ALLOW_MULTIPLE_SYSTEMS_PROPERTY)) {
       return new Builder(config, metricsSessionBuilder)
           .setSecurityConfig(securityConfig)
+          .setLocator(locator)
           .build();
     }
 
@@ -266,6 +286,7 @@ public class InternalDistributedSystem extends DistributedSystem
       // Make a new connection to the distributed system
       InternalDistributedSystem newSystem = new Builder(config, metricsSessionBuilder)
           .setSecurityConfig(securityConfig)
+          .setLocator(locator)
           .build();
       addSystem(newSystem);
       return newSystem;
@@ -653,7 +674,9 @@ public class InternalDistributedSystem extends DistributedSystem
    * Initializes this connection to a distributed system with the current configuration state.
    */
   private void initialize(SecurityManager securityManager, PostProcessor postProcessor,
-      MetricsService.Builder metricsServiceBuilder) {
+      MetricsService.Builder metricsServiceBuilder,
+      final MembershipLocator<InternalDistributedMember> membershipLocatorArg) {
+
     if (originalConfig.getLocators().equals("")) {
       if (originalConfig.getMcastPort() != 0) {
         throw new GemFireConfigException("The " + LOCATORS + " attribute can not be empty when the "
@@ -742,7 +765,7 @@ public class InternalDistributedSystem extends DistributedSystem
       }
 
       try {
-        startInitLocator();
+        startInitLocator(membershipLocatorArg);
       } catch (InterruptedException e) {
         throw new SystemConnectException("Startup has been interrupted", e);
       }
@@ -753,15 +776,13 @@ public class InternalDistributedSystem extends DistributedSystem
 
       if (!isLoner) {
         try {
-          if (quorumChecker != null) {
-            quorumChecker.suspend();
-          }
-          dm = ClusterDistributionManager.create(this);
+          dm = ClusterDistributionManager.create(this, membershipLocator);
           // fix bug #46324
           if (InternalLocator.hasLocator()) {
-            InternalLocator locator = InternalLocator.getLocator();
+            InternalLocator internalLocator = InternalLocator.getLocator();
             getDistributionManager().addHostedLocators(getDistributedMember(),
-                InternalLocator.getLocatorStrings(), locator.isSharedConfigurationEnabled());
+                InternalLocator.getLocatorStrings(),
+                internalLocator.isSharedConfigurationEnabled());
           }
         } finally {
           if (dm == null && quorumChecker != null) {
@@ -776,8 +797,8 @@ public class InternalDistributedSystem extends DistributedSystem
       Assert.assertTrue(dm != null);
       Assert.assertTrue(dm.getSystem() == this);
 
-      if (dm != null && dm.getMembershipManager() != null) {
-        id = dm.getMembershipManager().getLocalMember().getMembershipPort();
+      if (dm != null && dm.getDistribution() != null) {
+        id = dm.getDistribution().getLocalMember().getMembershipPort();
       }
 
       synchronized (isConnectedMutex) {
@@ -785,7 +806,7 @@ public class InternalDistributedSystem extends DistributedSystem
       }
       if (attemptingToReconnect && (startedLocator == null)) {
         try {
-          startInitLocator();
+          startInitLocator(membershipLocatorArg);
         } catch (InterruptedException e) {
           throw new SystemConnectException("Startup has been interrupted", e);
         }
@@ -858,11 +879,22 @@ public class InternalDistributedSystem extends DistributedSystem
   }
 
   /**
+   * Starts a locator in this JVM iff the distribution config wants one started.
+   *
    * @since GemFire 5.7
+   * @param membershipLocatorArg on initial startup, a MembershipLocator provided explicitly by
+   *        a caller, or null; on restart, the old MembershipLocator (from the previous instance of
+   *        InternalDistributedSystem.)
    */
-  private void startInitLocator() throws InterruptedException {
-    String locatorString = originalConfig.getStartLocator();
-    if (locatorString.length() == 0) {
+  private void startInitLocator(
+      final MembershipLocator<InternalDistributedMember> membershipLocatorArg)
+      throws InterruptedException {
+
+    final String locatorString = originalConfig.getStartLocator();
+    final boolean shouldStartLocator = locatorString.length() > 0;
+
+    if (!shouldStartLocator) {
+      membershipLocator = membershipLocatorArg;
       return;
     }
 
@@ -891,10 +923,13 @@ public class InternalDistributedSystem extends DistributedSystem
       boolean startedPeerLocation = false;
       try {
         startedLocator.startPeerLocation();
+        membershipLocator = startedLocator.getMembershipLocator();
         startedPeerLocation = true;
       } finally {
         if (!startedPeerLocation) {
           startedLocator.stop();
+          startedLocator = null;
+          membershipLocator = null;
         }
       }
     } catch (IOException e) {
@@ -921,13 +956,6 @@ public class InternalDistributedSystem extends DistributedSystem
         }
       }
     }
-  }
-
-  /**
-   * record a locator as a dependent of this distributed system
-   */
-  void setDependentLocator(InternalLocator theLocator) {
-    startedLocator = theLocator;
   }
 
   /**
@@ -1444,32 +1472,13 @@ public class InternalDistributedSystem extends DistributedSystem
   }
 
   /**
-   * break any potential circularity in {@link #loadEmergencyClasses()}
-   */
-  @MakeNotStatic
-  private static volatile boolean emergencyClassesLoaded = false;
-
-  /**
-   * Ensure that the MembershipManager class gets loaded.
-   *
-   * @see SystemFailure#loadEmergencyClasses()
-   */
-  public static void loadEmergencyClasses() {
-    if (emergencyClassesLoaded) {
-      return;
-    }
-    emergencyClassesLoaded = true;
-    GMSMembershipManager.loadEmergencyClasses();
-  }
-
-  /**
    * Closes the membership manager
    *
    * @see SystemFailure#emergencyClose()
    */
   public void emergencyClose() {
     if (dm != null) {
-      MembershipManager mm = dm.getMembershipManager();
+      Distribution mm = dm.getDistribution();
       if (mm != null) {
         mm.emergencyClose();
       }
@@ -1547,7 +1556,7 @@ public class InternalDistributedSystem extends DistributedSystem
             isDisconnectThread.set(Boolean.TRUE); // bug #42663 - this must be set while
             // closing the cache
             try {
-              currentCache.close(reason, dm.getRootCause(), keepAlive, true); // fix for 42150
+              currentCache.close(reason, dm.getRootCause(), keepAlive, true, false);
             } catch (VirtualMachineError e) {
               SystemFailure.initiateFailure(e);
               throw e;
@@ -1606,14 +1615,14 @@ public class InternalDistributedSystem extends DistributedSystem
           // we close the locator after the DM so that when split-brain detection
           // is enabled, loss of the locator doesn't cause the DM to croak
           if (startedLocator != null) {
-            startedLocator.stop(forcedDisconnect, preparingForReconnect, false);
+            startedLocator.stop(forcedDisconnect, preparingForReconnect, true);
             startedLocator = null;
           }
         } finally { // timer canceled
           // bug 38501: this has to happen *after*
           // the DM is closed :-(
           if (!preparingForReconnect) {
-            SystemTimer.cancelSwarm(this);
+            SystemTimer.cancelTimers(this);
           }
         } // finally timer cancelled
       } // finally dm closed
@@ -1680,7 +1689,8 @@ public class InternalDistributedSystem extends DistributedSystem
 
   /**
    * If this DistributedSystem is attempting to reconnect to the distributed system this will return
-   * the quorum checker created by the old MembershipManager for checking to see if a quorum of old
+   * the quorum checker created by the old {@link Distribution} for checking to see if a quorum of
+   * old
    * members can be reached.
    *
    * @return the quorum checking service
@@ -2235,7 +2245,9 @@ public class InternalDistributedSystem extends DistributedSystem
      * @param oldSystem the old DS, which is in a partially disconnected state and cannot be used
      *        for messaging
      */
-    void reconnecting(InternalDistributedSystem oldSystem);
+    default void reconnecting(InternalDistributedSystem oldSystem) {
+      // nothing
+    }
 
     /**
      * Invoked after a reconnect to the distributed system
@@ -2243,7 +2255,10 @@ public class InternalDistributedSystem extends DistributedSystem
      * @param oldSystem the old DS
      * @param newSystem the new DS
      */
-    void onReconnect(InternalDistributedSystem oldSystem, InternalDistributedSystem newSystem);
+    default void onReconnect(InternalDistributedSystem oldSystem,
+        InternalDistributedSystem newSystem) {
+      // nothing
+    }
   }
 
   /**
@@ -2483,7 +2498,7 @@ public class InternalDistributedSystem extends DistributedSystem
     }
 
     // get the membership manager for quorum checks
-    MembershipManager mbrMgr = dm.getMembershipManager();
+    Distribution mbrMgr = dm.getDistribution();
     quorumChecker = mbrMgr.getQuorumChecker();
     if (logger.isDebugEnabled()) {
       if (quorumChecker == null) {
@@ -2586,7 +2601,8 @@ public class InternalDistributedSystem extends DistributedSystem
 
           try {
 
-            newDS = connectInternal(configProps, null, metricsService.getRebuilder());
+            newDS = connectInternal(configProps, null, metricsService.getRebuilder(),
+                membershipLocator);
 
           } catch (CancelException e) {
             if (isReconnectCancelled()) {
@@ -2721,13 +2737,13 @@ public class InternalDistributedSystem extends DistributedSystem
       } else {
         System.setProperty(InternalLocator.INHIBIT_DM_BANNER, inhibitBanner);
       }
-      dm.getMembershipManager().setReconnectCompleted(true);
+      dm.getDistribution().setReconnectCompleted(true);
       InternalDistributedSystem newds = reconnectDS;
       if (newds != null) {
-        newds.getDM().getMembershipManager().setReconnectCompleted(true);
+        newds.getDM().getDistribution().setReconnectCompleted(true);
       }
-      if (quorumChecker != null) {
-        mbrMgr.releaseQuorumChecker(quorumChecker, reconnectDS);
+      if (quorumChecker != null && (reconnectDS == null || !reconnectDS.isConnected())) {
+        quorumChecker.close();
       }
     }
 
@@ -2979,6 +2995,8 @@ public class InternalDistributedSystem extends DistributedSystem
     private SecurityConfig securityConfig;
     private MetricsService.Builder metricsServiceBuilder;
 
+    private MembershipLocator<InternalDistributedMember> locator;
+
     public Builder(Properties configProperties, MetricsService.Builder metricsServiceBuilder) {
       this.configProperties = configProperties;
       this.metricsServiceBuilder = metricsServiceBuilder;
@@ -2986,6 +3004,12 @@ public class InternalDistributedSystem extends DistributedSystem
 
     public Builder setSecurityConfig(SecurityConfig securityConfig) {
       this.securityConfig = securityConfig;
+      return this;
+    }
+
+    public Builder setLocator(
+        final MembershipLocator<InternalDistributedMember> locator) {
+      this.locator = locator;
       return this;
     }
 
@@ -3007,7 +3031,7 @@ public class InternalDistributedSystem extends DistributedSystem
                 FunctionStatsManager::new);
         newSystem
             .initialize(securityConfig.getSecurityManager(), securityConfig.getPostProcessor(),
-                metricsServiceBuilder);
+                metricsServiceBuilder, locator);
         notifyConnectListeners(newSystem);
         stopThreads = false;
         return newSystem;

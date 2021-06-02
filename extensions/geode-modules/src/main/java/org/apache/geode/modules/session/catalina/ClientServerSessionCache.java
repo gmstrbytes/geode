@@ -176,7 +176,7 @@ public class ClientServerSessionCache extends AbstractSessionCache {
       createSessionRegionOnServers();
 
       // Create the region on the client
-      this.sessionRegion = createLocalSessionRegion();
+      this.sessionRegion = createLocalSessionRegionWithRegisterInterest();
       if (getSessionManager().getLogger().isDebugEnabled()) {
         getSessionManager().getLogger().debug("Created session region: " + this.sessionRegion);
       }
@@ -190,9 +190,8 @@ public class ClientServerSessionCache extends AbstractSessionCache {
         sessionRegion.getAttributesMutator().addCacheListener(new SessionExpirationCacheListener());
       }
 
-      // This is true for PROXY regions
-      if (sessionRegion.getAttributes().getDataPolicy() == DataPolicy.EMPTY) {
-        sessionRegion.registerInterest("ALL_KEYS", InterestResultPolicy.KEYS);
+      if (sessionRegion.getAttributes().getDataPolicy() != DataPolicy.EMPTY) {
+        sessionRegion.registerInterestForAllKeys(InterestResultPolicy.KEYS);
       }
     }
   }
@@ -225,6 +224,18 @@ public class ClientServerSessionCache extends AbstractSessionCache {
     }
   }
 
+  Region<String, HttpSession> createLocalSessionRegionWithRegisterInterest() {
+    Region<String, HttpSession> region = createLocalSessionRegion();
+
+    // register interest are needed for caching proxy client:
+    // to get updates from server if local cache is enabled;
+    if (region.getAttributes().getDataPolicy() != DataPolicy.EMPTY) {
+      region.registerInterestForAllKeys(InterestResultPolicy.KEYS);
+    }
+
+    return region;
+  }
+
   Region<String, HttpSession> createLocalSessionRegion() {
     ClientRegionFactory<String, HttpSession> factory = null;
     if (getSessionManager().getEnableLocalCache()) {
@@ -245,17 +256,7 @@ public class ClientServerSessionCache extends AbstractSessionCache {
     }
 
     // Create the region
-    Region region = factory.create(getSessionManager().getRegionName());
-
-    /*
-     * If we're using an empty client region, we register interest so that expired sessions are
-     * destroyed correctly.
-     */
-    if (!getSessionManager().getEnableLocalCache()) {
-      region.registerInterest("ALL_KEYS", InterestResultPolicy.KEYS);
-    }
-
-    return region;
+    return factory.create(getSessionManager().getRegionName());
   }
 
   // Helper methods added to improve unit testing of class

@@ -16,7 +16,6 @@ package org.apache.geode.redis.internal.executor.hash;
 
 import java.util.List;
 
-import org.apache.geode.cache.Region;
 import org.apache.geode.redis.internal.ByteArrayWrapper;
 import org.apache.geode.redis.internal.Coder;
 import org.apache.geode.redis.internal.Command;
@@ -24,41 +23,42 @@ import org.apache.geode.redis.internal.ExecutionHandlerContext;
 import org.apache.geode.redis.internal.RedisConstants.ArityDef;
 import org.apache.geode.redis.internal.RedisDataType;
 
+/**
+ * <pre>
+ * Implements the Redis HDEL command.
+ *
+ * Removes the specified fields from the hash for a given key.
+ *
+ * Examples:
+ *
+ * redis> HSET myhash field1 "foo"
+ * (integer) 1
+ * redis> HDEL myhash field1
+ * (integer) 1
+ * redis> HDEL myhash field2
+ * (integer) 0
+ *
+ * </pre>
+ */
 public class HDelExecutor extends HashExecutor {
 
   private final int START_FIELDS_INDEX = 2;
 
   @Override
   public void executeCommand(Command command, ExecutionHandlerContext context) {
-    List<byte[]> commandElems = command.getProcessedCommand();
+    List<ByteArrayWrapper> commandElems = command.getProcessedCommandWrappers();
 
     if (commandElems.size() < 3) {
       command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(), ArityDef.HDEL));
       return;
     }
 
-    int numDeleted = 0;
 
     ByteArrayWrapper key = command.getKey();
 
     checkDataType(key, RedisDataType.REDIS_HASH, context);
-    Region<ByteArrayWrapper, ByteArrayWrapper> keyRegion = getRegion(context, key);
-
-    if (keyRegion == null) {
-      command.setResponse(Coder.getIntegerResponse(context.getByteBufAllocator(), numDeleted));
-      return;
-    }
-
-
-    for (int i = START_FIELDS_INDEX; i < commandElems.size(); i++) {
-      ByteArrayWrapper field = new ByteArrayWrapper(commandElems.get(i));
-      Object oldValue = keyRegion.remove(field);
-      if (oldValue != null)
-        numDeleted++;
-    }
-    if (keyRegion.isEmpty()) {
-      context.getRegionProvider().removeKey(key, RedisDataType.REDIS_HASH);
-    }
+    RedisHash hash = new GeodeRedisHashSynchronized(key, context);
+    int numDeleted = hash.hdel(commandElems.subList(2, commandElems.size()));
     command.setResponse(Coder.getIntegerResponse(context.getByteBufAllocator(), numDeleted));
   }
 

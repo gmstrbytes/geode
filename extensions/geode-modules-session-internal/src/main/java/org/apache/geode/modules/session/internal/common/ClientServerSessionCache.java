@@ -23,7 +23,9 @@ import javax.servlet.http.HttpSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.geode.cache.DataPolicy;
 import org.apache.geode.cache.GemFireCache;
+import org.apache.geode.cache.InterestResultPolicy;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.RegionShortcut;
 import org.apache.geode.cache.client.ClientCache;
@@ -124,6 +126,11 @@ public class ClientServerSessionCache extends AbstractSessionCache {
       LOG.debug("Created session region: " + this.sessionRegion);
     } else {
       LOG.debug("Retrieved session region: " + this.sessionRegion);
+
+      // Register interest in case users provide their own client cache region
+      if (sessionRegion.getAttributes().getDataPolicy() != DataPolicy.EMPTY) {
+        sessionRegion.registerInterestForAllKeys(InterestResultPolicy.KEYS);
+      }
     }
   }
 
@@ -169,6 +176,11 @@ public class ClientServerSessionCache extends AbstractSessionCache {
     }
 
     // Create the region
-    return factory.create(regionName);
+    Region region = factory.create(regionName);
+
+    if (enableLocalCache) {
+      region.registerInterestForAllKeys(InterestResultPolicy.KEYS);
+    }
+    return region;
   }
 }

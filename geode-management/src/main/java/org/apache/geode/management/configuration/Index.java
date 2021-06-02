@@ -16,17 +16,19 @@
 package org.apache.geode.management.configuration;
 
 
+import java.util.Objects;
+
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.apache.commons.lang3.StringUtils;
 
-import org.apache.geode.management.runtime.RuntimeInfo;
+import org.apache.geode.management.runtime.IndexInfo;
 
-public class Index extends GroupableConfiguration<RuntimeInfo> {
-
+public class Index extends AbstractConfiguration<IndexInfo> implements RegionScoped {
+  public static final String INDEXES = "/indexes";
   private String name;
   private String expression;
   private String regionPath;
-  private Boolean keyIndex;
+  private IndexType indexType;
 
   public String getName() {
     return name;
@@ -62,12 +64,12 @@ public class Index extends GroupableConfiguration<RuntimeInfo> {
     this.regionPath = regionPath;
   }
 
-  public Boolean getKeyIndex() {
-    return keyIndex;
+  public IndexType getIndexType() {
+    return indexType;
   }
 
-  public void setKeyIndex(Boolean keyIndex) {
-    this.keyIndex = keyIndex;
+  public void setIndexType(IndexType indexType) {
+    this.indexType = indexType;
   }
 
   /**
@@ -101,11 +103,45 @@ public class Index extends GroupableConfiguration<RuntimeInfo> {
   @Override
   public Links getLinks() {
     String regionName = getRegionName();
+    // /indexes/indexName is not implemented in controller anymore. region name is required for the
+    // self link
     if (StringUtils.isBlank(regionName)) {
-      return new Links(getId(), "/indexes");
+      return new Links(null, INDEXES);
     }
-    Links links = new Links(getId(), Region.REGION_CONFIG_ENDPOINT + "/" + regionName + "/indexes");
+    Links links = new Links(getId(), Region.REGION_CONFIG_ENDPOINT + "/" + regionName + INDEXES);
     links.addLink("region", Region.REGION_CONFIG_ENDPOINT + "/" + regionName);
     return links;
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+
+    Index index = (Index) o;
+
+    if (!Objects.equals(name, index.name)) {
+      return false;
+    }
+    if (!Objects.equals(expression, index.expression)) {
+      return false;
+    }
+    if (!Objects.equals(regionPath, index.regionPath)) {
+      return false;
+    }
+    return indexType == index.indexType;
+  }
+
+  @Override
+  public int hashCode() {
+    int result = name != null ? name.hashCode() : 0;
+    result = 31 * result + (expression != null ? expression.hashCode() : 0);
+    result = 31 * result + (regionPath != null ? regionPath.hashCode() : 0);
+    result = 31 * result + (indexType != null ? indexType.hashCode() : 0);
+    return result;
   }
 }

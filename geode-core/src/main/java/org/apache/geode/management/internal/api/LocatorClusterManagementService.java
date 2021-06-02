@@ -18,34 +18,41 @@
 package org.apache.geode.management.internal.api;
 
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
+import com.healthmarketscience.rmiio.RemoteInputStream;
+import com.healthmarketscience.rmiio.SimpleRemoteInputStream;
+import com.healthmarketscience.rmiio.exporter.RemoteStreamExporter;
 import org.apache.commons.lang3.NotImplementedException;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.annotations.VisibleForTesting;
-import org.apache.geode.cache.configuration.CacheConfig;
 import org.apache.geode.cache.execute.Execution;
 import org.apache.geode.cache.execute.Function;
 import org.apache.geode.cache.execute.FunctionService;
-import org.apache.geode.cache.execute.ResultCollector;
-import org.apache.geode.distributed.ConfigurationPersistenceService;
 import org.apache.geode.distributed.DistributedMember;
+import org.apache.geode.distributed.internal.InternalConfigurationPersistenceService;
+import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.execute.AbstractExecution;
+import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.management.ManagementService;
 import org.apache.geode.management.api.ClusterManagementException;
 import org.apache.geode.management.api.ClusterManagementGetResult;
 import org.apache.geode.management.api.ClusterManagementListOperationsResult;
@@ -57,69 +64,93 @@ import org.apache.geode.management.api.ClusterManagementRealizationResult;
 import org.apache.geode.management.api.ClusterManagementResult;
 import org.apache.geode.management.api.ClusterManagementResult.StatusCode;
 import org.apache.geode.management.api.ClusterManagementService;
-import org.apache.geode.management.api.ConfigurationResult;
+import org.apache.geode.management.api.EntityGroupInfo;
+import org.apache.geode.management.api.EntityInfo;
 import org.apache.geode.management.api.RealizationResult;
 import org.apache.geode.management.configuration.AbstractConfiguration;
+import org.apache.geode.management.configuration.Deployment;
+import org.apache.geode.management.configuration.DiskStore;
 import org.apache.geode.management.configuration.GatewayReceiver;
 import org.apache.geode.management.configuration.GroupableConfiguration;
+import org.apache.geode.management.configuration.HasFile;
 import org.apache.geode.management.configuration.Index;
 import org.apache.geode.management.configuration.Links;
 import org.apache.geode.management.configuration.Member;
 import org.apache.geode.management.configuration.Pdx;
 import org.apache.geode.management.configuration.Region;
+import org.apache.geode.management.configuration.RegionScoped;
 import org.apache.geode.management.internal.CacheElementOperation;
-import org.apache.geode.management.internal.ClusterManagementOperationStatusResult;
-import org.apache.geode.management.internal.cli.functions.CacheRealizationFunction;
+import org.apache.geode.management.internal.ManagementAgent;
+import org.apache.geode.management.internal.SystemManagementService;
+import org.apache.geode.management.internal.configuration.mutators.CacheConfigurationManager;
 import org.apache.geode.management.internal.configuration.mutators.ConfigurationManager;
+import org.apache.geode.management.internal.configuration.mutators.DeploymentManager;
+import org.apache.geode.management.internal.configuration.mutators.DiskStoreManager;
 import org.apache.geode.management.internal.configuration.mutators.GatewayReceiverConfigManager;
 import org.apache.geode.management.internal.configuration.mutators.IndexConfigManager;
 import org.apache.geode.management.internal.configuration.mutators.PdxManager;
 import org.apache.geode.management.internal.configuration.mutators.RegionConfigManager;
 import org.apache.geode.management.internal.configuration.validators.CommonConfigurationValidator;
 import org.apache.geode.management.internal.configuration.validators.ConfigurationValidator;
+import org.apache.geode.management.internal.configuration.validators.DeploymentValidator;
+import org.apache.geode.management.internal.configuration.validators.DiskStoreValidator;
 import org.apache.geode.management.internal.configuration.validators.GatewayReceiverConfigValidator;
+import org.apache.geode.management.internal.configuration.validators.IndexValidator;
 import org.apache.geode.management.internal.configuration.validators.MemberValidator;
+import org.apache.geode.management.internal.configuration.validators.PdxValidator;
 import org.apache.geode.management.internal.configuration.validators.RegionConfigValidator;
 import org.apache.geode.management.internal.exceptions.EntityExistsException;
+import org.apache.geode.management.internal.functions.CacheRealizationFunction;
 import org.apache.geode.management.internal.operation.OperationHistoryManager;
-import org.apache.geode.management.internal.operation.OperationHistoryManager.OperationInstance;
 import org.apache.geode.management.internal.operation.OperationManager;
-import org.apache.geode.management.internal.operation.TaggedWithOperator;
+import org.apache.geode.management.internal.operation.OperationState;
+import org.apache.geode.management.internal.operation.RegionOperationStateStore;
 import org.apache.geode.management.runtime.OperationResult;
 import org.apache.geode.management.runtime.RuntimeInfo;
 
 public class LocatorClusterManagementService implements ClusterManagementService {
   private static final Logger logger = LogService.getLogger();
-  private final ConfigurationPersistenceService persistenceService;
+  private final InternalConfigurationPersistenceService persistenceService;
   private final Map<Class, ConfigurationManager> managers;
   private final Map<Class, ConfigurationValidator> validators;
   private final OperationManager operationManager;
   private final MemberValidator memberValidator;
   private final CommonConfigurationValidator commonValidator;
+  private final InternalCache cache;
 
   public LocatorClusterManagementService(InternalCache cache,
-      ConfigurationPersistenceService persistenceService) {
-    this(persistenceService, new ConcurrentHashMap<>(), new ConcurrentHashMap<>(),
+      InternalConfigurationPersistenceService persistenceService) {
+    this(cache, persistenceService, new ConcurrentHashMap<>(), new ConcurrentHashMap<>(),
         new MemberValidator(cache, persistenceService), new CommonConfigurationValidator(),
-        new OperationManager(cache, new OperationHistoryManager()));
+        new OperationManager(cache,
+            new OperationHistoryManager(new RegionOperationStateStore(cache), cache)));
     // initialize the list of managers
-    managers.put(Region.class, new RegionConfigManager());
-    managers.put(Pdx.class, new PdxManager());
-    managers.put(GatewayReceiver.class, new GatewayReceiverConfigManager());
-    managers.put(Index.class, new IndexConfigManager());
+    managers.put(Region.class, new RegionConfigManager(persistenceService));
+    managers.put(Pdx.class, new PdxManager(persistenceService));
+    managers.put(GatewayReceiver.class, new GatewayReceiverConfigManager(persistenceService));
+    managers.put(Index.class, new IndexConfigManager(persistenceService));
+    managers.put(Deployment.class, new DeploymentManager(persistenceService));
+    managers.put(DiskStore.class, new DiskStoreManager(persistenceService));
 
     // initialize the list of validators
     validators.put(Region.class, new RegionConfigValidator(cache));
     validators.put(GatewayReceiver.class, new GatewayReceiverConfigValidator());
+    validators.put(Pdx.class, new PdxValidator());
+    validators.put(Index.class, new IndexValidator());
+    validators.put(Deployment.class, new DeploymentValidator());
+    validators.put(DiskStore.class, new DiskStoreValidator());
   }
 
   @VisibleForTesting
-  public LocatorClusterManagementService(ConfigurationPersistenceService persistenceService,
+  public LocatorClusterManagementService(
+      InternalCache cache,
+      InternalConfigurationPersistenceService persistenceService,
       Map<Class, ConfigurationManager> managers,
       Map<Class, ConfigurationValidator> validators,
       MemberValidator memberValidator,
       CommonConfigurationValidator commonValidator,
       OperationManager operationManager) {
+    this.cache = cache;
     this.persistenceService = persistenceService;
     this.managers = managers;
     this.validators = validators;
@@ -138,9 +169,6 @@ public class LocatorClusterManagementService implements ClusterManagementService
           "Cluster configuration service needs to be enabled."));
     }
 
-    String group = config.getGroup();
-    final String groupName =
-        AbstractConfiguration.isCluster(group) ? AbstractConfiguration.CLUSTER : group;
     try {
       // first validate common attributes of all configuration object
       commonValidator.validate(CacheElementOperation.CREATE, config);
@@ -150,23 +178,38 @@ public class LocatorClusterManagementService implements ClusterManagementService
         validator.validate(CacheElementOperation.CREATE, config);
       }
 
-      // check if this config already exists on all/some members of this group
-      memberValidator.validateCreate(config, configurationManager);
-      // execute function on all members
+      // check if this config already exists
+      if (configurationManager instanceof CacheConfigurationManager) {
+        memberValidator.validateCreate(config, (CacheConfigurationManager) configurationManager);
+      }
     } catch (EntityExistsException e) {
       raise(StatusCode.ENTITY_EXISTS, e);
     } catch (IllegalArgumentException e) {
       raise(StatusCode.ILLEGAL_ARGUMENT, e);
     }
 
-    Set<DistributedMember> targetedMembers = memberValidator.findServers(group);
+    // find the targeted members
+    Set<String> groups = new HashSet<>();
+    Set<DistributedMember> targetedMembers;
+    if (config instanceof RegionScoped) {
+      String regionName = ((RegionScoped) config).getRegionName();
+      groups = memberValidator.findGroups(regionName);
+      if (groups.isEmpty()) {
+        raise(StatusCode.ENTITY_NOT_FOUND, "Region provided does not exist: " + regionName);
+      }
+      targetedMembers = memberValidator.findServers(groups.toArray(new String[0]));
+    } else {
+      final String groupName = AbstractConfiguration.getGroupName(config.getGroup());
+      groups.add(groupName);
+      targetedMembers = memberValidator.findServers(groupName);
+    }
+
     ClusterManagementRealizationResult result = new ClusterManagementRealizationResult();
 
-    List<RealizationResult> functionResults = executeAndGetFunctionResult(
-        new CacheRealizationFunction(),
-        Arrays.asList(config, CacheElementOperation.CREATE),
+    // execute function on all targeted members
+    List<RealizationResult> functionResults = executeCacheRealizationFunction(
+        config, CacheElementOperation.CREATE,
         targetedMembers);
-
     functionResults.forEach(result::addMemberStatus);
 
     // if any false result is added to the member list
@@ -176,19 +219,19 @@ public class LocatorClusterManagementService implements ClusterManagementService
     }
 
     // persist configuration in cache config
-    persistenceService.updateCacheConfig(groupName, cacheConfigForGroup -> {
+    List<String> updatedGroups = new ArrayList<>();
+    List<String> failedGroups = new ArrayList<>();
+    for (String groupName : groups) {
       try {
-        configurationManager.add(config, cacheConfigForGroup);
-        result.setStatus(StatusCode.OK,
-            "Successfully updated configuration for " + groupName + ".");
+        configurationManager.add(config, groupName);
+        updatedGroups.add(groupName);
       } catch (Exception e) {
-        String message = "Failed to update cluster configuration for " + groupName + ".";
-        logger.error(message, e);
-        result.setStatus(StatusCode.FAIL_TO_PERSIST, message);
-        return null;
+        logger.error(e.getMessage(), e);
+        failedGroups.add(groupName);
       }
-      return cacheConfigForGroup;
-    });
+    }
+
+    setResultStatus(result, updatedGroups, failedGroups);
 
     // add the config object which includes the HATEOAS information of the element created
     if (result.isSuccessful()) {
@@ -197,11 +240,41 @@ public class LocatorClusterManagementService implements ClusterManagementService
     return assertSuccessful(result);
   }
 
+  @VisibleForTesting
+  void setResultStatus(ClusterManagementRealizationResult result,
+      List<String> updatedGroups, List<String> failedGroups) {
+    String successMessage = null;
+    String failedMessage = null;
+    if (!updatedGroups.isEmpty()) {
+      successMessage =
+          "Successfully updated configuration for " + String.join(", ", updatedGroups) + ".";
+    }
+    if (!failedGroups.isEmpty()) {
+      failedMessage =
+          "Failed to update configuration for " + String.join(", ", failedGroups) + ".";
+    }
+
+    if (failedMessage == null) {
+      result.setStatus(StatusCode.OK, successMessage);
+      return;
+    }
+
+    if (successMessage == null) {
+      result.setStatus(StatusCode.FAIL_TO_PERSIST, failedMessage);
+      return;
+    }
+
+    // succeeded on some group and failed on some group
+    result.setStatus(StatusCode.FAIL_TO_PERSIST, successMessage + " " + failedMessage);
+    return;
+  }
+
   @Override
   public <T extends AbstractConfiguration<?>> ClusterManagementRealizationResult delete(
       T config) {
     // validate that user used the correct config object type
-    ConfigurationManager configurationManager = getConfigurationManager(config);
+    CacheConfigurationManager configurationManager =
+        (CacheConfigurationManager) getConfigurationManager(config);
 
     if (persistenceService == null) {
       return assertSuccessful(new ClusterManagementRealizationResult(StatusCode.ERROR,
@@ -221,7 +294,7 @@ public class LocatorClusterManagementService implements ClusterManagementService
     }
 
     String[] groupsWithThisElement =
-        memberValidator.findGroupsWithThisElement(config.getId(), configurationManager);
+        memberValidator.findGroupsWithThisElement(config, configurationManager);
     if (groupsWithThisElement.length == 0) {
       raise(StatusCode.ENTITY_NOT_FOUND,
           config.getClass().getSimpleName() + " '" + config.getId() + "' does not exist.");
@@ -230,9 +303,8 @@ public class LocatorClusterManagementService implements ClusterManagementService
     // execute function on all members
     ClusterManagementRealizationResult result = new ClusterManagementRealizationResult();
 
-    List<RealizationResult> functionResults = executeAndGetFunctionResult(
-        new CacheRealizationFunction(),
-        Arrays.asList(config, CacheElementOperation.DELETE),
+    List<RealizationResult> functionResults = executeCacheRealizationFunction(
+        config, CacheElementOperation.DELETE,
         memberValidator.findServers(groupsWithThisElement));
     functionResults.forEach(result::addMemberStatus);
 
@@ -246,26 +318,16 @@ public class LocatorClusterManagementService implements ClusterManagementService
     List<String> updatedGroups = new ArrayList<>();
     List<String> failedGroups = new ArrayList<>();
     for (String finalGroup : groupsWithThisElement) {
-      persistenceService.updateCacheConfig(finalGroup, cacheConfigForGroup -> {
-        try {
-          configurationManager.delete(config, cacheConfigForGroup);
-          updatedGroups.add(finalGroup);
-        } catch (Exception e) {
-          logger.error("Failed to update cluster configuration for " + finalGroup + ".", e);
-          failedGroups.add(finalGroup);
-          return null;
-        }
-        return cacheConfigForGroup;
-      });
+      try {
+        configurationManager.delete(config, finalGroup);
+        updatedGroups.add(finalGroup);
+      } catch (Exception e) {
+        logger.error(e.getMessage(), e);
+        failedGroups.add(finalGroup);
+      }
     }
 
-    if (failedGroups.isEmpty()) {
-      result.setStatus(StatusCode.OK,
-          "Successfully removed configuration for " + updatedGroups + ".");
-    } else {
-      String message = "Failed to update cluster configuration for " + failedGroups + ".";
-      result.setStatus(StatusCode.FAIL_TO_PERSIST, message);
-    }
+    setResultStatus(result, updatedGroups, failedGroups);
 
     return assertSuccessful(result);
   }
@@ -300,31 +362,27 @@ public class LocatorClusterManagementService implements ClusterManagementService
       }
 
       for (String group : groups) {
-        CacheConfig currentPersistedConfig =
-            persistenceService.getCacheConfig(
-                AbstractConfiguration.isCluster(group) ? AbstractConfiguration.CLUSTER : group,
-                true);
-        List<T> listInGroup = manager.list(filter, currentPersistedConfig);
+        List<T> list = manager.list(filter, group);
         if (!AbstractConfiguration.isCluster(group)) {
-          listInGroup.forEach(t -> {
+          list.forEach(t -> {
             if (t instanceof GroupableConfiguration) {
               ((GroupableConfiguration<?>) t).setGroup(group);
             }
           });
         }
-        resultList.addAll(listInGroup);
+        list.stream().filter(t -> !resultList.contains(t))
+            .forEach(resultList::add);
       }
     }
 
     // gather the runtime info for each configuration objects
-    List<ConfigurationResult<T, R>> responses = new ArrayList<>();
+    List<EntityGroupInfo<T, R>> responses = new ArrayList<>();
     boolean hasRuntimeInfo = hasRuntimeInfo(filter.getClass());
 
     for (T element : resultList) {
-      ConfigurationResult<T, R> response = new ConfigurationResult<>(element);
+      EntityGroupInfo<T, R> response = new EntityGroupInfo<>(element);
 
       responses.add(response);
-      // do not gather runtime if this type of CacheElement is RespondWith<RuntimeInfo>
       if (!hasRuntimeInfo) {
         continue;
       }
@@ -335,7 +393,7 @@ public class LocatorClusterManagementService implements ClusterManagementService
         members =
             memberValidator.findMembers(filter.getId(), filter.getGroup());
       } else {
-        members = memberValidator.findServers(element.getGroup());
+        members = memberValidator.findServers(element);
       }
 
       // no member belongs to these groups
@@ -349,13 +407,27 @@ public class LocatorClusterManagementService implements ClusterManagementService
         members = Collections.singleton(members.iterator().next());
       }
 
-      List<R> runtimeInfos = executeAndGetFunctionResult(new CacheRealizationFunction(),
-          Arrays.asList(element, CacheElementOperation.GET),
+      List<R> runtimeInfos = executeCacheRealizationFunction(
+          element, CacheElementOperation.GET,
           members);
       response.setRuntimeInfo(runtimeInfos);
     }
 
-    result.setResult(responses);
+    if (filter instanceof Member) {
+      // for members, we have exactly one response that holds the filter
+      // and all the members in the runtimeInfo section
+      List<R> members = responses.get(0).getRuntimeInfo();
+      for (R memberInfo : members) {
+        Member member = new Member();
+        member.setId(memberInfo.getMemberName());
+        EntityInfo<T, R> entityInfo = new EntityInfo<>(memberInfo.getMemberName(),
+            Collections.singletonList(
+                new EntityGroupInfo<>((T) member, Collections.singletonList(memberInfo))));
+        result.addEntityInfo(entityInfo);
+      }
+    } else {
+      result.setEntityGroupInfo(responses);
+    }
     return assertSuccessful(result);
   }
 
@@ -363,118 +435,81 @@ public class LocatorClusterManagementService implements ClusterManagementService
   public <T extends AbstractConfiguration<R>, R extends RuntimeInfo> ClusterManagementGetResult<T, R> get(
       T config) {
     ClusterManagementListResult<T, R> list = list(config);
-    List<ConfigurationResult<T, R>> result = list.getResult();
 
-    int size = result.size();
-    if (config instanceof Member) {
-      size = result.get(0).getRuntimeInfo().size();
-    }
-
-    if (size == 0) {
+    List<EntityInfo<T, R>> result = list.getResult();
+    if (result.size() == 0) {
       raise(StatusCode.ENTITY_NOT_FOUND,
           config.getClass().getSimpleName() + " '" + config.getId() + "' does not exist.");
     }
 
-    if (size > 1) {
-      raise(StatusCode.ERROR,
-          "Expect only one matching " + config.getClass().getSimpleName() + ".");
-    }
-
-    return assertSuccessful(new ClusterManagementGetResult<>(list));
+    return new ClusterManagementGetResult<>(result.get(0));
   }
 
   @Override
-  public <A extends ClusterManagementOperation<V>, V extends OperationResult> ClusterManagementOperationResult<V> start(
+  public <A extends ClusterManagementOperation<V>, V extends OperationResult> ClusterManagementOperationResult<A, V> start(
       A op) {
-    OperationInstance<A, V> operationInstance = operationManager.submit(op);
-    if (op instanceof TaggedWithOperator) {
-      operationInstance.setOperator(((TaggedWithOperator) op).getOperator());
-    }
-
-    ClusterManagementResult result = new ClusterManagementResult(
-        StatusCode.ACCEPTED, "Operation started.  Use the URI to check its status.");
-
-    return assertSuccessful(toClusterManagementListOperationsResult(result, operationInstance));
+    OperationState<A, V> operationState = operationManager.submit(op);
+    return assertSuccessful(toClusterManagementOperationResult(StatusCode.ACCEPTED,
+        "Operation started.  Use the URI to check its status.", operationState));
   }
 
   @Override
-  public <A extends ClusterManagementOperation<V>, V extends OperationResult> ClusterManagementListOperationsResult<V> list(
+  public <A extends ClusterManagementOperation<V>, V extends OperationResult> ClusterManagementListOperationsResult<A, V> list(
       A opType) {
     return assertSuccessful(new ClusterManagementListOperationsResult<>(
-        operationManager.listOperationInstances(opType).stream()
-            .map(this::toClusterManagementListOperationsResult).collect(Collectors.toList())));
+        operationManager.list(opType).stream()
+            .map(this::toClusterManagementOperationResult).collect(Collectors.toList())));
   }
 
-  /**
-   * builds a base status from the state of a future result
-   */
-  private static <V extends OperationResult> ClusterManagementResult getStatus(
-      CompletableFuture<V> future) {
-    if (future.isCompletedExceptionally()) {
-      String error = "Operation failed.";
-      try {
-        future.get();
-      } catch (InterruptedException ignore) {
-        Thread.currentThread().interrupt();
-      } catch (ExecutionException e) {
-        error = e.getMessage();
-      }
-      return new ClusterManagementResult(StatusCode.ERROR, error);
-    } else if (future.isDone()) {
-      return new ClusterManagementResult(StatusCode.OK, "Operation finished successfully.");
-    } else {
-      return new ClusterManagementResult(StatusCode.IN_PROGRESS, "Operation in progress.");
+  private <A extends ClusterManagementOperation<V>, V extends OperationResult> ClusterManagementOperationResult<A, V> toClusterManagementOperationResult(
+      StatusCode statusCode, String message, OperationState<A, V> operationState) {
+    ClusterManagementOperationResult<A, V> result =
+        new ClusterManagementOperationResult<>(statusCode, message,
+            operationState.getOperationStart(), operationState.getOperationEnd(),
+            operationState.getOperation(), operationState.getId(), operationState.getResult(),
+            operationState.getThrowable());
+    A operation = operationState.getOperation();
+    if (operation != null) {
+      result.setLinks(new Links(operationState.getId(), operation.getEndpoint()));
     }
-  }
-
-  /**
-   * builds a result object from a base status and an operation instance
-   */
-  private <A extends ClusterManagementOperation<V>, V extends OperationResult> ClusterManagementOperationResult<V> toClusterManagementListOperationsResult(
-      ClusterManagementResult status, OperationInstance<A, V> operationInstance) {
-    ClusterManagementOperationResult<V> result = new ClusterManagementOperationResult<>(status,
-        operationInstance.getFutureResult(), operationInstance.getOperationStart(),
-        operationInstance.getFutureOperationEnded(), operationInstance.getOperator(),
-        operationInstance.getId());
-    result.setLinks(
-        new Links(operationInstance.getId(), operationInstance.getOperation().getEndpoint()));
     return result;
   }
 
-  /**
-   * builds a result object from an operation instance
-   */
-  private <A extends ClusterManagementOperation<V>, V extends OperationResult> ClusterManagementOperationResult<V> toClusterManagementListOperationsResult(
-      OperationInstance<A, V> operationInstance) {
-    return toClusterManagementListOperationsResult(getStatus(operationInstance.getFutureResult()),
-        operationInstance);
-  }
-
-  /**
-   * this is intended for use by the REST controller. for Java usage, please use
-   * {@link ClusterManagementOperationResult#getFutureResult()}
-   */
-  public <V extends OperationResult> ClusterManagementOperationStatusResult<V> checkStatus(
-      String opId) {
-    final OperationInstance<?, V> operationInstance = operationManager.getOperationInstance(opId);
-    if (operationInstance == null) {
+  @Override
+  public <A extends ClusterManagementOperation<V>, V extends OperationResult> ClusterManagementOperationResult<A, V> get(
+      A opType, String opId) {
+    final OperationState<A, V> operationState = operationManager.get(opId);
+    if (operationState == null) {
       raise(StatusCode.ENTITY_NOT_FOUND, "Operation '" + opId + "' does not exist.");
     }
-    final CompletableFuture<V> status = operationInstance.getFutureResult();
-    ClusterManagementOperationStatusResult<V> result =
-        new ClusterManagementOperationStatusResult<>(getStatus(status));
-    result.setOperator(operationInstance.getOperator());
-    result.setOperationStart(operationInstance.getOperationStart());
-    if (status.isDone() && !status.isCompletedExceptionally()) {
-      try {
-        result.setOperationEnded(operationInstance.getFutureOperationEnded().get());
-        result.setResult(status.get());
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-      } catch (ExecutionException ignore) {
+
+    return toClusterManagementOperationResult(operationState);
+  }
+
+  @Override
+  public <A extends ClusterManagementOperation<V>, V extends OperationResult> CompletableFuture<ClusterManagementOperationResult<A, V>> getFuture(
+      A opType, String opId) {
+    throw new IllegalStateException("This should never be called on locator");
+  }
+
+  private <A extends ClusterManagementOperation<V>, V extends OperationResult> ClusterManagementOperationResult<A, V> toClusterManagementOperationResult(
+      OperationState<A, V> operationState) {
+    StatusCode resultStatus = StatusCode.OK;
+    String resultMessage = "";
+    if (operationState.getOperationEnd() == null) {
+      resultStatus = StatusCode.IN_PROGRESS;
+    } else if (operationState.getThrowable() != null) {
+      resultStatus = StatusCode.ERROR;
+      resultMessage = operationState.getThrowable().toString();
+    } else if (operationState.getResult() != null) {
+      if (!operationState.getResult().getSuccess()) {
+        resultStatus = StatusCode.ERROR;
+      }
+      if (operationState.getResult().getStatusMessage() != null) {
+        resultMessage = operationState.getResult().getStatusMessage();
       }
     }
-    return result;
+    return toClusterManagementOperationResult(resultStatus, resultMessage, operationState);
   }
 
   private <T extends ClusterManagementResult> T assertSuccessful(T result) {
@@ -519,17 +554,118 @@ public class LocatorClusterManagementService implements ClusterManagementService
   }
 
   @VisibleForTesting
-  <R> List<R> executeAndGetFunctionResult(Function function, Object args,
+  <R> List<R> executeCacheRealizationFunction(AbstractConfiguration configuration,
+      CacheElementOperation operation,
       Set<DistributedMember> targetMembers) {
     if (targetMembers.size() == 0) {
       return Collections.emptyList();
     }
+    Set<DistributedMember> targetMemberPRE1_12_0 = new HashSet<>();
+    Set<DistributedMember> targetMemberPOST1_12_0 = new HashSet<>();
 
-    Execution execution = FunctionService.onMembers(targetMembers).setArguments(args);
-    ((AbstractExecution) execution).setIgnoreDepartedMembers(true);
-    ResultCollector rc = execution.execute(function);
+    targetMembers.stream().forEach(member -> {
+      if (((InternalDistributedMember) member).getVersionObject()
+          .isOlderThan(Version.GEODE_1_12_0)) {
+        targetMemberPRE1_12_0.add(member);
+      } else {
+        targetMemberPOST1_12_0.add(member);
+      }
+    });
 
-    return (List<R>) rc.getResult();
+
+
+    File file = null;
+    if (configuration instanceof HasFile) {
+      file = ((HasFile) configuration).getFile();
+    }
+
+    if (file == null) {
+      List<?> functionResults = new ArrayList<>();
+      if (targetMemberPRE1_12_0.size() > 0) {
+        Function function =
+            new org.apache.geode.management.internal.cli.functions.CacheRealizationFunction();
+        Execution execution = FunctionService.onMembers(targetMemberPRE1_12_0)
+            .setArguments(Arrays.asList(configuration, operation, null));
+        ((AbstractExecution) execution).setIgnoreDepartedMembers(true);
+        functionResults.addAll(cleanResults((List<?>) execution.execute(function).getResult()));
+      }
+      if (targetMemberPOST1_12_0.size() > 0) {
+        Function function = new CacheRealizationFunction();
+        Execution execution = FunctionService.onMembers(targetMemberPOST1_12_0)
+            .setArguments(Arrays.asList(configuration, operation, null));
+        ((AbstractExecution) execution).setIgnoreDepartedMembers(true);
+        functionResults.addAll(cleanResults((List<?>) execution.execute(function).getResult()));
+      }
+
+      return (List<R>) functionResults;
+    }
+
+    // if we have file arguments, we need to export the file input stream for each member
+    RemoteStreamExporter exporter = null;
+    ManagementAgent agent =
+        ((SystemManagementService) ManagementService.getExistingManagementService(cache))
+            .getManagementAgent();
+    exporter = agent.getRemoteStreamExporter();
+
+    List<R> results = new ArrayList();
+    for (DistributedMember member : targetMembers) {
+      FileInputStream fileInputStream = null;
+      SimpleRemoteInputStream inputStream = null;
+      RemoteInputStream remoteInputStream = null;
+      try {
+        fileInputStream = new FileInputStream(file.getAbsolutePath());
+        inputStream = new SimpleRemoteInputStream(fileInputStream);
+        remoteInputStream = exporter.export(inputStream);
+        Execution execution = FunctionService.onMember(member)
+            .setArguments(Arrays.asList(configuration, operation, remoteInputStream));
+        ((AbstractExecution) execution).setIgnoreDepartedMembers(true);
+        List<R> functionResults;
+        if (((InternalDistributedMember) member).getVersionObject()
+            .isOlderThan(Version.GEODE_1_12_0)) {
+          Function function =
+              new org.apache.geode.management.internal.cli.functions.CacheRealizationFunction();
+          functionResults = cleanResults((List<?>) execution.execute(function).getResult());
+        } else {
+          Function function = new CacheRealizationFunction();
+          functionResults = cleanResults((List<?>) execution.execute(function).getResult());
+        }
+        results.addAll(functionResults);
+      } catch (IOException e) {
+        raise(StatusCode.ILLEGAL_ARGUMENT, "Invalid file: " + file.getAbsolutePath());
+      } finally {
+        try {
+          if (fileInputStream != null) {
+            fileInputStream.close();
+          }
+          if (inputStream != null) {
+            inputStream.close();
+          }
+          if (remoteInputStream != null) {
+            remoteInputStream.close(true);
+          }
+        } catch (IOException ex) {
+          // ignore
+        }
+      }
+    }
+    return results;
+  }
+
+  @VisibleForTesting
+  <R> List<R> cleanResults(List<?> functionResults) {
+    List<R> results = new ArrayList<>();
+    for (Object functionResult : functionResults) {
+      if (functionResult == null) {
+        continue;
+      }
+      if (functionResult instanceof Throwable) {
+        // log the exception and continue
+        logger.warn("Error executing CacheRealizationFunction.", (Throwable) functionResult);
+        continue;
+      }
+      results.add((R) functionResult);
+    }
+    return results;
   }
 
 

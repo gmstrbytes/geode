@@ -24,6 +24,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
@@ -46,12 +47,18 @@ import org.apache.geode.tools.pulse.internal.data.Repository;
 public class SystemAlertsService implements PulseService {
 
   private static final ObjectMapper mapper = new ObjectMapper();
+  private final Repository repository;
+
+  @Autowired
+  public SystemAlertsService(Repository repository) {
+    this.repository = repository;
+  }
 
   @Override
   public ObjectNode execute(final HttpServletRequest request) throws Exception {
 
     // get cluster object
-    Cluster cluster = Repository.get().getCluster();
+    Cluster cluster = repository.getCluster();
 
     // json object to be sent as response
     ObjectNode responseJSON = mapper.createObjectNode();
@@ -61,13 +68,13 @@ public class SystemAlertsService implements PulseService {
     String strPageNumber = requestDataJSON.get("SystemAlerts").get("pageNumber").textValue();
     if (StringUtils.isNotBlank(strPageNumber)) {
       try {
-        pageNumber = Integer.valueOf(strPageNumber);
-      } catch (NumberFormatException e) {
+        pageNumber = Integer.parseInt(strPageNumber);
+      } catch (NumberFormatException ignored) {
       }
     }
 
     // cluster's Members
-    responseJSON.put("systemAlerts", getAlertsJson(cluster, pageNumber));
+    responseJSON.set("systemAlerts", getAlertsJson(cluster, pageNumber));
     responseJSON.put("pageNumber", cluster.getNotificationPageNumber());
     responseJSON.put("connectedFlag", cluster.isConnectedFlag());
     responseJSON.put("connectedErrorMsg", cluster.getConnectionErrorMsg());
@@ -116,10 +123,10 @@ public class SystemAlertsService implements PulseService {
           infoJsonArray.add(objAlertJson);
         }
       }
-      alertsJsonObject.put("info", infoJsonArray);
-      alertsJsonObject.put("warnings", warningJsonArray);
-      alertsJsonObject.put("errors", errorJsonArray);
-      alertsJsonObject.put("severe", severeJsonArray);
+      alertsJsonObject.set("info", infoJsonArray);
+      alertsJsonObject.set("warnings", warningJsonArray);
+      alertsJsonObject.set("errors", errorJsonArray);
+      alertsJsonObject.set("severe", severeJsonArray);
     }
     return alertsJsonObject;
   }

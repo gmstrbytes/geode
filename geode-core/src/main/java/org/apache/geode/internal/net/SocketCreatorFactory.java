@@ -23,7 +23,6 @@ import org.apache.commons.lang3.ArrayUtils;
 import org.apache.geode.GemFireConfigException;
 import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.distributed.internal.DistributionConfig;
-import org.apache.geode.internal.admin.SSLConfig;
 import org.apache.geode.internal.security.SecurableCommunicationChannel;
 
 public class SocketCreatorFactory {
@@ -44,7 +43,6 @@ public class SocketCreatorFactory {
     } else {
       this.distributionConfig = distributionConfig;
     }
-    SSLConfigurationFactory.setDistributionConfig(this.distributionConfig);
   }
 
   private DistributionConfig getDistributionConfig() {
@@ -67,11 +65,18 @@ public class SocketCreatorFactory {
   }
 
   public static SocketCreator getSocketCreatorForComponent(
-      SecurableCommunicationChannel sslEnabledComponent) {
-    SSLConfig sslConfigForComponent =
-        SSLConfigurationFactory.getSSLConfigForComponent(sslEnabledComponent);
+      final DistributionConfig distributionConfig,
+      final SecurableCommunicationChannel sslEnabledComponent) {
+    final SSLConfig sslConfigForComponent =
+        SSLConfigurationFactory.getSSLConfigForComponent(distributionConfig,
+            sslEnabledComponent);
     return getInstance().getOrCreateSocketCreatorForSSLEnabledComponent(sslEnabledComponent,
         sslConfigForComponent);
+  }
+
+  public static SocketCreator getSocketCreatorForComponent(
+      SecurableCommunicationChannel sslEnabledComponent) {
+    return getSocketCreatorForComponent(getInstance().getDistributionConfig(), sslEnabledComponent);
   }
 
   private SocketCreator getSSLSocketCreator(final SecurableCommunicationChannel sslComponent,
@@ -149,7 +154,6 @@ public class SocketCreatorFactory {
     if (socketCreatorFactory != null) {
       socketCreatorFactory.clearSocketCreators();
       socketCreatorFactory.distributionConfig = null;
-      SSLConfigurationFactory.close();
     }
   }
 

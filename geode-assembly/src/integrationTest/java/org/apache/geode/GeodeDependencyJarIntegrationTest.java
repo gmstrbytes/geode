@@ -63,7 +63,7 @@ public class GeodeDependencyJarIntegrationTest {
     assertThat(getManifestClassPath())
         .describedAs("The geode-dependency jar's manifest classpath has changed. Verify "
             + "dependencies and copy geode-assembly/build/integrationTest/dependency_classpath.txt "
-            + "to src/integrationTest/resources/dependency_classpath.txt")
+            + "to geode-assembly/src/integrationTest/resources/dependency_classpath.txt")
         .containsExactlyInAnyOrderElementsOf(expectedClasspathElements);
   }
 
@@ -86,7 +86,7 @@ public class GeodeDependencyJarIntegrationTest {
 
     return Arrays.stream(classpath.split(" "))
         .map(entry -> entry.contains("geode")
-            ? entry.replaceFirst("\\d+\\.\\d+\\.\\d+(-SNAPSHOT)?", "0.0.0") : entry)
+            ? entry.replaceFirst("\\d+\\.\\d+\\.\\d+(-build\\.\\d+)?", "0.0.0") : entry)
         .collect(Collectors.toList());
   }
 }

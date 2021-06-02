@@ -14,12 +14,10 @@
  */
 package org.apache.geode.distributed.internal;
 
-import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -46,8 +44,7 @@ import org.apache.geode.distributed.DurableClientAttributes;
 import org.apache.geode.distributed.Role;
 import org.apache.geode.distributed.internal.locks.ElderState;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.distributed.internal.membership.MembershipManager;
-import org.apache.geode.distributed.internal.membership.gms.api.MemberDataBuilder;
+import org.apache.geode.distributed.internal.membership.api.MemberDataBuilder;
 import org.apache.geode.i18n.LogWriterI18n;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.logging.InternalLogWriter;
@@ -192,7 +189,7 @@ public class LonerDistributionManager implements DistributionManager {
       Version version) {
     for (Iterator<InternalDistributedMember> it = members.iterator(); it.hasNext();) {
       InternalDistributedMember id = it.next();
-      if (id.getVersionObject().compareTo(version) < 0) {
+      if (id.getVersionOrdinalObject().compareTo(version) < 0) {
         it.remove();
       }
     }
@@ -203,7 +200,7 @@ public class LonerDistributionManager implements DistributionManager {
       Version version) {
     for (Iterator<InternalDistributedMember> it = members.iterator(); it.hasNext();) {
       InternalDistributedMember id = it.next();
-      if (id.getVersionObject().compareTo(version) >= 0) {
+      if (id.getVersionOrdinalObject().compareTo(version) >= 0) {
         it.remove();
       }
     }
@@ -1205,9 +1202,7 @@ public class LonerDistributionManager implements DistributionManager {
 
       String name = this.system.getName();
 
-      InetAddress hostAddr = SocketCreator.getLocalHost();
-      host = SocketCreator.use_client_host_name ? hostAddr.getCanonicalHostName()
-          : hostAddr.getHostAddress();
+      host = SocketCreator.getClientHostName();
       DistributionConfig config = system.getConfig();
       DurableClientAttributes dac = null;
       if (config.getDurableClientId() != null) {
@@ -1289,7 +1284,7 @@ public class LonerDistributionManager implements DistributionManager {
    * @see org.apache.geode.distributed.internal.DM#getMembershipManager()
    */
   @Override
-  public MembershipManager getMembershipManager() {
+  public Distribution getDistribution() {
     // no membership manager
     return null;
   }
@@ -1342,6 +1337,11 @@ public class LonerDistributionManager implements DistributionManager {
   }
 
   @Override
+  public String getRedundancyZone(InternalDistributedMember member) {
+    return null;
+  }
+
+  @Override
   public boolean areInSameZone(InternalDistributedMember member1,
       InternalDistributedMember member2) {
     return false;
@@ -1357,13 +1357,6 @@ public class LonerDistributionManager implements DistributionManager {
   public Set<InternalDistributedMember> getMembersInSameZone(
       InternalDistributedMember acceptedMember) {
     return Collections.singleton(acceptedMember);
-  }
-
-  @Override
-  public Set<InetAddress> getEquivalents(InetAddress in) {
-    Set<InetAddress> value = new HashSet<InetAddress>();
-    value.add(this.getId().getInetAddress());
-    return value;
   }
 
   @Override
@@ -1470,7 +1463,7 @@ public class LonerDistributionManager implements DistributionManager {
   }
 
   @Override
-  /** returns the Threads Monitoring instance */
+  /* returns the Threads Monitoring instance */
   public ThreadsMonitoring getThreadMonitoring() {
     return this.threadMonitor;
   }
@@ -1478,5 +1471,15 @@ public class LonerDistributionManager implements DistributionManager {
   @Override
   public AlertingService getAlertingService() {
     return NullAlertingService.get();
+  }
+
+  @Override
+  public void registerTestHook(MembershipTestHook mth) {
+    throw new UnsupportedOperationException();
+  }
+
+  @Override
+  public void unregisterTestHook(MembershipTestHook mth) {
+    throw new UnsupportedOperationException();
   }
 }

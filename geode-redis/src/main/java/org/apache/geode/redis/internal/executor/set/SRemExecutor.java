@@ -14,9 +14,10 @@
  */
 package org.apache.geode.redis.internal.executor.set;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-import org.apache.geode.cache.Region;
 import org.apache.geode.redis.internal.ByteArrayWrapper;
 import org.apache.geode.redis.internal.Coder;
 import org.apache.geode.redis.internal.Command;
@@ -25,38 +26,29 @@ import org.apache.geode.redis.internal.RedisConstants.ArityDef;
 import org.apache.geode.redis.internal.RedisDataType;
 
 public class SRemExecutor extends SetExecutor {
-
-  private final int NONE_REMOVED = 0;
-
   @Override
   public void executeCommand(Command command, ExecutionHandlerContext context) {
-    List<byte[]> commandElems = command.getProcessedCommand();
+    List<ByteArrayWrapper> commandElements = command.getProcessedCommandWrappers();
 
-    if (commandElems.size() < 3) {
+    if (commandElements.size() < 3) {
       command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(), ArityDef.SREM));
       return;
     }
 
     ByteArrayWrapper key = command.getKey();
     checkDataType(key, RedisDataType.REDIS_SET, context);
-    @SuppressWarnings("unchecked")
-    Region<ByteArrayWrapper, Boolean> keyRegion =
-        (Region<ByteArrayWrapper, Boolean>) context.getRegionProvider().getRegion(key);
 
-    if (keyRegion == null) {
-      command.setResponse(Coder.getIntegerResponse(context.getByteBufAllocator(), NONE_REMOVED));
-      return;
+    RedisSet geodeRedisSet =
+        new GeodeRedisSetWithFunctions(key, context.getRegionProvider().getSetRegion());
+
+
+    ArrayList<ByteArrayWrapper> membersToRemove =
+        new ArrayList<>(commandElements.subList(2, commandElements.size()));
+    AtomicBoolean setWasDeleted = new AtomicBoolean();
+    long membersRemoved = geodeRedisSet.srem(membersToRemove, setWasDeleted);
+    if (setWasDeleted.get()) {
+      context.getKeyRegistrar().unregisterIfType(key, RedisDataType.REDIS_SET);
     }
-
-    int numRemoved = 0;
-
-    for (int i = 2; i < commandElems.size(); i++) {
-      Object oldVal;
-      oldVal = keyRegion.remove(new ByteArrayWrapper(commandElems.get(i)));
-      if (oldVal != null)
-        numRemoved++;
-    }
-
-    command.setResponse(Coder.getIntegerResponse(context.getByteBufAllocator(), numRemoved));
+    command.setResponse(Coder.getIntegerResponse(context.getByteBufAllocator(), membersRemoved));
   }
 }

@@ -12,9 +12,6 @@
  * or implied. See the License for the specific language governing permissions and limitations under
  * the License.
  */
-/**
- * File comment
- */
 package org.apache.geode.internal.cache;
 
 import java.util.Collection;
@@ -86,6 +83,9 @@ public interface InternalDataView {
   Entry getEntryOnRemote(KeyInfo key, LocalRegion localRegion, boolean allowTombstones)
       throws DataLocationException;
 
+  boolean putEntry(EntryEventImpl event, boolean ifNew, boolean ifOld, Object expectedOldValue,
+      boolean requireOldValue, long lastModified, boolean overwriteDestroyed);
+
   /**
    * Put or create an entry in the data view.
    *
@@ -93,7 +93,8 @@ public interface InternalDataView {
    * @return true if operation updated existing data, otherwise false
    */
   boolean putEntry(EntryEventImpl event, boolean ifNew, boolean ifOld, Object expectedOldValue,
-      boolean requireOldValue, long lastModified, boolean overwriteDestroyed);
+      boolean requireOldValue, long lastModified, boolean overwriteDestroyed,
+      boolean invokeCallbacks, boolean throwConcurrentModification);
 
   /**
    * Put or create an entry in the data view. Called only on the farside.

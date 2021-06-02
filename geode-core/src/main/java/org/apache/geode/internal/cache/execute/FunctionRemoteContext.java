@@ -25,14 +25,12 @@ import org.apache.geode.DataSerializable;
 import org.apache.geode.DataSerializer;
 import org.apache.geode.cache.execute.Function;
 import org.apache.geode.cache.execute.FunctionService;
-import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.cache.BucketSetHelper;
+import org.apache.geode.internal.serialization.StaticSerialization;
 import org.apache.geode.internal.serialization.Version;
 
 /**
  * FunctionContext for remote/target nodes
- *
- *
  */
 public class FunctionRemoteContext implements DataSerializable {
 
@@ -50,16 +48,19 @@ public class FunctionRemoteContext implements DataSerializable {
 
   private Function function;
 
+  private Object principal;
+
   public FunctionRemoteContext() {}
 
   public FunctionRemoteContext(final Function function, Object object, Set filter,
-      int[] bucketArray, boolean isReExecute, boolean isFnSerializationReqd) {
+      int[] bucketArray, boolean isReExecute, boolean isFnSerializationReqd, Object principal) {
     this.function = function;
     this.args = object;
     this.filter = filter;
     this.bucketArray = bucketArray;
     this.isReExecute = isReExecute;
     this.isFnSerializationReqd = isFnSerializationReqd;
+    this.principal = principal;
   }
 
   @Override
@@ -77,13 +78,20 @@ public class FunctionRemoteContext implements DataSerializable {
     }
     this.args = DataSerializer.readObject(in);
     this.filter = (HashSet) DataSerializer.readHashSet(in);
-    if (InternalDataSerializer.getVersionForDataStream(in).compareTo(Version.GEODE_1_11_0) >= 0) {
+    if (StaticSerialization.getVersionForDataStream(in).compareTo(Version.GEODE_1_11_0) >= 0) {
       this.bucketArray = DataSerializer.readIntArray(in);
     } else {
       HashSet<Integer> bucketSet = DataSerializer.readHashSet(in);
       this.bucketArray = BucketSetHelper.fromSet(bucketSet);
     }
     this.isReExecute = DataSerializer.readBoolean(in);
+
+    // Account for this change being introduced in ordinals 1.12.1 and 1.13.1 but is not
+    // compatible with 1.13.0.
+    if (StaticSerialization.getVersionForDataStream(in).isNotOlderThan(Version.GEODE_1_12_1)
+        && !StaticSerialization.getVersionForDataStream(in).equals(Version.GEODE_1_13_0)) {
+      this.principal = DataSerializer.readObject(in);
+    }
   }
 
   @Override
@@ -95,13 +103,20 @@ public class FunctionRemoteContext implements DataSerializable {
     }
     DataSerializer.writeObject(this.args, out);
     DataSerializer.writeHashSet((HashSet) this.filter, out);
-    if (InternalDataSerializer.getVersionForDataStream(out).compareTo(Version.GEODE_1_11_0) >= 0) {
+    if (StaticSerialization.getVersionForDataStream(out).compareTo(Version.GEODE_1_11_0) >= 0) {
       DataSerializer.writeIntArray(this.bucketArray, out);
     } else {
       Set<Integer> bucketSet = BucketSetHelper.toSet(this.bucketArray);
       DataSerializer.writeHashSet((HashSet) bucketSet, out);
     }
     DataSerializer.writeBoolean(this.isReExecute, out);
+
+    // Account for this change being introduced in ordinals 1.12.1 and 1.13.1 but is not
+    // compatible with 1.13.0.
+    if (StaticSerialization.getVersionForDataStream(out).isNotOlderThan(Version.GEODE_1_12_1)
+        && !StaticSerialization.getVersionForDataStream(out).equals(Version.GEODE_1_13_0)) {
+      DataSerializer.writeObject(this.principal, out);
+    }
   }
 
   public Set getFilter() {
@@ -126,6 +141,10 @@ public class FunctionRemoteContext implements DataSerializable {
 
   public String getFunctionId() {
     return functionId;
+  }
+
+  public Object getPrincipal() {
+    return principal;
   }
 
   @Override

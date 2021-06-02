@@ -46,7 +46,7 @@ import org.apache.geode.connectors.jdbc.internal.configuration.RegionMapping;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.DistributedSystem;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.management.internal.cli.functions.CliFunctionResult;
+import org.apache.geode.management.internal.functions.CliFunctionResult;
 
 public class DestroyMappingCommandFunctionTest {
 
@@ -58,14 +58,14 @@ public class DestroyMappingCommandFunctionTest {
   private RegionMapping mapping;
   private JdbcConnectorService service;
   private InternalCache cache;
-  private Region region;
-  private RegionAttributes regionAttributes;
-  private AttributesMutator regionMutator;
+  private RegionAttributes<Object, Object> regionAttributes;
+  private AttributesMutator<Object, Object> regionMutator;
 
+  @SuppressWarnings("unchecked")
   @Before
   public void setUp() {
     cache = mock(InternalCache.class);
-    region = mock(Region.class);
+    Region<Object, Object> region = mock(Region.class);
     when(region.getName()).thenReturn(regionName);
     regionAttributes = mock(RegionAttributes.class);
     regionMutator = mock(AttributesMutator.class);
@@ -132,7 +132,9 @@ public class DestroyMappingCommandFunctionTest {
 
   @Test
   public void executeFunctionGivenARegionWithJdbcLoaderRemovesTheLoader() {
-    when(regionAttributes.getCacheLoader()).thenReturn(mock(JdbcLoader.class));
+    @SuppressWarnings("unchecked")
+    final JdbcLoader<Object, Object> mockJdbcLoader = mock(JdbcLoader.class);
+    when(regionAttributes.getCacheLoader()).thenReturn(mockJdbcLoader);
     when(service.getMappingForRegion(eq(regionName))).thenReturn(mapping);
 
     function.executeFunction(context);
@@ -142,7 +144,9 @@ public class DestroyMappingCommandFunctionTest {
 
   @Test
   public void executeFunctionGivenARegionWithNonJdbcLoaderDoesNotRemoveTheLoader() {
-    when(regionAttributes.getCacheLoader()).thenReturn(mock(CacheLoader.class));
+    @SuppressWarnings("unchecked")
+    final CacheLoader<Object, Object> mockCacheLoader = mock(CacheLoader.class);
+    when(regionAttributes.getCacheLoader()).thenReturn(mockCacheLoader);
     when(service.getMappingForRegion(eq(regionName))).thenReturn(mapping);
 
     function.executeFunction(context);
@@ -152,7 +156,9 @@ public class DestroyMappingCommandFunctionTest {
 
   @Test
   public void executeFunctionGivenARegionWithJdbcWriterRemovesTheWriter() {
-    when(regionAttributes.getCacheWriter()).thenReturn(mock(JdbcWriter.class));
+    @SuppressWarnings("unchecked")
+    final JdbcWriter<Object, Object> mock = mock(JdbcWriter.class);
+    when(regionAttributes.getCacheWriter()).thenReturn(mock);
     when(service.getMappingForRegion(eq(regionName))).thenReturn(mapping);
 
     function.executeFunction(context);
@@ -162,7 +168,9 @@ public class DestroyMappingCommandFunctionTest {
 
   @Test
   public void executeFunctionGivenARegionWithNonJdbcWriterDoesNotRemoveTheWriter() {
-    when(regionAttributes.getCacheWriter()).thenReturn(mock(CacheWriter.class));
+    @SuppressWarnings("unchecked")
+    final CacheWriter<Object, Object> mock = mock(CacheWriter.class);
+    when(regionAttributes.getCacheWriter()).thenReturn(mock);
     when(service.getMappingForRegion(eq(regionName))).thenReturn(mapping);
 
     function.executeFunction(context);

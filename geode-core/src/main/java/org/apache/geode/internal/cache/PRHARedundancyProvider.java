@@ -18,9 +18,9 @@ import static java.lang.String.format;
 import static java.lang.System.lineSeparator;
 import static java.util.Collections.emptyList;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
-import static org.apache.geode.distributed.internal.DistributionConfig.GEMFIRE_PREFIX;
 import static org.apache.geode.internal.cache.ColocationHelper.checkMembersColocation;
 import static org.apache.geode.internal.cache.PartitionedRegionHelper.printCollection;
+import static org.apache.geode.util.internal.GeodeGlossary.GEMFIRE_PREFIX;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -1878,7 +1878,7 @@ public class PRHARedundancyProvider {
     }
   }
 
-  boolean isPersistentRecoveryComplete() {
+  public boolean isPersistentRecoveryComplete() {
     if (!checkMembersColocation(partitionedRegion, partitionedRegion.getMyId())) {
       return false;
     }

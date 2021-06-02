@@ -18,8 +18,10 @@ import static org.apache.geode.test.dunit.IgnoredException.addIgnoredException;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.Properties;
 import java.util.function.Supplier;
 
 import org.apache.commons.lang3.StringUtils;
@@ -29,10 +31,10 @@ import org.junit.runner.Description;
 import org.apache.geode.management.cli.Result;
 import org.apache.geode.management.internal.cli.HeadlessGfsh;
 import org.apache.geode.management.internal.cli.LogWrapper;
-import org.apache.geode.management.internal.cli.i18n.CliStrings;
 import org.apache.geode.management.internal.cli.result.CommandResult;
 import org.apache.geode.management.internal.cli.shell.Gfsh;
 import org.apache.geode.management.internal.cli.util.CommandStringBuilder;
+import org.apache.geode.management.internal.i18n.CliStrings;
 import org.apache.geode.test.dunit.IgnoredException;
 import org.apache.geode.test.junit.assertions.CommandResultAssert;
 
@@ -82,11 +84,11 @@ public class GfshCommandRule extends DescribedExternalResource {
   private CommandResult commandResult;
 
   public GfshCommandRule() {
-    createTempFolder();
+    this(null, null);
   }
 
   public GfshCommandRule(Supplier<Integer> portSupplier, PortType portType) {
-    this();
+    createTempFolder();
     this.portType = portType;
     this.portSupplier = portSupplier;
   }
@@ -151,6 +153,11 @@ public class GfshCommandRule extends DescribedExternalResource {
     assertThat(this.connected).isTrue();
   }
 
+  public void connectAndVerify(int port, PortType type, Properties properties) throws Exception {
+    connect(port, type, properties);
+    assertThat(this.connected).isTrue();
+  }
+
   public void connectAndVerify(int port, PortType type, String... options) throws Exception {
     connect(port, type, options);
     assertThat(this.connected).isTrue();
@@ -167,6 +174,19 @@ public class GfshCommandRule extends DescribedExternalResource {
     connect(port, type, CliStrings.CONNECT__USERNAME, username, CliStrings.CONNECT__PASSWORD,
         password);
     assertThat(this.connected).isTrue();
+  }
+
+  public void secureConnectWithTokenAndVerify(int port, PortType portType, String token)
+      throws Exception {
+    connect(port, portType, CliStrings.CONNECT__TOKEN, token);
+    assertThat(this.connected).isTrue();
+  }
+
+  public void connect(int port, PortType type, Properties properties) throws Exception {
+    File propertyFile = temporaryFolder.newFile();
+    FileOutputStream out = new FileOutputStream(propertyFile);
+    properties.store(out, null);
+    connect(port, type, "security-properties-file", propertyFile.getAbsolutePath());
   }
 
   public void connect(int port, PortType type, String... options) throws Exception {

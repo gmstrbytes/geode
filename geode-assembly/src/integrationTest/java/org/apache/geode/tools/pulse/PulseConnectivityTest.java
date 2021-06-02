@@ -16,6 +16,7 @@
 package org.apache.geode.tools.pulse;
 
 import static org.apache.geode.distributed.ConfigurationProperties.JMX_MANAGER_BIND_ADDRESS;
+import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.net.InetAddress;
@@ -23,7 +24,6 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Properties;
 
-import org.apache.http.HttpResponse;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -33,7 +33,6 @@ import org.junit.runners.Parameterized;
 
 import org.apache.geode.test.junit.categories.PulseTest;
 import org.apache.geode.test.junit.rules.EmbeddedPulseRule;
-import org.apache.geode.test.junit.rules.GeodeHttpClientRule;
 import org.apache.geode.test.junit.rules.LocatorStarterRule;
 import org.apache.geode.test.junit.runners.CategoryWithParameterizedRunnerFactory;
 import org.apache.geode.tools.pulse.internal.data.Cluster;
@@ -47,9 +46,6 @@ public class PulseConnectivityTest {
 
   @Rule
   public EmbeddedPulseRule pulse = new EmbeddedPulseRule();
-
-  @Rule
-  public GeodeHttpClientRule client = new GeodeHttpClientRule(locator::getHttpPort);
 
   @Parameterized.Parameter
   public static String jmxBindAddress;
@@ -72,18 +68,9 @@ public class PulseConnectivityTest {
   }
 
   @Test
-  public void testLogin() throws Exception {
-    HttpResponse response = client.loginToPulse("admin", "wrongPassword");
-    assertThat(response.getStatusLine().getStatusCode()).isEqualTo(302);
-    assertThat(response.getFirstHeader("Location").getValue())
-        .contains("/pulse/login.html?error=BAD_CREDS");
-    client.loginToPulseAndVerify("admin", "admin");
-  }
-
-  @Test
   public void testConnectToJmx() throws Exception {
     pulse.useJmxManager(jmxBindAddress, locator.getJmxPort());
-    Cluster cluster = pulse.getRepository().getCluster("admin", null);
+    Cluster cluster = pulse.getRepository().getClusterWithUserNameAndPassword("admin", null);
     assertThat(cluster.isConnectedFlag()).isTrue();
     assertThat(cluster.getServerCount()).isEqualTo(0);
   }
@@ -91,8 +78,13 @@ public class PulseConnectivityTest {
   @Test
   public void testConnectToLocator() throws Exception {
     pulse.useLocatorPort(locator.getPort());
-    Cluster cluster = pulse.getRepository().getCluster("admin", null);
+    Cluster cluster = pulse.getRepository().getClusterWithUserNameAndPassword("admin", null);
     assertThat(cluster.isConnectedFlag()).isTrue();
     assertThat(cluster.getServerCount()).isEqualTo(0);
+    assertThat(cluster.isAlive()).isTrue();
+    assertThat(cluster.isDaemon()).isTrue();
+    locator.getLocator().stop();
+    assertThat(locator.getLocator().isStopped()).isTrue();
+    await().untilAsserted(() -> assertThat(cluster.isAlive()).isFalse());
   }
 }

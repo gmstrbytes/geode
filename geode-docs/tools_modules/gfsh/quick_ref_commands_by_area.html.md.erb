@@ -209,7 +209,7 @@ limitations under the License.
 | [describe member](command-pages/describe.html#topic_D62F3D42B1D84CF68F03D54D5122806A)                                                                                             | Display details of a member with given name/id.                                                                                                        | online          |
 | [export logs](command-pages/export.html#topic_B80978CC659244AE91E2B8CE56EBDFE3)                                                                                                                 | Export/dump logs to a given directory.                                                                                                                 | online          |
 | [export stack-traces](command-pages/export.html#topic_195D27B8B2B64A4E84CF2256636D54BD)                                                                                           | Export the stack trace for a member or members.                                                                                                        | online          |
-| [gc](command-pages/gc.html)                                                                                                                                                 | Force garbage collection on a member or members.                                                                                                       | online          |
+| [gc](command-pages/gc.html)                                                                                                                                                 | Force garbage collection on a member or members. (Development only, not advised for production systems.)                                                                                                      | online          |
 | [list clients](command-pages/list.html#topic_ts1_qb1_dk)                                                                                                                                    | Displays a list of connected clients.                                                                                                                  | online          |
 | [list members](command-pages/list.html#topic_5B5BFB2E5F314210858641BE3A689637)                                                                                                                | Display all or a subset of members.                                                                                                                    | online          |
 | [netstat](command-pages/netstat.html)                                                                                             | Report network information and statistics via the "netstat" operating system command.                                                                  | online          |
@@ -275,6 +275,15 @@ limitations under the License.
 | [configure pdx](command-pages/configure.html#topic_jdkdiqbgphqh)                         | Configure Portable Data eXchange for all the cache(s) in the cluster. | online, offline |
 | [pdx rename](command-pages/pdx.html) | Renames PDX types in an offline disk store.                           | online, offline |
 
+## <a id="topic_query_service_commands" class="no-quick-link"></a>Query Service Commands
+
+<a id="topic_query_service_commands_table"></a>
+
+| Command                                                                                                                                                                   | Description                                                                          | Availability    |
+|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------|-----------------|
+| [alter query-service](command-pages/alter.html#topic_alter_query_service)                       | Alter configuration details of the query service.                     | online |
+| [describe query-service](command-pages/describe.html#topic_describe_query_service)                       | Print the information that describes the current configuration of the query service.                     | online |
+
 ## <a id="topic_EF03119A40EE492984F3B6248596E1DD" class="no-quick-link"></a>Region Commands
 
 <a id="topic_EF03119A40EE492984F3B6248596E1DD__table_a5k_r31_3l"></a>
@@ -287,6 +296,8 @@ limitations under the License.
 | [destroy region](command-pages/destroy.html#topic_BEDACECF4599407794ACBC0E56B30F65)                                                                                              | Destroy or remove a region.                                                                                                                                | online       |
 | [list regions](command-pages/list.html#topic_F0ECEFF26086474498598035DD83C588) | Display regions of a member or members. If no parameter is specified, all regions in the cluster are listed. | online       |
 | [rebalance](command-pages/rebalance.html)                                                                                                                                     | Rebalance partitioned regions.                                                                                                                             | online       |
+| [restore redundancy](command-pages/restore.html)                                                                                                                                     | Restore redundancy to partitioned regions and optionally reassign which members host the primary copies.                                                                                                                       | online       |
+| [status redundancy](command-pages/status.html#topic_status_redundancy)                                                                                                                                     | Display the redundancy status of partitioned regions.                                                                                                                             | online       |
 
 ## <a id="topic_8A341FF86958466E9E64CF06CD21FED9" class="no-quick-link"></a>Server Commands
 

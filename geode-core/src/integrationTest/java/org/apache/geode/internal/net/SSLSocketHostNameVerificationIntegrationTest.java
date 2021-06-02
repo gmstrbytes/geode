@@ -22,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertNull;
 import static org.mockito.Mockito.mock;
 
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -167,7 +168,7 @@ public class SSLSocketHostNameVerificationIntegrationTest {
     this.clientSocket = clientChannel.socket();
 
     SSLEngine sslEngine =
-        this.socketCreator.createSSLEngine(this.localHost.getHostName(), 1234);
+        this.socketCreator.createSSLEngine(this.localHost.getHostName(), 1234, true);
 
     try {
       this.socketCreator.handshakeSSLSocketChannel(clientSocket.getChannel(),
@@ -199,7 +200,7 @@ public class SSLSocketHostNameVerificationIntegrationTest {
       try {
         socket = serverSocket.accept();
         SocketCreator sc = SocketCreatorFactory.getSocketCreatorForComponent(CLUSTER);
-        final SSLEngine sslEngine = sc.createSSLEngine(this.localHost.getHostName(), 1234);
+        final SSLEngine sslEngine = sc.createSSLEngine(this.localHost.getHostName(), 1234, false);
         engine =
             sc.handshakeSSLSocketChannel(socket.getChannel(),
                 sslEngine,
@@ -214,9 +215,11 @@ public class SSLSocketHostNameVerificationIntegrationTest {
           final NioSslEngine nioSslEngine = engine;
           engine.close(socket.getChannel());
           assertThatThrownBy(() -> {
-            nioSslEngine.unwrap(ByteBuffer.wrap(new byte[0]));
+            try (final ByteBufferSharing unused =
+                nioSslEngine.unwrap(ByteBuffer.wrap(new byte[0]))) {
+            }
           })
-              .isInstanceOf(IllegalStateException.class);
+              .isInstanceOf(IOException.class);
         }
       }
     }, this.testName.getMethodName() + "-server");

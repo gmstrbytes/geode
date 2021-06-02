@@ -34,10 +34,10 @@ import java.util.StringTokenizer;
 import org.apache.commons.lang3.StringUtils;
 
 import org.apache.geode.distributed.internal.DistributionConfig;
-import org.apache.geode.distributed.internal.membership.gms.messenger.MembershipInformation;
+import org.apache.geode.distributed.internal.membership.api.MembershipInformation;
 import org.apache.geode.internal.Assert;
-import org.apache.geode.internal.admin.SSLConfig;
 import org.apache.geode.internal.admin.TransportConfig;
+import org.apache.geode.internal.net.SSLConfig;
 
 /**
  * Tranport config for RemoteGfManagerAgent.
@@ -77,7 +77,7 @@ public class RemoteTransportConfig implements TransportConfig {
     this.vmKind = vmKind;
     this.tcpPort = config.getTcpPort();
     this.membershipPortRange = getMembershipPortRangeString(config.getMembershipPortRange());
-    this.sslConfig = new SSLConfig();
+    this.sslConfig = new SSLConfig.Builder().build();
 
     String initialHosts = config.getLocators();
     if (initialHosts == null) {

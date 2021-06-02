@@ -14,9 +14,9 @@
  */
 package org.apache.geode.internal.cache.wan.parallel;
 
+import static org.apache.geode.cache.wan.GatewaySender.DEFAULT_BATCH_SIZE;
 import static org.apache.geode.internal.cache.LocalRegion.InitializationLevel.BEFORE_INITIAL_IMAGE;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -40,7 +40,6 @@ import org.apache.logging.log4j.Logger;
 import org.apache.geode.CancelException;
 import org.apache.geode.SystemFailure;
 import org.apache.geode.annotations.internal.MutableForTesting;
-import org.apache.geode.cache.AttributesFactory;
 import org.apache.geode.cache.AttributesMutator;
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.CacheException;
@@ -53,6 +52,7 @@ import org.apache.geode.cache.PartitionAttributesFactory;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.RegionAttributes;
 import org.apache.geode.cache.RegionDestroyedException;
+import org.apache.geode.cache.RegionShortcut;
 import org.apache.geode.cache.asyncqueue.internal.AsyncEventQueueImpl;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
@@ -69,12 +69,14 @@ import org.apache.geode.internal.cache.EntryEventImpl;
 import org.apache.geode.internal.cache.ForceReattemptException;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.InternalRegionArguments;
+import org.apache.geode.internal.cache.InternalRegionFactory;
 import org.apache.geode.internal.cache.LocalRegion;
 import org.apache.geode.internal.cache.LocalRegion.InitializationLevel;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.PartitionedRegionHelper;
 import org.apache.geode.internal.cache.PrimaryBucketException;
 import org.apache.geode.internal.cache.RegionQueue;
+import org.apache.geode.internal.cache.partitioned.colocation.ColocationLoggerFactory;
 import org.apache.geode.internal.cache.wan.AbstractGatewaySender;
 import org.apache.geode.internal.cache.wan.AsyncEventQueueConfigurationException;
 import org.apache.geode.internal.cache.wan.GatewaySenderConfigurationException;
@@ -92,21 +94,18 @@ import org.apache.geode.management.internal.beans.AsyncEventQueueMBean;
 import org.apache.geode.management.internal.beans.GatewaySenderMBean;
 
 public class ParallelGatewaySenderQueue implements RegionQueue {
-
   protected static final Logger logger = LogService.getLogger();
-
-  protected final Map<String, PartitionedRegion> userRegionNameToshadowPRMap =
-      new ConcurrentHashMap<String, PartitionedRegion>();
+  protected final Map<String, PartitionedRegion> userRegionNameToShadowPRMap =
+      new ConcurrentHashMap<>();
+  private static final String SHADOW_BUCKET_PATH_PREFIX =
+      Region.SEPARATOR + PartitionedRegionHelper.PR_ROOT_REGION_NAME + Region.SEPARATOR;
 
   // <PartitionedRegion, Map<Integer, List<Object>>>
   private final Map regionToDispatchedKeysMap = new ConcurrentHashMap();
 
   protected final StoppableReentrantLock buckToDispatchLock;
-
   private final StoppableCondition regionToDispatchedKeysMapEmpty;
-
   protected final StoppableReentrantLock queueEmptyLock;
-
   private volatile boolean isQueueEmpty = true;
 
   /**
@@ -195,7 +194,7 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
       try {
         String regionPath =
             ColocationHelper.getLeaderRegion((PartitionedRegion) event.getRegion()).getFullPath();
-        prQ = userRegionNameToshadowPRMap.get(regionPath);
+        prQ = userRegionNameToShadowPRMap.get(regionPath);
         destroyEventFromQueue(prQ, bucketId, previousTailKeyTobeRemoved);
       } catch (EntryNotFoundException e) {
         if (logger.isDebugEnabled()) {
@@ -311,15 +310,14 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
     try {
       String regionName = userRegion.getFullPath();
 
-      if (this.userRegionNameToshadowPRMap.containsKey(regionName))
+      if (this.userRegionNameToShadowPRMap.containsKey(regionName))
         return;
 
       InternalCache cache = sender.getCache();
       final String prQName = getQueueName(sender.getId(), userRegion.getFullPath());
       prQ = (PartitionedRegion) cache.getRegion(prQName);
       if (prQ == null) {
-        // TODO:REF:Avoid deprecated apis
-        AttributesFactory fact = new AttributesFactory();
+        InternalRegionFactory fact = cache.createInternalRegionFactory();
         // Fix for 48621 - don't enable concurrency checks
         // for queue buckets., event with persistence
         fact.setConcurrencyChecksEnabled(false);
@@ -353,7 +351,7 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
         fact.setEvictionAttributes(ea);
         fact.setPartitionAttributes(pfact.create());
 
-        final RegionAttributes ra = fact.create();
+        final RegionAttributes ra = fact.getCreateAttributes();
 
         if (logger.isDebugEnabled()) {
           logger.debug("{}: Attempting to create queue region: {}", this, prQName);
@@ -363,40 +361,30 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
             new ParallelGatewaySenderQueueMetaRegion(prQName, ra, null, cache, sender,
                 sender.getStatisticsClock());
 
-        try {
-          prQ = (PartitionedRegion) cache.createVMRegion(prQName, ra,
-              new InternalRegionArguments().setInternalMetaRegion(meta).setDestroyLockFlag(true)
-                  .setSnapshotInputStream(null).setImageTarget(null));
+        fact.setInternalMetaRegion(meta).setDestroyLockFlag(true)
+            .setSnapshotInputStream(null).setImageTarget(null);
+        prQ = (PartitionedRegion) fact.create(prQName);
 
-          if (logger.isDebugEnabled()) {
-            logger.debug("Region created  : {} partition Attributes : {}", prQ,
-                prQ.getPartitionAttributes());
-          }
-
-          // TODO This should not be set on the PR but on the GatewaySender
-          prQ.enableConflation(sender.isBatchConflationEnabled());
-
-          // Before going ahead, make sure all the buckets of shadowPR are
-          // loaded
-          // and primary nodes have been decided.
-          // This is required in case of persistent PR and sender.
-          if (prQ.getLocalMaxMemory() != 0) {
-            Iterator<Integer> itr = prQ.getRegionAdvisor().getBucketSet().iterator();
-            while (itr.hasNext()) {
-              itr.next();
-            }
-          }
-          // In case of Replicated Region it may not be necessary.
-
-        } catch (IOException veryUnLikely) {
-          logger.fatal("Unexpected Exception during init of " +
-              this.getClass(),
-              veryUnLikely);
-        } catch (ClassNotFoundException alsoUnlikely) {
-          logger.fatal("Unexpected Exception during init of " +
-              this.getClass(),
-              alsoUnlikely);
+        if (logger.isDebugEnabled()) {
+          logger.debug("Region created  : {} partition Attributes : {}", prQ,
+              prQ.getPartitionAttributes());
         }
+
+        // TODO This should not be set on the PR but on the GatewaySender
+        prQ.enableConflation(sender.isBatchConflationEnabled());
+
+        // Before going ahead, make sure all the buckets of shadowPR are
+        // loaded
+        // and primary nodes have been decided.
+        // This is required in case of persistent PR and sender.
+        if (prQ.getLocalMaxMemory() != 0) {
+          Iterator<Integer> itr = prQ.getRegionAdvisor().getBucketSet().iterator();
+          while (itr.hasNext()) {
+            itr.next();
+          }
+        }
+        // In case of Replicated Region it may not be necessary.
+
         if (logger.isDebugEnabled()) {
           logger.debug("{}: Created queue region: {}", this, prQ);
         }
@@ -417,7 +405,7 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
       }
     } finally {
       if (prQ != null) {
-        this.userRegionNameToshadowPRMap.put(userRegion.getFullPath(), prQ);
+        this.userRegionNameToShadowPRMap.put(userRegion.getFullPath(), prQ);
       }
       this.sender.getLifeCycleLock().writeLock().unlock();
     }
@@ -445,13 +433,13 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
         // to leader PR)
         // though, internally, colocate the GatewaySender's shadowPR with the leader PR in
         // colocation chain
-        if (!this.userRegionNameToshadowPRMap.containsKey(leaderRegionName)) {
+        if (!this.userRegionNameToShadowPRMap.containsKey(leaderRegionName)) {
           addShadowPartitionedRegionForUserPR(ColocationHelper.getLeaderRegion(userPR));
         }
         return;
       }
 
-      if (this.userRegionNameToshadowPRMap.containsKey(regionName))
+      if (this.userRegionNameToShadowPRMap.containsKey(regionName))
         return;
 
       if (userPR.getDataPolicy().withPersistence() && !sender.isPersistenceEnabled()) {
@@ -467,9 +455,14 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
       final String prQName = sender.getId() + QSTRING + convertPathToName(userPR.getFullPath());
       prQ = (PartitionedRegion) cache.getRegion(prQName);
       if (prQ == null) {
-        // TODO:REF:Avoid deprecated apis
+        RegionShortcut regionShortcut;
+        if (sender.isPersistenceEnabled() && !isAccessor) {
+          regionShortcut = RegionShortcut.PARTITION_PERSISTENT;
+        } else {
+          regionShortcut = RegionShortcut.PARTITION;
+        }
+        InternalRegionFactory fact = cache.createInternalRegionFactory(regionShortcut);
 
-        AttributesFactory fact = new AttributesFactory();
         fact.setConcurrencyChecksEnabled(false);
         PartitionAttributesFactory pfact = new PartitionAttributesFactory();
         pfact.setTotalNumBuckets(userPR.getTotalNumberOfBuckets());
@@ -483,10 +476,6 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
 
         pfact.setStartupRecoveryDelay(userPR.getPartitionAttributes().getStartupRecoveryDelay());
         pfact.setRecoveryDelay(userPR.getPartitionAttributes().getRecoveryDelay());
-
-        if (sender.isPersistenceEnabled() && !isAccessor) {
-          fact.setDataPolicy(DataPolicy.PERSISTENT_PARTITION);
-        }
 
         fact.setDiskStoreName(sender.getDiskStoreName());
 
@@ -505,7 +494,7 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
         fact.setEvictionAttributes(ea);
         fact.setPartitionAttributes(pfact.create());
 
-        final RegionAttributes ra = fact.create();
+        final RegionAttributes ra = fact.getCreateAttributes();
 
         if (logger.isDebugEnabled()) {
           logger.debug("{}: Attempting to create queue region: {}", this, prQName);
@@ -514,28 +503,25 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
         ParallelGatewaySenderQueueMetaRegion meta =
             metaRegionFactory.newMetataRegion(cache, prQName, ra, sender);
 
-        try {
-          prQ = (PartitionedRegion) cache.createVMRegion(prQName, ra,
-              new InternalRegionArguments().setInternalMetaRegion(meta).setDestroyLockFlag(true)
-                  .setInternalRegion(true).setSnapshotInputStream(null).setImageTarget(null));
-          // at this point we should be able to assert prQ == meta;
+        fact.setInternalMetaRegion(meta);
+        fact.setDestroyLockFlag(true);
+        fact.setInternalRegion(true);
+        fact.setSnapshotInputStream(null);
+        fact.setImageTarget(null);
+        prQ = (PartitionedRegion) fact.create(prQName);
+        // at this point we should be able to assert prQ == meta;
 
-          // TODO This should not be set on the PR but on the GatewaySender
-          prQ.enableConflation(sender.isBatchConflationEnabled());
-          if (isAccessor)
-            return; // return from here if accessor node
+        // TODO This should not be set on the PR but on the GatewaySender
+        prQ.enableConflation(sender.isBatchConflationEnabled());
+        if (isAccessor)
+          return; // return from here if accessor node
 
-          // Add the overflow statistics to the mbean
-          addOverflowStatisticsToMBean(cache, prQ);
+        // Add the overflow statistics to the mbean
+        addOverflowStatisticsToMBean(cache, prQ);
 
-          // Wait for buckets to be recovered.
-          prQ.shadowPRWaitForBucketRecovery();
+        // Wait for buckets to be recovered.
+        prQ.shadowPRWaitForBucketRecovery();
 
-        } catch (IOException | ClassNotFoundException veryUnLikely) {
-          logger.fatal("Unexpected Exception during init of " +
-              this.getClass(),
-              veryUnLikely);
-        }
         if (logger.isDebugEnabled()) {
           logger.debug("{}: Created queue region: {}", this, prQ);
         }
@@ -550,7 +536,7 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
 
     } finally {
       if (prQ != null) {
-        this.userRegionNameToshadowPRMap.put(userPR.getFullPath(), prQ);
+        this.userRegionNameToShadowPRMap.put(userPR.getFullPath(), prQ);
       }
       /*
        * Here, enqueueTempEvents need to be invoked when a sender is already running and userPR is
@@ -664,19 +650,17 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
 
     boolean isDREvent = isDREvent(sender.getCache(), value);
 
-    Region region = value.getRegion();
-    String regionPath = null;
-    if (isDREvent) {
-      regionPath = region.getFullPath();
-    } else {
+    String regionPath = value.getRegionPath();
+    if (!isDREvent) {
+      Region region = sender.getCache().getRegion(regionPath, true);
       regionPath = ColocationHelper.getLeaderRegion((PartitionedRegion) region).getFullPath();
     }
     if (isDebugEnabled) {
-      logger.debug("Put is for the region {}", region);
+      logger.debug("Put is for the region {}", regionPath);
     }
-    if (!this.userRegionNameToshadowPRMap.containsKey(regionPath)) {
+    if (!this.userRegionNameToShadowPRMap.containsKey(regionPath)) {
       if (isDebugEnabled) {
-        logger.debug("The userRegionNameToshadowPRMap is {}", userRegionNameToshadowPRMap);
+        logger.debug("The userRegionNameToshadowPRMap is {}", userRegionNameToShadowPRMap);
       }
       logger.warn(
           "GatewaySender: Not queuing the event {}, as the region for which this event originated is not yet configured in the GatewaySender",
@@ -685,7 +669,7 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
       return false;
     }
 
-    PartitionedRegion prQ = this.userRegionNameToshadowPRMap.get(regionPath);
+    PartitionedRegion prQ = this.userRegionNameToShadowPRMap.get(regionPath);
     int bucketId = value.getBucketId();
     Object key = null;
     if (!isDREvent) {
@@ -714,29 +698,31 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
 
     try {
       if (brq == null) {
+        // Full path of the bucket
+        final String bucketFullPath = SHADOW_BUCKET_PATH_PREFIX + prQ.getBucketName(bucketId);
+
         // Set the threadInitLevel to BEFORE_INITIAL_IMAGE.
         final InitializationLevel oldLevel =
             LocalRegion.setThreadInitLevelRequirement(BEFORE_INITIAL_IMAGE);
+
         try {
-          // Full path of the bucket:
-
-          final String bucketFullPath =
-              Region.SEPARATOR + PartitionedRegionHelper.PR_ROOT_REGION_NAME + Region.SEPARATOR
-                  + prQ.getBucketName(bucketId);
-
-          brq = (AbstractBucketRegionQueue) prQ.getCache().getRegionByPath(bucketFullPath);
+          brq = (AbstractBucketRegionQueue) prQ.getCache().getInternalRegionByPath(bucketFullPath);
           if (isDebugEnabled) {
             logger.debug(
                 "ParallelGatewaySenderOrderedQueue : The bucket in the cache is bucketRegionName : {} bucket : {}",
                 bucketFullPath, brq);
           }
           if (brq != null) {
+            boolean intializingLocked = brq.lockWhenRegionIsInitializing();
             brq.getInitializationLock().readLock().lock();
             try {
               putIntoBucketRegionQueue(brq, key, value);
               putDone = true;
             } finally {
               brq.getInitializationLock().readLock().unlock();
+              if (intializingLocked) {
+                brq.unlockWhenRegionIsInitializing();
+              }
             }
           } else if (isDREvent) {
             // in case of DR with PGS, if shadow bucket is not found event after
@@ -750,8 +736,8 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
             // chain is getting destroyed one by one starting from child region
             // i.e this bucket due to moveBucket operation
             // In that case we don't want to store this event.
-            if (((PartitionedRegion) prQ.getColocatedWithRegion()).getRegionAdvisor()
-                .getBucketAdvisor(bucketId).getShadowBucketDestroyed()) {
+            if (prQ.getColocatedWithRegion().getRegionAdvisor().getBucketAdvisor(bucketId)
+                .isShadowBucketDestroyed(bucketFullPath)) {
               if (isDebugEnabled) {
                 logger.debug(
                     "ParallelGatewaySenderOrderedQueue not putting key {} : Value : {} as shadowPR bucket is destroyed.",
@@ -773,14 +759,19 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
               }
 
               synchronized (tempQueue) {
-                brq = (AbstractBucketRegionQueue) prQ.getCache().getRegionByPath(bucketFullPath);
+                brq = (AbstractBucketRegionQueue) prQ.getCache()
+                    .getInternalRegionByPath(bucketFullPath);
                 if (brq != null) {
+                  boolean intializingLocked = brq.lockWhenRegionIsInitializing();
                   brq.getInitializationLock().readLock().lock();
                   try {
                     putIntoBucketRegionQueue(brq, key, value);
                     putDone = true;
                   } finally {
                     brq.getInitializationLock().readLock().unlock();
+                    if (intializingLocked) {
+                      brq.unlockWhenRegionIsInitializing();
+                    }
                   }
                 } else {
                   tempQueue.add(value);
@@ -800,17 +791,16 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
           LocalRegion.setThreadInitLevelRequirement(oldLevel);
         }
       } else {
-        boolean thisbucketDestroyed = false;
+        boolean thisBucketDestroyed = brq.isDestroyed();
 
         if (!isDREvent) {
-          thisbucketDestroyed =
-              ((PartitionedRegion) prQ.getColocatedWithRegion()).getRegionAdvisor()
-                  .getBucketAdvisor(bucketId).getShadowBucketDestroyed() || brq.isDestroyed();
-        } else {
-          thisbucketDestroyed = brq.isDestroyed();
+          // Full path of the bucket
+          final String bucketFullPath = SHADOW_BUCKET_PATH_PREFIX + prQ.getBucketName(bucketId);
+          thisBucketDestroyed |= prQ.getColocatedWithRegion().getRegionAdvisor()
+              .getBucketAdvisor(bucketId).isShadowBucketDestroyed(bucketFullPath);
         }
 
-        if (!thisbucketDestroyed) {
+        if (!thisBucketDestroyed) {
           putIntoBucketRegionQueue(brq, key, value);
           putDone = true;
         } else {
@@ -825,6 +815,7 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
     } finally {
       notifyEventProcessorIfRequired();
     }
+
     return putDone;
   }
 
@@ -849,7 +840,7 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
     }
   }
 
-  private void putIntoBucketRegionQueue(AbstractBucketRegionQueue brq, Object key,
+  void putIntoBucketRegionQueue(AbstractBucketRegionQueue brq, Object key,
       GatewaySenderEventImpl value) {
     boolean addedValueToQueue = false;
     try {
@@ -884,19 +875,19 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
    */
   @Override
   public Region getRegion() {
-    return this.userRegionNameToshadowPRMap.size() == 1
-        ? (Region) this.userRegionNameToshadowPRMap.values().toArray()[0] : null;
+    return this.userRegionNameToShadowPRMap.size() == 1
+        ? (Region) this.userRegionNameToShadowPRMap.values().toArray()[0] : null;
   }
 
   public PartitionedRegion getRegion(String fullpath) {
-    return this.userRegionNameToshadowPRMap.get(fullpath);
+    return this.userRegionNameToShadowPRMap.get(fullpath);
   }
 
   public PartitionedRegion removeShadowPR(String fullpath) {
     try {
       this.sender.getLifeCycleLock().writeLock().lock();
       this.sender.setEnqueuedAllTempQueueEvents(false);
-      return this.userRegionNameToshadowPRMap.remove(fullpath);
+      return this.userRegionNameToShadowPRMap.remove(fullpath);
     } finally {
       sender.getLifeCycleLock().writeLock().unlock();
     }
@@ -910,15 +901,15 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
    * Returns the set of shadowPR backign this queue.
    */
   public Set<PartitionedRegion> getRegions() {
-    return new HashSet(this.userRegionNameToshadowPRMap.values());
+    return new HashSet(this.userRegionNameToShadowPRMap.values());
   }
 
   // TODO: Find optimal way to get Random shadow pr as this will be called in each put and peek.
   protected PartitionedRegion getRandomShadowPR() {
     PartitionedRegion prQ = null;
-    if (this.userRegionNameToshadowPRMap.values().size() > 0) {
-      int randomIndex = new Random().nextInt(this.userRegionNameToshadowPRMap.size());
-      prQ = (PartitionedRegion) this.userRegionNameToshadowPRMap.values().toArray()[randomIndex];
+    if (this.userRegionNameToShadowPRMap.values().size() > 0) {
+      int randomIndex = new Random().nextInt(this.userRegionNameToShadowPRMap.size());
+      prQ = (PartitionedRegion) this.userRegionNameToShadowPRMap.values().toArray()[randomIndex];
     }
     return prQ;
   }
@@ -940,7 +931,7 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
 
   protected boolean areLocalBucketQueueRegionsPresent() {
     boolean bucketsAvailable = false;
-    for (PartitionedRegion prQ : this.userRegionNameToshadowPRMap.values()) {
+    for (PartitionedRegion prQ : this.userRegionNameToShadowPRMap.values()) {
       if (prQ.getDataStore().getAllLocalBucketRegions().size() > 0)
         return true;
     }
@@ -1004,11 +995,11 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
         Object key = null;
         if (event.getRegion() != null) {
           if (isDREvent(sender.getCache(), event)) {
-            prQ = this.userRegionNameToshadowPRMap.get(event.getRegion().getFullPath());
+            prQ = this.userRegionNameToShadowPRMap.get(event.getRegion().getFullPath());
             bucketId = event.getEventId().getBucketID();
             key = event.getEventId();
           } else {
-            prQ = this.userRegionNameToshadowPRMap.get(ColocationHelper
+            prQ = this.userRegionNameToShadowPRMap.get(ColocationHelper
                 .getLeaderRegion((PartitionedRegion) event.getRegion()).getFullPath());
             bucketId = event.getBucketId();
             key = event.getShadowKey();
@@ -1020,11 +1011,11 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
           if (region != null && !region.isDestroyed()) {
             // TODO: We have to get colocated parent region for this region
             if (region instanceof DistributedRegion) {
-              prQ = this.userRegionNameToshadowPRMap.get(region.getFullPath());
+              prQ = this.userRegionNameToShadowPRMap.get(region.getFullPath());
               event.getBucketId();
               key = event.getEventId();
             } else {
-              prQ = this.userRegionNameToshadowPRMap
+              prQ = this.userRegionNameToShadowPRMap
                   .get(ColocationHelper.getLeaderRegion((PartitionedRegion) region).getFullPath());
               event.getBucketId();
               key = event.getShadowKey();
@@ -1213,7 +1204,6 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
     final boolean isDebugEnabled = logger.isDebugEnabled();
 
     PartitionedRegion prQ = getRandomShadowPR();
-    List<GatewaySenderEventImpl> batch = new ArrayList<>();
     if (prQ == null || prQ.getLocalMaxMemory() == 0) {
       try {
         Thread.sleep(50);
@@ -1221,17 +1211,19 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
         Thread.currentThread().interrupt();
       }
       blockProcessorThreadIfRequired();
-      return batch;
+      return Collections.EMPTY_LIST;
     }
+    List<GatewaySenderEventImpl> batch =
+        new ArrayList<>(batchSize == BATCH_BASED_ON_TIME_ONLY ? DEFAULT_BATCH_SIZE : batchSize);
 
     long start = System.currentTimeMillis();
     long end = start + timeToWait;
 
     // Add peeked events
-    addPeekedEvents(batch, batchSize);
+    addPeekedEvents(batch, batchSize == BATCH_BASED_ON_TIME_ONLY ? DEFAULT_BATCH_SIZE : batchSize);
 
     int bId = -1;
-    while (batch.size() < batchSize) {
+    while (batchSize == BATCH_BASED_ON_TIME_ONLY || batch.size() < batchSize) {
       if (areLocalBucketQueueRegionsPresent() && ((bId = getRandomPrimaryBucket(prQ)) != -1)) {
         GatewaySenderEventImpl object = (GatewaySenderEventImpl) peekAhead(prQ, bId);
         if (object != null) {
@@ -1438,7 +1430,7 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
   public String displayContent() {
     int size = 0;
     StringBuffer sb = new StringBuffer();
-    for (PartitionedRegion prQ : this.userRegionNameToshadowPRMap.values()) {
+    for (PartitionedRegion prQ : this.userRegionNameToShadowPRMap.values()) {
       if (prQ != null && prQ.getDataStore() != null) {
         Set<BucketRegion> allLocalBuckets = prQ.getDataStore().getAllLocalBucketRegions();
         for (BucketRegion br : allLocalBuckets) {
@@ -1457,7 +1449,7 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
 
   public int localSize(boolean includeSecondary) {
     int size = 0;
-    for (PartitionedRegion prQ : this.userRegionNameToshadowPRMap.values()) {
+    for (PartitionedRegion prQ : this.userRegionNameToShadowPRMap.values()) {
       if (prQ != null && prQ.getDataStore() != null) {
         if (includeSecondary) {
           size += prQ.getDataStore().getSizeOfLocalBuckets();
@@ -1475,7 +1467,7 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
 
   public int localSizeForProcessor() {
     int size = 0;
-    for (PartitionedRegion prQ : this.userRegionNameToshadowPRMap.values()) {
+    for (PartitionedRegion prQ : this.userRegionNameToShadowPRMap.values()) {
       if (((PartitionedRegion) prQ.getRegion()).getDataStore() != null) {
         Set<BucketRegion> primaryBuckets =
             ((PartitionedRegion) prQ.getRegion()).getDataStore().getAllLocalPrimaryBucketRegions();
@@ -1496,7 +1488,7 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
   @Override
   public int size() {
     int size = 0;
-    for (PartitionedRegion prQ : this.userRegionNameToshadowPRMap.values()) {
+    for (PartitionedRegion prQ : this.userRegionNameToShadowPRMap.values()) {
       if (logger.isDebugEnabled()) {
         logger.debug("The name of the queue region is {} and the size is {}. keyset size is {}",
             prQ.getName(), prQ.size(), prQ.keys().size());
@@ -1509,7 +1501,7 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
 
   @Override
   public void addCacheListener(CacheListener listener) {
-    for (PartitionedRegion prQ : this.userRegionNameToshadowPRMap.values()) {
+    for (PartitionedRegion prQ : this.userRegionNameToShadowPRMap.values()) {
       AttributesMutator mutator = prQ.getAttributesMutator();
       mutator.addCacheListener(listener);
     }
@@ -1535,7 +1527,7 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
 
   public long getNumEntriesOverflowOnDiskTestOnly() {
     long numEntriesOnDisk = 0;
-    for (PartitionedRegion prQ : this.userRegionNameToshadowPRMap.values()) {
+    for (PartitionedRegion prQ : this.userRegionNameToShadowPRMap.values()) {
       DiskRegionStats diskStats = prQ.getDiskRegionStats();
       if (diskStats == null) {
         if (logger.isDebugEnabled()) {
@@ -1557,7 +1549,7 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
 
   public long getNumEntriesInVMTestOnly() {
     long numEntriesInVM = 0;
-    for (PartitionedRegion prQ : this.userRegionNameToshadowPRMap.values()) {
+    for (PartitionedRegion prQ : this.userRegionNameToShadowPRMap.values()) {
       DiskRegionStats diskStats = prQ.getDiskRegionStats();
       if (diskStats == null) {
         if (logger.isDebugEnabled()) {
@@ -1799,7 +1791,7 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
               .setSnapshotInputStream(null).setImageTarget(null)
               .setIsUsedForParallelGatewaySenderQueue(true)
               .setParallelGatewaySender((AbstractGatewaySender) pgSender),
-          statisticsClock);
+          statisticsClock, ColocationLoggerFactory.create());
       this.sender = (AbstractGatewaySender) pgSender;
 
     }
@@ -1844,7 +1836,7 @@ public class ParallelGatewaySenderQueue implements RegionQueue {
 
   public long estimateMemoryFootprint(SingleObjectSizer sizer) {
     return sizer.sizeof(this) + sizer.sizeof(regionToDispatchedKeysMap)
-        + sizer.sizeof(userRegionNameToshadowPRMap) + sizer.sizeof(bucketToTempQueueMap)
+        + sizer.sizeof(userRegionNameToShadowPRMap) + sizer.sizeof(bucketToTempQueueMap)
         + sizer.sizeof(peekedEvents) + sizer.sizeof(conflationExecutor);
   }
 

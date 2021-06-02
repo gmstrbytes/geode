@@ -52,7 +52,6 @@ import org.apache.geode.cache.server.CacheServer;
 import org.apache.geode.cache.util.CacheListenerAdapter;
 import org.apache.geode.cache.util.CqListenerAdapter;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.internal.cache.PoolFactoryImpl;
@@ -63,6 +62,7 @@ import org.apache.geode.test.dunit.LogWriterUtils;
 import org.apache.geode.test.dunit.internal.JUnit4DistributedTestCase;
 import org.apache.geode.test.dunit.rules.ClusterStartupRule;
 import org.apache.geode.test.dunit.rules.DistributedRule;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 
 /**
@@ -99,6 +99,7 @@ public class CacheServerTestUtil extends JUnit4DistributedTestCase {
     ClientCacheFactory ccf = new ClientCacheFactory(dsProperties);
     if (poolAttr != null) {
       ccf.setPoolFreeConnectionTimeout(poolAttr.getFreeConnectionTimeout())
+          .setPoolServerConnectionTimeout(poolAttr.getServerConnectionTimeout())
           .setPoolLoadConditioningInterval(poolAttr.getLoadConditioningInterval())
           .setPoolSocketBufferSize(poolAttr.getSocketBufferSize())
           .setPoolMinConnections(poolAttr.getMinConnections())
@@ -440,8 +441,8 @@ public class CacheServerTestUtil extends JUnit4DistributedTestCase {
    */
   public static void disableShufflingOfEndpoints() {
     // TODO DISABLE_RANDOM doesn't seem to be used anywhere
-    System.setProperty(DistributionConfig.GEMFIRE_PREFIX + "PoolImpl.DISABLE_RANDOM", "true");
-    System.setProperty(DistributionConfig.GEMFIRE_PREFIX + "bridge.disableShufflingOfEndpoints",
+    System.setProperty(GeodeGlossary.GEMFIRE_PREFIX + "PoolImpl.DISABLE_RANDOM", "true");
+    System.setProperty(GeodeGlossary.GEMFIRE_PREFIX + "bridge.disableShufflingOfEndpoints",
         "true");
   }
 
@@ -452,8 +453,8 @@ public class CacheServerTestUtil extends JUnit4DistributedTestCase {
    */
   public static void enableShufflingOfEndpoints() {
     // TODO DISABLE_RANDOM doesn't seem to be used anywhere
-    System.setProperty(DistributionConfig.GEMFIRE_PREFIX + "PoolImpl.DISABLE_RANDOM", "false");
-    System.setProperty(DistributionConfig.GEMFIRE_PREFIX + "bridge.disableShufflingOfEndpoints",
+    System.setProperty(GeodeGlossary.GEMFIRE_PREFIX + "PoolImpl.DISABLE_RANDOM", "false");
+    System.setProperty(GeodeGlossary.GEMFIRE_PREFIX + "bridge.disableShufflingOfEndpoints",
         "false");
   }
 
@@ -461,7 +462,7 @@ public class CacheServerTestUtil extends JUnit4DistributedTestCase {
    * Resets the 'disableShufflingOfEndpoints' flag
    */
   public static void resetDisableShufflingOfEndpointsFlag() {
-    System.setProperty(DistributionConfig.GEMFIRE_PREFIX + "bridge.disableShufflingOfEndpoints",
+    System.setProperty(GeodeGlossary.GEMFIRE_PREFIX + "bridge.disableShufflingOfEndpoints",
         "false");
   }
 

@@ -47,6 +47,7 @@ import org.apache.geode.InternalGemFireError;
 import org.apache.geode.InternalGemFireException;
 import org.apache.geode.SystemFailure;
 import org.apache.geode.annotations.Immutable;
+import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.annotations.internal.MutableForTesting;
 import org.apache.geode.cache.DiskAccessException;
 import org.apache.geode.cache.RegionDestroyedException;
@@ -56,7 +57,6 @@ import org.apache.geode.cache.query.internal.cq.CqService;
 import org.apache.geode.cache.query.internal.cq.ServerCQ;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.internal.ClusterDistributionManager;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.HighPriorityDistributionMessage;
@@ -96,10 +96,12 @@ import org.apache.geode.internal.serialization.ByteArrayDataInput;
 import org.apache.geode.internal.serialization.DataSerializableFixedID;
 import org.apache.geode.internal.serialization.DeserializationContext;
 import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.internal.serialization.StaticSerialization;
 import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.internal.util.ObjectIntProcedure;
 import org.apache.geode.logging.internal.executors.LoggingThread;
 import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * Handles requests for an initial image from a cache peer
@@ -126,7 +128,7 @@ public class InitialImageOperation {
    */
   @MutableForTesting
   public static int CHUNK_PERMITS =
-      Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "GetInitialImage.CHUNK_PERMITS", 16)
+      Integer.getInteger(GeodeGlossary.GEMFIRE_PREFIX + "GetInitialImage.CHUNK_PERMITS", 16)
           .intValue();
 
   /**
@@ -134,7 +136,7 @@ public class InitialImageOperation {
    */
   @MutableForTesting
   public static int MAXIMUM_UNFINISHED_OPERATIONS = Integer.getInteger(
-      DistributionConfig.GEMFIRE_PREFIX + "GetInitialImage.MAXIMUM_UNFINISHED_OPERATIONS", 10000)
+      GeodeGlossary.GEMFIRE_PREFIX + "GetInitialImage.MAXIMUM_UNFINISHED_OPERATIONS", 10000)
       .intValue();
 
   /**
@@ -142,7 +144,7 @@ public class InitialImageOperation {
    */
   @MutableForTesting
   public static final int MAX_PARALLEL_GIIS =
-      Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "GetInitialImage.MAX_PARALLEL_GIIS", 5)
+      Integer.getInteger(GeodeGlossary.GEMFIRE_PREFIX + "GetInitialImage.MAX_PARALLEL_GIIS", 5)
           .intValue();
 
   /**
@@ -253,7 +255,8 @@ public class InitialImageOperation {
    * @param targetReinitialized true if candidate should wait until initialized before responding
    * @param recoveredRVV recovered rvv
    * @return true if succeeded to get image
-   * @throws org.apache.geode.cache.TimeoutException
+   * @throws org.apache.geode.cache.TimeoutException when it is unable to get a reply within the
+   *         limit.
    */
   GIIStatus getFromOne(Set recipientSet, boolean targetReinitialized,
       CacheDistributionAdvisor.InitialImageAdvice advice, boolean recoveredFromDisk,
@@ -261,7 +264,7 @@ public class InitialImageOperation {
     final boolean isDebugEnabled = logger.isDebugEnabled();
 
     if (VMOTION_DURING_GII) {
-      /**
+      /*
        * TODO (ashetkar): recipientSet may contain more than one member. Ensure only the gii-source
        * member is vMotioned. The test hook may need to be placed at another point.
        */
@@ -335,14 +338,14 @@ public class InitialImageOperation {
       final ClusterDistributionManager dm =
           (ClusterDistributionManager) this.region.getDistributionManager();
       boolean allowDeltaGII = true;
-      if (FORCE_FULL_GII || recipient.getVersionObject().compareTo(Version.GFE_80) < 0) {
+      if (FORCE_FULL_GII || recipient.getVersionOrdinalObject().isOlderThan(Version.GFE_80)) {
         allowDeltaGII = false;
       }
       Set keysOfUnfinishedOps = null;
       RegionVersionVector received_rvv = null;
       RegionVersionVector remote_rvv = null;
       if (this.region.getConcurrencyChecksEnabled()
-          && recipient.getVersionObject().compareTo(Version.GFE_80) >= 0) {
+          && recipient.getVersionOrdinalObject().isNotOlderThan(Version.GFE_80)) {
         if (internalBeforeRequestRVV != null
             && internalBeforeRequestRVV.getRegionName().equals(this.region.getName())) {
           internalBeforeRequestRVV.run();
@@ -743,7 +746,7 @@ public class InitialImageOperation {
           Set recipients = this.region.getCacheDistributionAdvisor().adviseReplicates();
           for (Iterator it = recipients.iterator(); it.hasNext();) {
             InternalDistributedMember mbr = (InternalDistributedMember) it.next();
-            if (mbr.getVersionObject().compareTo(Version.GFE_80) < 0) {
+            if (mbr.getVersionOrdinalObject().isOlderThan(Version.GFE_80)) {
               it.remove();
             }
           }
@@ -812,7 +815,7 @@ public class InitialImageOperation {
    * @param entries entries to add to the region
    * @return false if should abort (region was destroyed or cache was closed)
    */
-  boolean processChunk(List entries, InternalDistributedMember sender, Version remoteVersion)
+  boolean processChunk(List entries, InternalDistributedMember sender)
       throws IOException, ClassNotFoundException {
     final boolean isDebugEnabled = logger.isDebugEnabled();
     final boolean isTraceEnabled = logger.isTraceEnabled();
@@ -1187,7 +1190,7 @@ public class InitialImageOperation {
         region.recordEventState(msg.getSender(), msg.eventState);
       }
       if (msg.versionVector != null
-          && msg.getSender().getVersionObject().compareTo(Version.GFE_80) < 0
+          && msg.getSender().getVersionOrdinalObject().isOlderThan(Version.GFE_80)
           && region.getConcurrencyChecksEnabled()) {
         // for older version, save received rvv from RegionStateMessage
         logger.debug("Applying version vector to {}: {}", region.getName(), msg.versionVector);
@@ -1319,7 +1322,7 @@ public class InitialImageOperation {
               // bug 37461: don't allow abort flag to be reset
               boolean isAborted = this.abort; // volatile fetch
               if (!isAborted) {
-                isAborted = !processChunk(m.entries, m.getSender(), m.remoteVersion);
+                isAborted = !processChunk(m.entries, m.getSender());
                 if (isAborted) {
                   this.abort = true; // volatile store
                 } else {
@@ -1436,8 +1439,7 @@ public class InitialImageOperation {
     public String toString() {
       // bug 37189 These strings are a work-around for an escaped reference
       // in ReplyProcessor21 constructor
-      String msgsBeingProcessedStr = (this.msgsBeingProcessed == null) ? "nullRef"
-          : String.valueOf(this.msgsBeingProcessed.get());
+      String msgsBeingProcessedStr = String.valueOf(this.msgsBeingProcessed.get());
       String regionStr = (InitialImageOperation.this.region == null) ? "nullRef"
           : InitialImageOperation.this.region.getFullPath();
       String numMembersStr = (this.members == null) ? "nullRef" : String.valueOf(numMembers());
@@ -1597,7 +1599,7 @@ public class InitialImageOperation {
     }
 
     public boolean goWithFullGII(DistributedRegion rgn, RegionVersionVector requesterRVV) {
-      if (getSender().getVersionObject().compareTo(Version.GFE_80) < 0) {
+      if (getSender().getVersionOrdinalObject().isOlderThan(Version.GFE_80)) {
         // pre-8.0 could not handle a delta-GII
         return true;
       }
@@ -1616,6 +1618,11 @@ public class InitialImageOperation {
         return true;
       }
       return false;
+    }
+
+    @VisibleForTesting
+    public String getRegionPath() {
+      return regionPath;
     }
 
     @Override
@@ -1707,7 +1714,7 @@ public class InitialImageOperation {
             // wait for the lost member to be gone from this VM's membership and all ops applied to
             // the cache
             try {
-              dm.getMembershipManager().waitForDeparture(this.lostMemberID);
+              dm.getDistribution().waitForDeparture(this.lostMemberID);
               RegionVersionHolder rvh =
                   rgn.getVersionVector().getHolderForMember(this.lostMemberVersionID);
               if (rvh != null) {
@@ -1737,7 +1744,7 @@ public class InitialImageOperation {
             if (eventState != null && eventState.size() > 0) {
               RegionStateMessage.send(dm, getSender(), this.processorId, eventState, true);
             }
-          } else if (getSender().getVersionObject().compareTo(Version.GFE_80) < 0) {
+          } else if (getSender().getVersionOrdinalObject().isOlderThan(Version.GFE_80)) {
             // older versions of the product expect a RegionStateMessage at this point
             if (rgn.getConcurrencyChecksEnabled() && this.versionVector == null
                 && !recoveringForLostMember) {
@@ -2296,7 +2303,7 @@ public class InitialImageOperation {
       try {
         Assert.assertTrue(this.regionPath != null, "Region path is null.");
         InternalCache cache = dm.getCache();
-        lclRgn = cache == null ? null : cache.getRegionByPath(regionPath);
+        lclRgn = cache == null ? null : cache.getInternalRegionByPath(regionPath);
 
         if (lclRgn == null) {
           if (logger.isDebugEnabled()) {
@@ -2893,7 +2900,7 @@ public class InitialImageOperation {
       this.numSeries = in.readInt();
       this.lastInSeries = in.readBoolean();
       this.flowControlId = in.readInt();
-      this.remoteVersion = InternalDataSerializer.getVersionForDataStreamOrNull(in);
+      this.remoteVersion = StaticSerialization.getVersionForDataStreamOrNull(in);
       this.isDeltaGII = in.readBoolean();
       this.hasHolderToSend = in.readBoolean();
       if (this.hasHolderToSend) {
@@ -3900,7 +3907,7 @@ public class InitialImageOperation {
             ex.getMessage(), ex);
       }
 
-      /**
+      /*
        * now that interest is in place we need to flush operations to the image provider
        */
       for (String regionName : regionsWithInterest) {
@@ -4137,11 +4144,11 @@ public class InitialImageOperation {
   }
 
   public static final boolean TRACE_GII =
-      Boolean.getBoolean(DistributionConfig.GEMFIRE_PREFIX + "GetInitialImage.TRACE_GII");
+      Boolean.getBoolean(GeodeGlossary.GEMFIRE_PREFIX + "GetInitialImage.TRACE_GII");
 
   @MutableForTesting
   public static boolean FORCE_FULL_GII =
-      Boolean.getBoolean(DistributionConfig.GEMFIRE_PREFIX + "GetInitialImage.FORCE_FULL_GII");
+      Boolean.getBoolean(GeodeGlossary.GEMFIRE_PREFIX + "GetInitialImage.FORCE_FULL_GII");
 
   // test hooks should be applied and waited in strict order as following
 

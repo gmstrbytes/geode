@@ -133,6 +133,7 @@ import org.apache.geode.internal.statistics.StatisticsClock;
 import org.apache.geode.internal.util.concurrent.StoppableCountDownLatch;
 import org.apache.geode.logging.internal.executors.LoggingThread;
 import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 @SuppressWarnings("deprecation")
 public class DistributedRegion extends LocalRegion implements InternalDistributedRegion {
@@ -334,7 +335,8 @@ public class DistributedRegion extends LocalRegion implements InternalDistribute
   @Override
   public boolean virtualPut(EntryEventImpl event, boolean ifNew, boolean ifOld,
       Object expectedOldValue, boolean requireOldValue, long lastModified,
-      boolean overwriteDestroyed) throws TimeoutException, CacheWriterException {
+      boolean overwriteDestroyed, boolean invokeCallbacks, boolean throwConcurrentModificaiton)
+      throws TimeoutException, CacheWriterException {
     final boolean isTraceEnabled = logger.isTraceEnabled();
 
     Lock dlock = null;
@@ -383,7 +385,7 @@ public class DistributedRegion extends LocalRegion implements InternalDistribute
           }
         }
         return super.virtualPut(event, ifNew, ifOld, expectedOldValue, requireOldValue,
-            lastModified, overwriteDestroyed);
+            lastModified, overwriteDestroyed, invokeCallbacks, throwConcurrentModificaiton);
       } else {
         if (event.getDeltaBytes() != null && event.getRawNewValue() == null) {
           // This means that this event has delta bytes but no full value.
@@ -2214,7 +2216,12 @@ public class DistributedRegion extends LocalRegion implements InternalDistribute
     cacheProfile.hasCacheListener = hasListener();
     Assert.assertTrue(scope.isDistributed());
     cacheProfile.scope = scope;
-    cacheProfile.inRecovery = getImageState().getInRecovery();
+
+    boolean newInRecovery = getImageState().getInRecovery();
+    if (cacheProfile.getInRecovery() != newInRecovery) {
+      distAdvisor.incInRecoveryVersion();
+    }
+    cacheProfile.setInRecovery(newInRecovery);
     cacheProfile.isPersistent = getDataPolicy().withPersistence();
     cacheProfile.setSubscriptionAttributes(getSubscriptionAttributes());
 
@@ -2581,10 +2588,10 @@ public class DistributedRegion extends LocalRegion implements InternalDistribute
     // Fix for #48066 - make sure that region operations are completely
     // distributed to peers before destroying the region.
     boolean flushOnClose =
-        !Boolean.getBoolean(DistributionConfig.GEMFIRE_PREFIX + "no-flush-on-close"); // test hook
+        !Boolean.getBoolean(GeodeGlossary.GEMFIRE_PREFIX + "no-flush-on-close"); // test hook
     if (!cache.forcedDisconnect() && flushOnClose
-        && getDistributionManager().getMembershipManager() != null
-        && getDistributionManager().getMembershipManager().isConnected()) {
+        && getDistributionManager().getDistribution() != null
+        && getDistributionManager().getDistribution().isConnected()) {
       getDistributionAdvisor().forceNewMembershipVersion();
       try {
         getDistributionAdvisor().waitForCurrentOperations();
@@ -3004,7 +3011,7 @@ public class DistributedRegion extends LocalRegion implements InternalDistribute
   static class DiskPage extends DiskPosition {
 
     static final long DISK_PAGE_SIZE =
-        Long.getLong(DistributionConfig.GEMFIRE_PREFIX + "DISK_PAGE_SIZE", 8 << 10);
+        Long.getLong(GeodeGlossary.GEMFIRE_PREFIX + "DISK_PAGE_SIZE", 8 << 10);
 
     DiskPage(DiskPosition diskPosition) {
       setPosition(diskPosition.oplogId, diskPosition.offset / DISK_PAGE_SIZE);
@@ -3150,7 +3157,7 @@ public class DistributedRegion extends LocalRegion implements InternalDistribute
                 DLockRemoteToken remoteToken = ((DLockService) getLockService()).queryLock(key);
                 lockHolder = remoteToken.getLessee();
                 if (lockHolder != null) {
-                  dm.getMembershipManager().suspectMember((InternalDistributedMember) lockHolder,
+                  dm.getDistribution().suspectMember((InternalDistributedMember) lockHolder,
                       "Has not released a global region entry lock in over "
                           + ackWaitThreshold / 1000 + " seconds");
                 }

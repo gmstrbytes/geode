@@ -19,7 +19,7 @@ set -e
 
 WORK_DIR=$(mktemp -d)
 
-export JAVA_HOME=/usr/lib/jvm/java-${JAVA_BUILD_VERSION}-openjdk-amd64
+export JAVA_HOME=/usr/lib/jvm/bellsoft-java${JAVA_BUILD_VERSION}-amd64
 echo "JAVA_HOME is [${JAVA_HOME}]"
 
 if [ -z ${JAVA_HOME} ]; then
@@ -28,10 +28,10 @@ if [ -z ${JAVA_HOME} ]; then
 fi
 
 pushd ${WORK_DIR}
-  git clone -b develop --depth 1 https://github.com/apache/geode.git geode
+  git clone -b support/1.13 --depth 1 https://github.com/apache/geode.git geode
 
   pushd geode
-    ./gradlew --no-daemon resolveDependencies
+    ./gradlew --no-daemon --console=plain --info resolveDependencies
   popd
 popd
 

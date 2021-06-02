@@ -18,6 +18,15 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 
+/**
+ * A DSFIDSerializer is a serialization service that is able to serialize
+ * and deserialize objects whose classes have been registered with it
+ * using registerDSFID(). During serialization a DataSerializableFixedID
+ * implementation will have its toData() method invoked and during deserialization
+ * it will have its fromData() method invoked.
+ * <p>
+ * Use DSFIDSerializerFactory to construct a serialization service.
+ */
 public interface DSFIDSerializer {
   /**
    * Returns a plug-in object that can serialize Objects that are not handled by
@@ -42,7 +51,7 @@ public interface DSFIDSerializer {
    * DataSerializableFixedID
    * classes so that deserialization knows how to instantiate them.
    */
-  void registerDSFID(int dsfid, Class dsfidClass);
+  void registerDSFID(int dsfid, Class<?> dsfidClass);
 
   /**
    * Creates a DataSerializableFixedID or StreamableFixedID instance by deserializing it from the
@@ -59,9 +68,7 @@ public interface DSFIDSerializer {
   /** create a context for deserializaing an object */
   DeserializationContext createDeserializationContext(DataInput dataInput);
 
-
-
-  void writeDSFID(DataSerializableFixedID dsfid, DataOutput out) throws IOException;
+  void write(BasicSerializable bs, DataOutput out) throws IOException;
 
   void writeDSFIDHeader(int dsfid, DataOutput out) throws IOException;
 

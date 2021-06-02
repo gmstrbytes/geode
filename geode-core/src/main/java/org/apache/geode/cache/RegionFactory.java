@@ -17,6 +17,7 @@ package org.apache.geode.cache;
 import java.io.File;
 import java.util.Properties;
 
+import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.cache.client.PoolManager;
 import org.apache.geode.compression.Compressor;
 import org.apache.geode.distributed.LeaseExpiredException;
@@ -98,6 +99,17 @@ public class RegionFactory<K, V> {
   protected RegionFactory(InternalCache cache, RegionAttributes ra) {
     this.cache = cache;
     this.attrsFactory = new AttributesFactory<K, V>(ra);
+  }
+
+  /**
+   * Constructs a RegionFactory that is a copy of an existing RegionFactory
+   *
+   * @since Geode 1.12.0
+   */
+  @VisibleForTesting
+  protected RegionFactory(RegionFactory<K, V> regionFactory) {
+    this.attrsFactory = new AttributesFactory<>(regionFactory.getRegionAttributes());
+    this.cache = regionFactory.getCache();
   }
 
   /**
@@ -223,11 +235,19 @@ public class RegionFactory<K, V> {
         regionAttributesId);
   }
 
+
   /**
    * Returns the cache used by this factory.
    */
-  private synchronized InternalCache getCache() {
+  protected synchronized InternalCache getCache() {
     return this.cache;
+  }
+
+  /**
+   * Returns the attributes used by this factory to create a region.
+   */
+  protected RegionAttributes<K, V> getRegionAttributes() {
+    return attrsFactory.create();
   }
 
   /**
@@ -747,12 +767,10 @@ public class RegionFactory<K, V> {
    *         region in another cache in the distributed system (see {@link AttributesFactory} for
    *         compatibility rules)
    */
-  @SuppressWarnings("unchecked")
+  @SuppressWarnings("deprecation")
   public Region<K, V> create(String name)
       throws CacheExistsException, RegionExistsException, CacheWriterException, TimeoutException {
-    @SuppressWarnings("deprecation")
-    RegionAttributes<K, V> ra = this.attrsFactory.create();
-    return getCache().createRegion(name, ra);
+    return getCache().createRegion(name, getRegionAttributes());
   }
 
   /**
@@ -769,12 +787,10 @@ public class RegionFactory<K, V> {
    * @throws CacheClosedException if the cache is closed
    * @since GemFire 7.0
    */
-  @SuppressWarnings("unchecked")
+  @SuppressWarnings({"deprecation", "unchecked"})
   public Region<K, V> createSubregion(Region<?, ?> parent, String name)
       throws RegionExistsException {
-    @SuppressWarnings("deprecation")
-    RegionAttributes<K, V> ra = this.attrsFactory.create();
-    return ((InternalRegion) parent).createSubregion(name, ra);
+    return ((InternalRegion) parent).createSubregion(name, getRegionAttributes());
   }
 
   /**

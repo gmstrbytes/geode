@@ -47,15 +47,41 @@ else
 fi
 
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
-if [[ ${BRANCH} != "develop" ]] && [[ ${BRANCH} != "master" ]] ; then
-    echo "Please git checkout develop or git checkout master before running this script"
+if [[ ${BRANCH} != "develop" ]] && [[ ${BRANCH} != "master" ]] && [[ ${BRANCH%/*} != "release" ]] ; then
+    echo "Please git checkout develop, master, or a release branch before running this script"
     exit 1
 fi
 
-MASTER_PAGE_ID=115511910
-DEVELOP_PAGE_ID=132322415
-[[ "${BRANCH}" == "master" ]] && PAGE_ID=$MASTER_PAGE_ID || PAGE_ID=$DEVELOP_PAGE_ID
-[[ "${BRANCH}" == "master" ]] && GEODE_VERSION=$($GEODE/bin/gfsh version) || GEODE_VERSION=develop
+
+echo ""
+echo "============================================================"
+echo "Building"
+echo "============================================================"
+set -x
+(cd "${0%/*}"/../../../.. && ./gradlew build installDist -x test -x javadoc -x rat -x pmdMain -x pmdTest)
+set +x
+
+GEODE=$(cd "${0%/*}"/../../../../geode-assembly/build/install/apache-geode; pwd)
+
+if [ -x "$GEODE/bin/gfsh" ] ; then
+    true
+else
+    echo "gfsh not found"
+    exit 1
+fi
+
+
+GEODE_VERSION=$("$GEODE"/bin/gfsh version | sed 's/-SNAPSHOT//')
+[[ "${GEODE_VERSION%.*}" == "1.10" ]] && PAGE_ID=115511910
+[[ "${GEODE_VERSION%.*}" == "1.11" ]] && PAGE_ID=135861023
+[[ "${GEODE_VERSION%.*}" == "1.12" ]] && PAGE_ID=132322415
+[[ "${GEODE_VERSION%.*}" == "1.13" ]] && PAGE_ID=147426059
+
+if [[ -z "${PAGE_ID}" ]] ; then
+    echo "Please create a new wiki page for $GEODE_VERSION and add its page ID to $0 near line 79"
+    exit 1
+fi
+
 
 #skip generating steps if swagger output has already been generated
 if ! [ -r static/index.html ] ; then
@@ -75,28 +101,30 @@ pip install premailer
 
 echo ""
 echo "============================================================"
-echo "Building"
-echo "============================================================"
-set -x
-(cd ${0%/*}/../../../.. && ./gradlew build installDist -x test -x javadoc -x rat -x pmdMain -x pmdTest)
-set +x
-
-GEODE=$(cd ${0%/*}/../../../../geode-assembly/build/install/apache-geode; pwd)
-
-if [ -x "$GEODE/bin/gfsh" ] ; then
-    true
-else
-    echo "gfsh not found"
-    exit 1
-fi
-
-echo ""
-echo "============================================================"
 echo "Starting up a locator to access swagger"
 echo "============================================================"
 set -x
 ps -ef | grep swagger-locator | grep java | awk '{print $2}' | xargs kill -9
-$GEODE/bin/gfsh "start locator --name=swagger-locator"
+"$GEODE"/bin/gfsh "start locator --name=swagger-locator"
+set +x
+
+echo ""
+echo "============================================================"
+echo "Create static dir"
+echo "============================================================"
+set -x
+if [[ ! -d "static" ]]
+then
+  mkdir "static"
+fi
+set +x
+
+echo ""
+echo "============================================================"
+echo "Download swagger JSON"
+echo "============================================================"
+set -x
+curl http://localhost:7070/management${URI_VERSION}/api-docs | jq > static/swagger.json
 set +x
 
 echo ""
@@ -104,7 +132,7 @@ echo "============================================================"
 echo "Generating docs"
 echo "============================================================"
 set -x
-swagger-codegen generate -i http://localhost:7070/management${URI_VERSION}/api-docs -l html -o static
+swagger-codegen generate -i static/swagger.json -l html -o static
 set +x
 
 echo ""
@@ -168,11 +196,12 @@ awk '
 ' |
 # combine duplicate model name+desc
 sed -e 's#pre;*">\([^<]*\)</code> - \1#pre">\1</code>#g' |
-# prepend /management to /v1 links
-sed -e "s#/management${URI_VERSION}#${URI_VERSION}#g" -e "s#${URI_VERSION}#/management${URI_VERSION}#g" |
+# prepend /management to /v1 and / links
+sed -e "s#/management${URI_VERSION}#${URI_VERSION}#g" -e "s#${URI_VERSION}#/management${URI_VERSION}#g" -e "s#GET /<#GET /management<#g" |
 # remove internal swagger endpoint id */*
 sed -e 's/ .<span class="nickname" style="font-weight:bold">[^<]*<.span>.//' |
 # remove Controller from endpoint categories
+sed -e 's/DocLinksController/Versions/g' |
 sed -e 's/PingManagementController/Ping/g' |
 sed -e 's/ManagementController/ Management/g' |
 sed -e 's/OperationController/ Operation/g' |
@@ -199,6 +228,8 @@ sed -e '/&#171;.*&#187;/s/,/_/g' |
 sed -e 's/&#171;/_/g' -e 's/&#187;//g' |
 #work around ever-increasing indent bug
 sed -e 's/class="method" style="margin-left:20p/class="method" style="margin-left:0p/' |
+# add more information at the top
+awk '/More information:/{sub(/More information:/,"Swagger: http://locator:7070/management/docs (requires access to a running locator)<br/>Codegen: <code><small>brew install swagger-codegen; swagger-codegen generate -i http://locator:7070/management'${URI_VERSION}'/api-docs</small></code><br/>More information:")}{print}' |
 cat > static/index-xhtml.html
 # if file is empty due to some error, abort!
 ! [ -z "$(cat static/index-xhtml.html)" ]
@@ -235,7 +266,8 @@ cat << EOF > static/body.json
 EOF
 # upload
 set -x
-curl -u $APACHE_CREDS -X PUT -H 'Content-Type: application/json' -d @static/body.json https://cwiki.apache.org/confluence/rest/api/content/${PAGE_ID}
+curl -u "$APACHE_CREDS" -X PUT -H 'Content-Type: application/json' -d @static/body.json https://cwiki.apache.org/confluence/rest/api/content/${PAGE_ID}
+curl -v -S -u "$APACHE_CREDS" -X POST -H "X-Atlassian-Token: no-check" -F "file=@static/swagger.json" -F "comment=raw swagger json" "https://cwiki.apache.org/confluence/rest/api/content/${PAGE_ID}/child/attachment"
 set +x
 
 echo ""

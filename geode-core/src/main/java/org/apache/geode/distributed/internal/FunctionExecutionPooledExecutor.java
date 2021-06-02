@@ -32,6 +32,7 @@ import org.apache.geode.SystemFailure;
 import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.internal.monitoring.ThreadsMonitoring;
 import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * A ThreadPoolExecutor with stat support. This executor also has a buffer that rejected executions
@@ -52,7 +53,7 @@ public class FunctionExecutionPooledExecutor extends ThreadPoolExecutor {
   private static final Logger logger = LogService.getLogger();
 
   private static final int OFFER_TIME =
-      Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "RETRY_INTERVAL", 5000).intValue();
+      Integer.getInteger(GeodeGlossary.GEMFIRE_PREFIX + "RETRY_INTERVAL", 5000).intValue();
 
   /**
    * Identifier for function execution threads and any of their children
@@ -270,25 +271,25 @@ public class FunctionExecutionPooledExecutor extends ThreadPoolExecutor {
    */
   public FunctionExecutionPooledExecutor(BlockingQueue<Runnable> q, int poolSize,
       PoolStatHelper stats, ThreadFactory tf, ThreadsMonitoring tMonitoring) {
-    /**
+    /*
      * How long an idle thread will wait, in milliseconds, before it is removed from its thread
      * pool. Default is (30000 * 60) ms (30 minutes). It is not static so it can be set at runtime
      * and pick up different values.
      */
     this(q, poolSize, stats, tf,
-        Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "IDLE_THREAD_TIMEOUT", 30000 * 60),
+        Integer.getInteger(GeodeGlossary.GEMFIRE_PREFIX + "IDLE_THREAD_TIMEOUT", 30000 * 60),
         false /* not for fn exec */, tMonitoring);
   }
 
   public FunctionExecutionPooledExecutor(BlockingQueue<Runnable> q, int poolSize,
       PoolStatHelper stats, ThreadFactory tf, boolean forFnExec, ThreadsMonitoring tMonitoring) {
-    /**
+    /*
      * How long an idle thread will wait, in milliseconds, before it is removed from its thread
      * pool. Default is (30000 * 60) ms (30 minutes). It is not static so it can be set at runtime
      * and pick up different values.
      */
     this(q, poolSize, stats, tf,
-        Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "IDLE_THREAD_TIMEOUT", 30000 * 60),
+        Integer.getInteger(GeodeGlossary.GEMFIRE_PREFIX + "IDLE_THREAD_TIMEOUT", 30000 * 60),
         forFnExec, tMonitoring);
   }
 

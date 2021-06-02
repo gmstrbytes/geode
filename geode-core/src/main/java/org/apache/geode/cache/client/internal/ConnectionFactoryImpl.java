@@ -28,6 +28,7 @@ import org.apache.geode.cache.GatewayConfigurationException;
 import org.apache.geode.cache.client.ServerRefusedConnectionException;
 import org.apache.geode.cache.client.internal.ServerDenyList.FailureTracker;
 import org.apache.geode.cache.wan.GatewaySender;
+import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.ServerLocation;
 import org.apache.geode.internal.cache.tier.sockets.CacheClientUpdater;
@@ -67,18 +68,24 @@ public class ConnectionFactoryImpl implements ConnectionFactory {
   public static boolean testFailedConnectionToServer = false;
 
   ConnectionFactoryImpl(ConnectionSource source, EndpointManager endpointManager,
-      InternalDistributedSystem sys, int socketBufferSize, int handshakeTimeout, int readTimeout,
-      ClientProxyMembershipID proxyId, CancelCriterion cancelCriterion, boolean usedByGateway,
-      GatewaySender sender, long pingInterval, boolean multiuserSecureMode, PoolImpl pool) {
+      InternalDistributedSystem sys, int socketBufferSize, int handshakeTimeout,
+      int readTimeout,
+      ClientProxyMembershipID proxyId, CancelCriterion cancelCriterion,
+      boolean usedByGateway,
+      GatewaySender sender, long pingInterval, boolean multiuserSecureMode,
+      PoolImpl pool, final DistributionConfig distributionConfig) {
     this(
         new ConnectionConnector(endpointManager, sys, socketBufferSize, handshakeTimeout,
             readTimeout, usedByGateway, sender,
             (usedByGateway || sender != null) ? SocketCreatorFactory
-                .getSocketCreatorForComponent(SecurableCommunicationChannel.GATEWAY)
+                .getSocketCreatorForComponent(distributionConfig,
+                    SecurableCommunicationChannel.GATEWAY)
                 : SocketCreatorFactory
-                    .getSocketCreatorForComponent(SecurableCommunicationChannel.SERVER),
+                    .getSocketCreatorForComponent(distributionConfig,
+                        SecurableCommunicationChannel.SERVER),
             new ClientSideHandshakeImpl(proxyId, sys, sys.getSecurityService(),
-                multiuserSecureMode)),
+                multiuserSecureMode),
+            pool.getSocketFactory()),
         source, pingInterval, pool, cancelCriterion);
   }
 

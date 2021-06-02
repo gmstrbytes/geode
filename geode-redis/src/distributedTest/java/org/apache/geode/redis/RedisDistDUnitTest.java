@@ -14,52 +14,53 @@
  */
 package org.apache.geode.redis;
 
-import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
-import static org.apache.geode.distributed.ConfigurationProperties.LOG_LEVEL;
-import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Properties;
 import java.util.Random;
+import java.util.Set;
 
+import org.junit.BeforeClass;
+import org.junit.ClassRule;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import redis.clients.jedis.Jedis;
 
-import org.apache.geode.cache.CacheFactory;
-import org.apache.geode.distributed.ConfigurationProperties;
 import org.apache.geode.internal.AvailablePortHelper;
-import org.apache.geode.internal.net.SocketCreator;
+import org.apache.geode.test.awaitility.GeodeAwaitility;
 import org.apache.geode.test.dunit.AsyncInvocation;
-import org.apache.geode.test.dunit.DistributedTestUtils;
-import org.apache.geode.test.dunit.Host;
 import org.apache.geode.test.dunit.IgnoredException;
-import org.apache.geode.test.dunit.LogWriterUtils;
-import org.apache.geode.test.dunit.SerializableCallable;
+import org.apache.geode.test.dunit.SerializableRunnable;
 import org.apache.geode.test.dunit.VM;
-import org.apache.geode.test.dunit.internal.JUnit4DistributedTestCase;
+import org.apache.geode.test.dunit.rules.ClusterStartupRule;
+import org.apache.geode.test.dunit.rules.MemberVM;
 import org.apache.geode.test.junit.categories.RedisTest;
 
 @Category({RedisTest.class})
-public class RedisDistDUnitTest extends JUnit4DistributedTestCase {
+public class RedisDistDUnitTest implements Serializable {
 
-  public static final String TEST_KEY = "key";
-  public static int pushes = 200;
-  int redisPort = 6379;
-  private Host host;
-  private VM server1;
-  private VM server2;
-  private VM client1;
-  private VM client2;
+  @ClassRule
+  public static ClusterStartupRule cluster = new ClusterStartupRule(5);
 
-  private int server1Port;
-  private int server2Port;
+  private static String LOCALHOST = "localhost";
 
-  private String localHost;
+  public static final String KEY = "key";
+  private static VM client1;
+  private static VM client2;
 
-  private static final int JEDIS_TIMEOUT = 20 * 1000;
+  private static int server1Port;
+  private static int server2Port;
 
-  private abstract class ClientTestBase extends SerializableCallable {
+  private static final int JEDIS_TIMEOUT =
+      Math.toIntExact(GeodeAwaitility.getTimeout().toMillis());
 
+  private abstract static class ClientTestBase extends SerializableRunnable {
     int port;
 
     protected ClientTestBase(int port) {
@@ -67,89 +68,128 @@ public class RedisDistDUnitTest extends JUnit4DistributedTestCase {
     }
   }
 
-  @Override
-  public final void postSetUp() throws Exception {
-    JUnit4DistributedTestCase.disconnectAllFromDS();
-
-    localHost = SocketCreator.getLocalHost().getHostName();
-
-    host = Host.getHost(0);
-    server1 = host.getVM(0);
-    server2 = host.getVM(1);
-    client1 = host.getVM(2);
-    client2 = host.getVM(3);
+  @BeforeClass
+  public static void setup() {
     final int[] ports = AvailablePortHelper.getRandomAvailableTCPPorts(2);
-    final int locatorPort = DistributedTestUtils.getDUnitLocatorPort();
-    final SerializableCallable<Object> startRedisAdapter = new SerializableCallable<Object>() {
+    server1Port = ports[0];
+    server2Port = ports[1];
 
-      @Override
-      public Object call() throws Exception {
-        int port = ports[VM.getCurrentVMNum()];
-        CacheFactory cF = new CacheFactory();
-        String locator = SocketCreator.getLocalHost().getHostName() + "[" + locatorPort + "]";
-        cF.set(LOG_LEVEL, LogWriterUtils.getDUnitLogLevel());
-        cF.set(ConfigurationProperties.REDIS_BIND_ADDRESS, localHost);
-        cF.set(ConfigurationProperties.REDIS_PORT, "" + port);
-        cF.set(MCAST_PORT, "0");
-        cF.set(LOCATORS, locator);
-        cF.create();
-        return Integer.valueOf(port);
-      }
-    };
-    AsyncInvocation i = server1.invokeAsync(startRedisAdapter);
-    server2Port = (Integer) server2.invoke(startRedisAdapter);
-    server1Port = (Integer) i.getResult();
+    MemberVM locator = cluster.startLocatorVM(0);
+
+    Properties redisProps = new Properties();
+    redisProps.setProperty("redis-bind-address", LOCALHOST);
+    redisProps.setProperty("redis-port", Integer.toString(ports[0]));
+    redisProps.setProperty("log-level", "warn");
+    cluster.startServerVM(1, redisProps, locator.getPort());
+
+    redisProps.setProperty("redis-port", Integer.toString(ports[1]));
+    cluster.startServerVM(2, redisProps, locator.getPort());
+
+    client1 = cluster.getVM(3);
+    client2 = cluster.getVM(4);
   }
 
-  @Override
-  public final void preTearDown() throws Exception {
-    JUnit4DistributedTestCase.disconnectAllFromDS();
+  class ConcurrentSADDOperation extends ClientTestBase {
+
+    private final Collection<String> strings;
+    private final String key;
+
+    protected ConcurrentSADDOperation(int port, String key, Collection<String> strings) {
+      super(port);
+      this.strings = strings;
+      this.key = key;
+    }
+
+    @Override
+    public void run() {
+      Jedis jedis = new Jedis(LOCALHOST, port, JEDIS_TIMEOUT);
+      for (String member : strings) {
+        jedis.sadd(key, member);
+      }
+    }
   }
 
   @Test
+  public void testConcurrentSaddOperations_runWithoutException_orDataLoss()
+      throws InterruptedException {
+    List<String> set1 = new ArrayList<>();
+    List<String> set2 = new ArrayList<>();
+    int setSize = populateSetValueArrays(set1, set2);
+
+    final String setName = "keyset";
+
+    AsyncInvocation<Void> remoteSaddInvocation =
+        client1.invokeAsync(new ConcurrentSADDOperation(server1Port, setName, set1));
+
+    client2.invoke(new ConcurrentSADDOperation(server2Port, setName, set2));
+
+    remoteSaddInvocation.await();
+
+    Jedis jedis = new Jedis(LOCALHOST, server1Port, JEDIS_TIMEOUT);
+
+    Set<String> smembers = jedis.smembers(setName);
+
+    assertThat(smembers).hasSize(setSize * 2);
+    assertThat(smembers).contains(set1.toArray(new String[] {}));
+    assertThat(smembers).contains(set2.toArray(new String[] {}));
+  }
+
+  private int populateSetValueArrays(List<String> set1, List<String> set2) {
+    int setSize = 5000;
+    for (int i = 0; i < setSize; i++) {
+      set1.add("SETA-" + i);
+      set2.add("SETB-" + i);
+    }
+    return setSize;
+  }
+
+  @Test
+  @Ignore("GEODE-7905")
   public void testConcListOps() throws Exception {
-    final Jedis jedis1 = new Jedis(localHost, server1Port, JEDIS_TIMEOUT);
-    final Jedis jedis2 = new Jedis(localHost, server2Port, JEDIS_TIMEOUT);
+    final Jedis jedis1 = new Jedis(LOCALHOST, server1Port, JEDIS_TIMEOUT);
+    final Jedis jedis2 = new Jedis(LOCALHOST, server2Port, JEDIS_TIMEOUT);
     final int pushes = 20;
+
     class ConcListOps extends ClientTestBase {
       protected ConcListOps(int port) {
         super(port);
       }
 
       @Override
-      public Object call() throws Exception {
-        Jedis jedis = new Jedis(localHost, port, JEDIS_TIMEOUT);
+      public void run() {
+        Jedis jedis = new Jedis(LOCALHOST, port, JEDIS_TIMEOUT);
         Random r = new Random();
         for (int i = 0; i < pushes; i++) {
           if (r.nextBoolean()) {
-            jedis.lpush(TEST_KEY, randString());
+            jedis.lpush(KEY, randString());
           } else {
-            jedis.rpush(TEST_KEY, randString());
+            jedis.rpush(KEY, randString());
           }
         }
-        return null;
       }
-    };
+    }
 
-    AsyncInvocation i = client1.invokeAsync(new ConcListOps(server1Port));
+    AsyncInvocation<Void> i = client1.invokeAsync(new ConcListOps(server1Port));
     client2.invoke(new ConcListOps(server2Port));
-    i.getResult();
+    i.await();
     long expected = 2 * pushes;
-    long result1 = jedis1.llen(TEST_KEY);
-    long result2 = jedis2.llen(TEST_KEY);
+    long result1 = jedis1.llen(KEY);
+    long result2 = jedis2.llen(KEY);
     assertEquals(expected, result1);
     assertEquals(result1, result2);
   }
 
   @Test
+  @Ignore("GEODE-7905")
   public void testConcCreateDestroy() throws Exception {
+
     IgnoredException.addIgnoredException("RegionDestroyedException");
     IgnoredException.addIgnoredException("IndexInvalidException");
     final int ops = 40;
-    final String hKey = TEST_KEY + "hash";
-    final String lKey = TEST_KEY + "list";
-    final String zKey = TEST_KEY + "zset";
-    final String sKey = TEST_KEY + "set";
+    final String hKey = KEY + "hash";
+    final String lKey = KEY + "list";
+    final String zKey = KEY + "zset";
+    final String sKey = KEY + "set";
 
     class ConcCreateDestroy extends ClientTestBase {
       protected ConcCreateDestroy(int port) {
@@ -157,8 +197,8 @@ public class RedisDistDUnitTest extends JUnit4DistributedTestCase {
       }
 
       @Override
-      public Object call() throws Exception {
-        Jedis jedis = new Jedis(localHost, port, JEDIS_TIMEOUT);
+      public void run() throws InterruptedException {
+        Jedis jedis = new Jedis(LOCALHOST, port, JEDIS_TIMEOUT);
         Random r = new Random();
         for (int i = 0; i < ops; i++) {
           int n = r.nextInt(4);
@@ -188,26 +228,27 @@ public class RedisDistDUnitTest extends JUnit4DistributedTestCase {
             }
           }
         }
-        return null;
       }
     }
 
     // Expect to run with no exception
-    AsyncInvocation i = client1.invokeAsync(new ConcCreateDestroy(server1Port));
+    AsyncInvocation<Void> i = client1.invokeAsync(new ConcCreateDestroy(server1Port));
     client2.invoke(new ConcCreateDestroy(server2Port));
-    i.getResult();
+    i.await();
   }
 
   /**
    * Just make sure there are no unexpected server crashes
    */
+  @Test
+  @Ignore("GEODE-7905")
   public void testConcOps() throws Exception {
 
     final int ops = 100;
-    final String hKey = TEST_KEY + "hash";
-    final String lKey = TEST_KEY + "list";
-    final String zKey = TEST_KEY + "zset";
-    final String sKey = TEST_KEY + "set";
+    final String hKey = KEY + "hash";
+    final String lKey = KEY + "list";
+    final String zKey = KEY + "zset";
+    final String sKey = KEY + "set";
 
     class ConcOps extends ClientTestBase {
 
@@ -216,8 +257,8 @@ public class RedisDistDUnitTest extends JUnit4DistributedTestCase {
       }
 
       @Override
-      public Object call() throws Exception {
-        Jedis jedis = new Jedis(localHost, port, JEDIS_TIMEOUT);
+      public void run() {
+        Jedis jedis = new Jedis(LOCALHOST, port, JEDIS_TIMEOUT);
         Random r = new Random();
         for (int i = 0; i < ops; i++) {
           int n = r.nextInt(4);
@@ -242,14 +283,13 @@ public class RedisDistDUnitTest extends JUnit4DistributedTestCase {
             jedis.sunionstore("dst", sKey, "afds");
           }
         }
-        return null;
       }
     }
 
     // Expect to run with no exception
-    AsyncInvocation i = client1.invokeAsync(new ConcOps(server1Port));
+    AsyncInvocation<Void> i = client1.invokeAsync(new ConcOps(server1Port));
     client2.invoke(new ConcOps(server2Port));
-    i.getResult();
+    i.await();
   }
 
   private String randString() {

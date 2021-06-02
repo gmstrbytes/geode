@@ -19,11 +19,16 @@ import java.util.Collections;
 import java.util.List;
 
 import org.apache.geode.cache.configuration.CacheConfig;
+import org.apache.geode.distributed.ConfigurationPersistenceService;
 import org.apache.geode.management.configuration.Pdx;
 import org.apache.geode.management.internal.configuration.converters.PdxConverter;
 
-public class PdxManager implements ConfigurationManager<Pdx> {
+public class PdxManager extends CacheConfigurationManager<Pdx> {
   private final PdxConverter pdxConverter = new PdxConverter();
+
+  public PdxManager(ConfigurationPersistenceService service) {
+    super(service);
+  }
 
   @Override
   public void add(Pdx config, CacheConfig existing) {
@@ -42,11 +47,15 @@ public class PdxManager implements ConfigurationManager<Pdx> {
 
   @Override
   public List<Pdx> list(Pdx filterConfig, CacheConfig existing) {
-    return Collections.singletonList(pdxConverter.fromXmlObject(existing.getPdx()));
+    Pdx configuration = pdxConverter.fromXmlObject(existing.getPdx());
+    if (configuration == null) {
+      return Collections.emptyList();
+    }
+    return Collections.singletonList(configuration);
   }
 
   @Override
-  public Pdx get(String id, CacheConfig existing) {
+  public Pdx get(Pdx config, CacheConfig existing) {
     return pdxConverter.fromXmlObject(existing.getPdx());
   }
 }

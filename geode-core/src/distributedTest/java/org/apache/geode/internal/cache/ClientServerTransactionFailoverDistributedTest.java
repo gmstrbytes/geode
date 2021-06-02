@@ -149,7 +149,7 @@ public class ClientServerTransactionFailoverDistributedTest implements Serializa
       // set longer than GeodeAwaitility.DEFAULT_TIMEOUT to avoid GII triggered by
       // region synchronize with.
       // This ensures the commit is brought into replicas by the CommitProcessQueryMessage.
-      server.setMaximumTimeBetweenPings((int) GeodeAwaitility.getTimeout().getValueInMS() + 60000);
+      server.setMaximumTimeBetweenPings((int) GeodeAwaitility.getTimeout().toMillis() + 60000);
     }
     server.start();
     return server.getPort();
@@ -390,7 +390,7 @@ public class ClientServerTransactionFailoverDistributedTest implements Serializa
             public void beforeSendMessage(ClusterDistributionManager dm,
                 DistributionMessage message) {
               if (message instanceof TXCommitMessage.CommitProcessForTXIdMessage) {
-                InternalDistributedMember m = message.getRecipients()[0];
+                InternalDistributedMember m = message.getRecipients().get(0);
                 message.resetRecipients();
                 message.setRecipient(m);
               }

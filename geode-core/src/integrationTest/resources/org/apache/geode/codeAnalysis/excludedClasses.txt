@@ -2,6 +2,7 @@ org/apache/geode/GemFireCacheException
 org/apache/geode/admin/AlertLevel
 org/apache/geode/alerting/internal/AlertingSession$State
 org/apache/geode/alerting/internal/spi/AlertLevel
+org/apache/geode/alerting/internal/spi/AlertingIOException
 org/apache/geode/cache/operations/internal/UpdateOnlyMap
 org/apache/geode/cache/query/internal/index/CompactRangeIndex$1
 org/apache/geode/cache/query/internal/DefaultQuery$TestHook$SPOTS
@@ -12,7 +13,7 @@ org/apache/geode/distributed/internal/DistributionConfigImpl
 org/apache/geode/distributed/internal/OverflowQueueWithDMStats
 org/apache/geode/distributed/internal/ThrottlingMemLinkedQueueWithDMStats
 org/apache/geode/distributed/internal/membership/gms/messenger/JGAddress
-org/apache/geode/distributed/internal/membership/adapter/GMSMembershipManager$BoundedLinkedHashMap
+org/apache/geode/distributed/internal/membership/gms/GMSMembership$BoundedLinkedHashMap
 org/apache/geode/internal/AbstractConfig$SortedProperties
 org/apache/geode/internal/AvailablePort$Keeper
 org/apache/geode/internal/ExitCode
@@ -67,10 +68,9 @@ org/apache/geode/logging/internal/spi/LogWriterLevel
 org/apache/geode/management/api/ClusterManagementException
 org/apache/geode/management/api/ClusterManagementRealizationException
 org/apache/geode/management/internal/cli/commands/ShowMetricsCommand$Category
-org/apache/geode/management/internal/cli/exceptions/UserErrorException
-org/apache/geode/management/internal/cli/json/AbstractJSONFormatter$PreventReserializationModule
-org/apache/geode/management/internal/cli/json/QueryResultFormatter$TypeSerializationEnforcerModule
-org/apache/geode/management/internal/operation/OperationHistoryManager$OperationInstance
+org/apache/geode/management/internal/exceptions/UserErrorException
+org/apache/geode/management/internal/json/AbstractJSONFormatter$PreventReserializationModule
+org/apache/geode/management/internal/json/QueryResultFormatter$TypeSerializationEnforcerModule
 org/apache/geode/security/ResourcePermission
 org/apache/geode/security/ResourcePermission$Operation
 org/apache/geode/security/ResourcePermission$Resource
@@ -100,3 +100,8 @@ org/apache/geode/cache/client/internal/pooling/ConnectionManagerImpl$ClosedPoolC
 org/apache/geode/internal/cache/partitioned/ManageBackupBucketMessage$ReplyType
 org/apache/geode/internal/cache/AfterCompletion$Action
 org/apache/geode/internal/cache/LocalRegion$InitializationLevel
+org/apache/geode/cache/query/internal/xml/ElementType
+org/apache/geode/cache/query/internal/xml/ElementType$1
+org/apache/geode/cache/query/internal/xml/ElementType$2
+org/apache/geode/cache/query/internal/xml/ElementType$3
+org/apache/geode/internal/net/ByteBufferSharingImpl$OpenAttemptTimedOut

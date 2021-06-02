@@ -20,6 +20,7 @@ import static java.nio.charset.Charset.defaultCharset;
 import static org.apache.commons.io.FileUtils.readFileToString;
 import static org.apache.geode.distributed.ConfigurationProperties.HTTP_SERVICE_PORT;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
+import static org.apache.geode.distributed.ConfigurationProperties.LOG_LEVEL;
 import static org.apache.geode.internal.AvailablePort.SOCKET;
 import static org.apache.geode.internal.AvailablePort.getRandomAvailablePort;
 import static org.apache.geode.test.dunit.VM.getVM;
@@ -83,8 +84,8 @@ public class ManagementRequestLoggingDistributedTest implements Serializable {
     locatorPort = locatorVM.invoke(this::startLocator);
     serverVM.invoke(this::startServer);
 
-    service = ClusterManagementServiceBuilder.buildWithHostAddress()
-        .setHostAddress("localhost", httpPort)
+    service = new ClusterManagementServiceBuilder()
+        .setPort(httpPort)
         .build();
   }
 
@@ -141,6 +142,7 @@ public class ManagementRequestLoggingDistributedTest implements Serializable {
     builder.setWorkingDirectory(locatorDir.getAbsolutePath());
     builder.setPort(0);
     builder.set(HTTP_SERVICE_PORT, String.valueOf(httpPort));
+    builder.set(LOG_LEVEL, "debug");
 
     locatorLauncher = builder.build();
     locatorLauncher.start();

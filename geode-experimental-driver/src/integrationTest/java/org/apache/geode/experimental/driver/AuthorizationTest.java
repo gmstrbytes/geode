@@ -29,15 +29,14 @@ import org.junit.experimental.categories.Category;
 
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.CacheFactory;
-import org.apache.geode.cache.RegionAttributes;
 import org.apache.geode.cache.RegionShortcut;
 import org.apache.geode.cache.server.CacheServer;
 import org.apache.geode.distributed.ConfigurationProperties;
 import org.apache.geode.distributed.Locator;
 import org.apache.geode.examples.SimpleSecurityManager;
-import org.apache.geode.internal.cache.GemFireCacheImpl;
-import org.apache.geode.internal.cache.InternalRegionArguments;
-import org.apache.geode.internal.cache.LocalRegion;
+import org.apache.geode.internal.cache.InternalCache;
+import org.apache.geode.internal.cache.InternalRegion;
+import org.apache.geode.internal.cache.InternalRegionFactory;
 import org.apache.geode.test.junit.categories.ClientServerTest;
 
 @Category({ClientServerTest.class})
@@ -46,7 +45,6 @@ public class AuthorizationTest {
   private static final String TEST_PASSWORD = TEST_USERNAME;
   private Locator locator;
   private Cache cache;
-  private Driver driver;
   private int locatorPort;
 
 
@@ -76,14 +74,11 @@ public class AuthorizationTest {
   @Test
   public void performOperationsOnInternalRegion() throws Exception {
     // we need to use internal APIs to create an "internal" region
-    GemFireCacheImpl serverCache = (GemFireCacheImpl) cache;
-    InternalRegionArguments internalRegionArguments = new InternalRegionArguments();
-    internalRegionArguments.setIsUsedForPartitionedRegionAdmin(true);
-    RegionAttributes<String, String> attributes =
-        serverCache.getRegionAttributes(RegionShortcut.REPLICATE.toString());
-    LocalRegion serverRegion =
-        (LocalRegion) serverCache.createVMRegion("internalRegion", attributes,
-            internalRegionArguments);
+    InternalCache serverCache = (InternalCache) cache;
+    InternalRegionFactory<String, String> regionFactory =
+        serverCache.createInternalRegionFactory(RegionShortcut.REPLICATE);
+    regionFactory.setIsUsedForPartitionedRegionAdmin(true);
+    InternalRegion serverRegion = (InternalRegion) regionFactory.create("internalRegion");
     assertThat(serverRegion.isInternalRegion()).isTrue();
 
     CacheServer server = cache.addCacheServer();
@@ -92,7 +87,7 @@ public class AuthorizationTest {
     Driver driver =
         new DriverFactory().addLocator("localhost", locatorPort).setUsername(TEST_USERNAME)
             .setPassword(TEST_PASSWORD).create();
-    Region region = driver.getRegion("internalRegion");
+    Region<String, String> region = driver.getRegion("internalRegion");
     assertThat(region).isNotNull();
     assertFailure(() -> region.clear());
     assertFailure(() -> region.get("some key"));

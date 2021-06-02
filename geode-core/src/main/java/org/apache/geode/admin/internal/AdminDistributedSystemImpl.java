@@ -14,11 +14,11 @@
  */
 package org.apache.geode.admin.internal;
 
+import static org.apache.geode.admin.internal.InetAddressUtilsWithLogging.toInetAddress;
 import static org.apache.geode.distributed.ConfigurationProperties.DISABLE_TCP;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_ADDRESS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
-import static org.apache.geode.internal.net.InetAddressUtilsWithLogging.toInetAddress;
 
 import java.io.File;
 import java.io.IOException;
@@ -41,6 +41,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
 
 import org.apache.logging.log4j.Logger;
+import org.jgroups.annotations.GuardedBy;
 
 import org.apache.geode.CancelException;
 import org.apache.geode.SystemFailure;
@@ -80,7 +81,6 @@ import org.apache.geode.internal.admin.GemFireVM;
 import org.apache.geode.internal.admin.GfManagerAgent;
 import org.apache.geode.internal.admin.GfManagerAgentConfig;
 import org.apache.geode.internal.admin.GfManagerAgentFactory;
-import org.apache.geode.internal.admin.SSLConfig;
 import org.apache.geode.internal.admin.remote.CompactRequest;
 import org.apache.geode.internal.admin.remote.DistributionLocatorId;
 import org.apache.geode.internal.admin.remote.MissingPersistentIDsRequest;
@@ -95,6 +95,7 @@ import org.apache.geode.internal.logging.Banner;
 import org.apache.geode.internal.logging.InternalLogWriter;
 import org.apache.geode.internal.logging.LogWriterFactory;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.internal.net.SSLConfig;
 import org.apache.geode.internal.util.concurrent.FutureResult;
 import org.apache.geode.logging.internal.LoggingSession;
 import org.apache.geode.logging.internal.NullLoggingSession;
@@ -177,8 +178,8 @@ public class AdminDistributedSystemImpl implements org.apache.geode.admin.AdminD
    * This is volatile to allow SystemFailure to deliver fatal poison-pill to thisAdminDS without
    * waiting on synchronization.
    *
-   * @guarded.By CONNECTION_SYNC
    */
+  @GuardedBy("CONNECTION_SYNC")
   @MakeNotStatic
   private static volatile AdminDistributedSystemImpl thisAdminDS;
 
@@ -1688,15 +1689,16 @@ public class AdminDistributedSystemImpl implements org.apache.geode.admin.AdminD
   }
 
   protected SSLConfig buildSSLConfig() {
-    SSLConfig conf = new SSLConfig();
+    SSLConfig.Builder sslConfigBuilder = new SSLConfig.Builder();
+
     if (getConfig() != null) {
-      conf.setEnabled(getConfig().isSSLEnabled());
-      conf.setProtocols(getConfig().getSSLProtocols());
-      conf.setCiphers(getConfig().getSSLCiphers());
-      conf.setRequireAuth(getConfig().isSSLAuthenticationRequired());
-      conf.setProperties(getConfig().getSSLProperties());
+      sslConfigBuilder.setEnabled(getConfig().isSSLEnabled());
+      sslConfigBuilder.setProtocols(getConfig().getSSLProtocols());
+      sslConfigBuilder.setCiphers(getConfig().getSSLCiphers());
+      sslConfigBuilder.setRequireAuth(getConfig().isSSLAuthenticationRequired());
+      sslConfigBuilder.setProperties(getConfig().getSSLProperties());
     }
-    return conf;
+    return sslConfigBuilder.build();
   }
 
   /**

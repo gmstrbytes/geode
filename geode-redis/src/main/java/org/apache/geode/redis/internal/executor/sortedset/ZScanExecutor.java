@@ -60,7 +60,7 @@ public class ZScanExecutor extends AbstractScanExecutor {
     int cursor = 0;
     Pattern matchPattern = null;
     String globMatchPattern = null;
-    int count = DEFUALT_COUNT;
+    int count = DEFAULT_COUNT;
     try {
       cursor = Coder.bytesToInt(cAr);
     } catch (NumberFormatException e) {
@@ -150,14 +150,16 @@ public class ZScanExecutor extends AbstractScanExecutor {
           returnList.add(value.toString());
           numElements++;
         }
-      } else
+      } else {
         break;
+      }
     }
 
-    if (i == size - 1)
+    if (i == size - 1) {
       returnList.add(0, String.valueOf(0));
-    else
+    } else {
       returnList.add(0, String.valueOf(i));
+    }
     return returnList;
   }
 

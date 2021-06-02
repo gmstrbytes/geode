@@ -30,7 +30,7 @@ import org.apache.geode.redis.internal.executor.ListQuery;
 
 public class LIndexExecutor extends ListExecutor {
 
-  private final String ERROR_NOT_NUMERIC = "The index provided is not numeric";
+  private static final String ERROR_NOT_NUMERIC = "The index provided is not numeric";
 
   @Override
   public void executeCommand(Command command, ExecutionHandlerContext context) {
@@ -45,7 +45,7 @@ public class LIndexExecutor extends ListExecutor {
     byte[] indexArray = commandElems.get(2);
 
     checkDataType(key, RedisDataType.REDIS_LIST, context);
-    Region<Integer, ByteArrayWrapper> keyRegion = getRegion(context, key);
+    Region<Object, Object> keyRegion = getRegion(context, key);
 
     if (keyRegion == null) {
       command.setResponse(Coder.getNilResponse(context.getByteBufAllocator()));
@@ -69,8 +69,10 @@ public class LIndexExecutor extends ListExecutor {
      */
 
     if (redisIndex < 0)
-      // Since the redisIndex is negative here, this will reset it to be a standard 0 based index
+    // Since the redisIndex is negative here, this will reset it to be a standard 0 based index
+    {
       redisIndex = listSize + redisIndex;
+    }
 
     /*
      * If the index is still less than 0 that means the index has shot off back past the beginning,
@@ -105,13 +107,14 @@ public class LIndexExecutor extends ListExecutor {
 
     Query query = getQuery(key, ListQuery.LINDEX, context);
 
-    Object[] params = {Integer.valueOf(index + 1)};
+    Object[] params = {index + 1};
 
     SelectResults<?> results = (SelectResults<?>) query.execute(params);
 
-    if (results == null || results.size() == 0 || results.size() <= index)
+    if (results == null || results.size() == 0 || results.size() <= index) {
       return null;
-    else
+    } else {
       return (Struct) results.asList().get(index);
+    }
   }
 }

@@ -29,7 +29,6 @@ import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.Role;
 import org.apache.geode.distributed.internal.locks.ElderState;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.distributed.internal.membership.MembershipManager;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.monitoring.ThreadsMonitoring;
 import org.apache.geode.internal.serialization.Version;
@@ -286,7 +285,7 @@ public interface DistributionManager extends ReplySender {
    *
    * @return the membership manager
    */
-  MembershipManager getMembershipManager();
+  Distribution getDistribution();
 
   /**
    * Set the root cause for DM failure
@@ -337,7 +336,9 @@ public interface DistributionManager extends ReplySender {
    */
   boolean areOnEquivalentHost(InternalDistributedMember member1, InternalDistributedMember member2);
 
-  Set<InetAddress> getEquivalents(InetAddress in);
+  default Set<InetAddress> getEquivalents(InetAddress in) {
+    throw new UnsupportedOperationException();
+  }
 
   Set<DistributedMember> getGroupMembers(String group);
 
@@ -453,4 +454,18 @@ public interface DistributionManager extends ReplySender {
    * Returns the {@link AlertingService}.
    */
   AlertingService getAlertingService();
+
+  /**
+   * register a test hook for membership events
+   *
+   * @see MembershipTestHook
+   */
+  void registerTestHook(MembershipTestHook mth);
+
+  /**
+   * remove a test hook previously registered with the manager
+   */
+  void unregisterTestHook(MembershipTestHook mth);
+
+  String getRedundancyZone(InternalDistributedMember member);
 }

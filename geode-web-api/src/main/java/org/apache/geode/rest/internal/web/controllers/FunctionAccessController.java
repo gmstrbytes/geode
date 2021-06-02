@@ -27,7 +27,6 @@ import io.swagger.annotations.ApiResponses;
 import org.apache.logging.log4j.Logger;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Controller;
@@ -61,8 +60,7 @@ import org.apache.geode.security.ResourcePermission;
  * @since GemFire 8.0
  */
 @Controller("functionController")
-@Api(value = "functions", description = "Rest api for gemfire function execution",
-    tags = "functions")
+@Api(value = "functions", tags = "functions")
 @RequestMapping(FunctionAccessController.REST_API_VERSION + "/functions")
 @SuppressWarnings("unused")
 public class FunctionAccessController extends AbstractBaseController {
@@ -85,7 +83,7 @@ public class FunctionAccessController extends AbstractBaseController {
    *
    * @return result as a JSON document.
    */
-  @RequestMapping(method = RequestMethod.GET, produces = {MediaType.APPLICATION_JSON_UTF8_VALUE})
+  @RequestMapping(method = RequestMethod.GET, produces = {APPLICATION_JSON_UTF8_VALUE})
   @ApiOperation(value = "list all functions",
       notes = "list all functions available in the GemFire cluster")
   @ApiResponses({@ApiResponse(code = 200, message = "OK."),
@@ -98,7 +96,9 @@ public class FunctionAccessController extends AbstractBaseController {
   public ResponseEntity<?> list() {
     logger.debug("Listing all registered Functions in GemFire...");
 
-    final Map<String, Function> registeredFunctions = FunctionService.getRegisteredFunctions();
+    @SuppressWarnings("unchecked")
+    final Map<String, Function<?>> registeredFunctions =
+        (Map<String, Function<?>>) (Map<?, ?>) FunctionService.getRegisteredFunctions();
     String listFunctionsAsJson =
         JSONUtils.formulateJsonForListFunctionsCall(registeredFunctions.keySet());
     final HttpHeaders headers = new HttpHeaders();
@@ -120,7 +120,7 @@ public class FunctionAccessController extends AbstractBaseController {
    * @return result as a JSON document
    */
   @RequestMapping(method = RequestMethod.POST, value = "/{functionId:.+}",
-      produces = {MediaType.APPLICATION_JSON_VALUE})
+      produces = {APPLICATION_JSON_UTF8_VALUE})
   @ApiOperation(value = "execute function",
       notes = "Execute function with arguments on regions, members, or group(s). By default function will be executed on all nodes if none of (onRegion, onMembers, onGroups) specified")
   @ApiResponses({@ApiResponse(code = 200, message = "OK."),
@@ -138,7 +138,7 @@ public class FunctionAccessController extends AbstractBaseController {
       @RequestParam(value = "filter", required = false) final String[] filter,
       @RequestBody(required = false) final String argsInBody) {
 
-    Function function = FunctionService.getFunction(functionId);
+    Function<?> function = FunctionService.getFunction(functionId);
 
     // this exception will be handled by BaseControllerAdvice to eventually return a 404
     if (function == null) {
@@ -158,59 +158,24 @@ public class FunctionAccessController extends AbstractBaseController {
       securityService.authorize(requiredPermission);
     }
 
-    Execution execution = null;
+    Execution<Object, ?, ?> execution;
     functionId = decode(functionId);
 
     if (StringUtils.hasText(region)) {
-      logger.debug("Executing Function ({}) with arguments ({}) on Region ({})...", functionId,
-          ArrayUtils.toString(argsInBody), region);
-
-      region = decode(region);
-      try {
-        execution = FunctionService.onRegion(getRegion(region));
-      } catch (FunctionException fe) {
-        throw new GemfireRestException(
-            String.format("The Region identified by name (%1$s) could not found!", region), fe);
-      }
+      execution = executeOnRegion(functionId, region, argsInBody);
     } else if (ArrayUtils.isNotEmpty(members)) {
-      logger.debug("Executing Function ({}) with arguments ({}) on Member ({})...", functionId,
-          ArrayUtils.toString(argsInBody), ArrayUtils.toString(members));
-
-      try {
-        execution = FunctionService.onMembers(getMembers(members));
-      } catch (FunctionException fe) {
-        throw new GemfireRestException(
-            "Could not found the specified members in distributed system!", fe);
-      }
+      execution = executeOnMembers(functionId, members, argsInBody);
     } else if (ArrayUtils.isNotEmpty(groups)) {
-      logger.debug("Executing Function ({}) with arguments ({}) on Groups ({})...", functionId,
-          ArrayUtils.toString(argsInBody), ArrayUtils.toString(groups));
-
-      try {
-        execution = FunctionService.onMembers(groups);
-      } catch (FunctionException fe) {
-        throw new GemfireRestException("no member(s) are found belonging to the provided group(s)!",
-            fe);
-      }
+      execution = executeOnGroups(functionId, groups, argsInBody);
     } else {
-      // Default case is to execute function on all existing data node in DS, document this.
-      logger.debug("Executing Function ({}) with arguments ({}) on all Members...", functionId,
-          ArrayUtils.toString(argsInBody));
-
-      try {
-        execution = FunctionService.onMembers(getAllMembersInDS());
-      } catch (FunctionException fe) {
-        throw new GemfireRestException(
-            "Distributed system does not contain any valid data node to run the specified  function!",
-            fe);
-      }
+      execution = executeOnAllMembers(functionId, argsInBody);
     }
 
     if (!ArrayUtils.isEmpty(filter)) {
       logger.debug("Executing Function ({}) with filter ({})", functionId,
           ArrayUtils.toString(filter));
 
-      Set filter1 = ArrayUtils.asSet(filter);
+      Set<String> filter1 = ArrayUtils.asSet(filter);
       execution = execution.withFilter(filter1);
     }
 
@@ -246,7 +211,7 @@ public class FunctionAccessController extends AbstractBaseController {
       final HttpHeaders headers = new HttpHeaders();
       headers.setLocation(toUri("functions", functionId));
 
-      Object functionResult = null;
+      Object functionResult;
       if (results instanceof NoResult) {
         return new ResponseEntity<>("", headers, HttpStatus.OK);
       }
@@ -265,6 +230,68 @@ public class FunctionAccessController extends AbstractBaseController {
       fe.printStackTrace();
       throw new GemfireRestException(
           "Server has encountered an error while processing function execution!", fe);
+    }
+  }
+
+  private Execution<Object, ?, ?> executeOnAllMembers(String functionId, String argsInBody) {
+    // Default case is to execute function on all existing data node in DS, document this.
+    logger.debug("Executing Function ({}) with arguments ({}) on all Members...", functionId,
+        ArrayUtils.toString(argsInBody));
+
+    try {
+      @SuppressWarnings("unchecked")
+      Execution<Object, ?, ?> execution = FunctionService.onMembers(getAllMembersInDS());
+      return execution;
+    } catch (FunctionException fe) {
+      throw new GemfireRestException(
+          "Distributed system does not contain any valid data node to run the specified  function!",
+          fe);
+    }
+  }
+
+  private Execution<Object, ?, ?> executeOnGroups(String functionId, String[] groups,
+      String argsInBody) {
+    logger.debug("Executing Function ({}) with arguments ({}) on Groups ({})...", functionId,
+        ArrayUtils.toString(argsInBody), ArrayUtils.toString(groups));
+
+    try {
+      @SuppressWarnings("unchecked")
+      Execution<Object, ?, ?> execution = FunctionService.onMembers(groups);
+      return execution;
+    } catch (FunctionException fe) {
+      throw new GemfireRestException("no member(s) are found belonging to the provided group(s)!",
+          fe);
+    }
+  }
+
+  private Execution<Object, ?, ?> executeOnMembers(String functionId, String[] members,
+      String argsInBody) {
+    logger.debug("Executing Function ({}) with arguments ({}) on Member ({})...", functionId,
+        ArrayUtils.toString(argsInBody), ArrayUtils.toString(members));
+
+    try {
+      @SuppressWarnings("unchecked")
+      Execution<Object, ?, ?> execution = FunctionService.onMembers(getMembers(members));
+      return execution;
+    } catch (FunctionException fe) {
+      throw new GemfireRestException(
+          "Could not found the specified members in distributed system!", fe);
+    }
+  }
+
+  private Execution<Object, ?, ?> executeOnRegion(String functionId, String region,
+      String argsInBody) {
+    logger.debug("Executing Function ({}) with arguments ({}) on Region ({})...", functionId,
+        ArrayUtils.toString(argsInBody), region);
+
+    region = decode(region);
+    try {
+      @SuppressWarnings("unchecked")
+      Execution<Object, ?, ?> execution = FunctionService.onRegion(getRegion(region));
+      return execution;
+    } catch (FunctionException fe) {
+      throw new GemfireRestException(
+          String.format("The Region identified by name (%1$s) could not found!", region), fe);
     }
   }
 }

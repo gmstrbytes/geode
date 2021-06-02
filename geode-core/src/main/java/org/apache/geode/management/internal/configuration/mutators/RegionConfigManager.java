@@ -17,9 +17,10 @@
 
 package org.apache.geode.management.internal.configuration.mutators;
 
+import static java.util.stream.Collectors.toList;
+
 import java.util.List;
 import java.util.Objects;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.commons.lang3.NotImplementedException;
@@ -27,13 +28,18 @@ import org.apache.commons.lang3.StringUtils;
 
 import org.apache.geode.cache.configuration.CacheConfig;
 import org.apache.geode.cache.configuration.RegionConfig;
+import org.apache.geode.distributed.ConfigurationPersistenceService;
 import org.apache.geode.lang.Identifiable;
 import org.apache.geode.management.configuration.Region;
 import org.apache.geode.management.internal.configuration.converters.RegionConverter;
 
-public class RegionConfigManager implements ConfigurationManager<Region> {
+public class RegionConfigManager extends CacheConfigurationManager<Region> {
 
   private final RegionConverter converter = new RegionConverter();
+
+  public RegionConfigManager(ConfigurationPersistenceService service) {
+    super(service);
+  }
 
   @Override
   public void add(Region configElement, CacheConfig existingConfig) {
@@ -57,12 +63,12 @@ public class RegionConfigManager implements ConfigurationManager<Region> {
       stream = stream.filter(r -> filter.getName().equals(r.getName()));
     }
     return stream.map(converter::fromXmlObject).filter(Objects::nonNull)
-        .collect(Collectors.toList());
+        .collect(toList());
   }
 
   @Override
-  public Region get(String id, CacheConfig existing) {
-    return converter.fromXmlObject(Identifiable.find(existing.getRegions(), id));
+  public Region get(Region config, CacheConfig existing) {
+    return converter.fromXmlObject(Identifiable.find(existing.getRegions(), config.getId()));
   }
 
   @Override

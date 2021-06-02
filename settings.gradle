@@ -27,13 +27,16 @@ include 'geode-unsafe'
 include 'geode-junit'
 include 'geode-dunit'
 include 'geode-logging'
+include 'geode-membership'
 include 'geode-serialization'
+include 'geode-tcp-server'
 include 'geode-core'
 include 'geode-log4j'
 include 'geode-web'
 include 'geode-web-api'
 include 'geode-web-management'
 include 'geode-management'
+include 'geode-gfsh'
 include 'geode-pulse'
 include 'geode-pulse:geode-pulse-test'
 include 'geode-assembly'
@@ -80,7 +83,13 @@ include 'static-analysis:pmd-rules'
  '1.9.0',
  '1.9.1',
  '1.9.2',
- '1.10.0'].each {
+ '1.10.0',
+ '1.11.0',
+ '1.12.0',
+ '1.12.1',
+ '1.13.0',
+ '1.13.1',
+ '1.13.2'].each {
   include 'geode-old-versions:'.concat(it)
 }
 

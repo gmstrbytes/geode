@@ -14,6 +14,7 @@
  */
 package org.apache.geode.internal.cache.wan;
 
+
 import java.io.IOException;
 import java.net.ConnectException;
 import java.util.Iterator;
@@ -28,9 +29,13 @@ import org.apache.geode.cache.client.internal.locator.wan.RemoteLocatorResponse;
 import org.apache.geode.cache.wan.GatewayReceiver;
 import org.apache.geode.distributed.internal.WanLocatorDiscoverer;
 import org.apache.geode.distributed.internal.tcpserver.TcpClient;
+import org.apache.geode.distributed.internal.tcpserver.TcpSocketFactory;
+import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.admin.remote.DistributionLocatorId;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.PoolFactoryImpl;
+import org.apache.geode.internal.net.SocketCreatorFactory;
+import org.apache.geode.internal.security.SecurableCommunicationChannel;
 import org.apache.geode.internal.statistics.StatisticsClock;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 
@@ -76,8 +81,13 @@ public abstract class AbstractRemoteGatewaySender extends AbstractGatewaySender 
       DistributionLocatorId locatorID = new DistributionLocatorId(localLocator);
       try {
         RemoteLocatorResponse response =
-            (RemoteLocatorResponse) new TcpClient().requestToServer(locatorID.getHost(), request,
-                WanLocatorDiscoverer.WAN_LOCATOR_CONNECTION_TIMEOUT, true);
+            (RemoteLocatorResponse) new TcpClient(SocketCreatorFactory
+                .getSocketCreatorForComponent(SecurableCommunicationChannel.LOCATOR),
+                InternalDataSerializer.getDSFIDSerializer().getObjectSerializer(),
+                InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer(),
+                TcpSocketFactory.DEFAULT)
+                    .requestToServer(locatorID.getHost(), request,
+                        WanLocatorDiscoverer.WAN_LOCATOR_CONNECTION_TIMEOUT, true);
 
         if (response != null) {
           if (response.getLocators() == null) {

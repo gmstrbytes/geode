@@ -135,7 +135,7 @@ public class IndexCreationMsg extends PartitionMessage {
           exceptionMsgs.append(ex.getMessage()).append("\n");
         }
         logger.debug("Got an MultiIndexCreationException with \n: {}", exceptionMsgs);
-        logger.debug("{} indexes were created succesfully", failedIndexNames.size());
+        logger.debug("{} indexes were created successfully", failedIndexNames.size());
       }
       replyEx = new ReplyException(
           "Remote Index Creation Failed", exx);
@@ -357,7 +357,7 @@ public class IndexCreationMsg extends PartitionMessage {
     }
 
     for (InternalDistributedMember rec : recipients) {
-      if (rec.getVersionObject().compareTo(Version.GFE_81) < 0) {
+      if (rec.getVersionOrdinalObject().isOlderThan(Version.GFE_81)) {
         throw new UnsupportedOperationException(
             "Indexes should not be created during rolling upgrade");
       }

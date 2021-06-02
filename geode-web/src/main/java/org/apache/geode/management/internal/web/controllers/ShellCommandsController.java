@@ -52,9 +52,9 @@ import org.apache.geode.internal.GemFireVersion;
 import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.internal.util.IOUtils;
 import org.apache.geode.management.cli.Result;
-import org.apache.geode.management.internal.cli.i18n.CliStrings;
 import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.management.internal.cli.util.CommandStringBuilder;
+import org.apache.geode.management.internal.i18n.CliStrings;
 import org.apache.geode.management.internal.web.domain.QueryParameterSource;
 import org.apache.geode.util.internal.GeodeConverter;
 
@@ -83,7 +83,7 @@ public class ShellCommandsController extends AbstractCommandsController {
   public ResponseEntity<InputStreamResource> command(@RequestParam(value = "cmd") String command,
       @RequestParam(value = "resources", required = false) MultipartFile[] fileResource)
       throws IOException {
-    String result = processCommand(decode(command), getEnvironment(), fileResource);
+    String result = processCommand(command, getEnvironment(), fileResource);
     return getResponse(result);
   }
 

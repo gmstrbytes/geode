@@ -40,12 +40,12 @@ import org.apache.geode.redis.internal.executor.SortedSetQuery;
 
 public class ZRangeByLexExecutor extends SortedSetExecutor {
 
-  private final String ERROR_NOT_NUMERIC = "The index provided is not numeric";
+  private static final String ERROR_NOT_NUMERIC = "The index provided is not numeric";
 
-  private final String ERROR_ILLEGAL_SYNTAX =
+  private static final String ERROR_ILLEGAL_SYNTAX =
       "The min and max strings must either start with a (, [ or be - or +";
 
-  private final String ERROR_LIMIT = "The offset and count cannot be negative";
+  private static final String ERROR_LIMIT = "The offset and count cannot be negative";
 
   @Override
   public void executeCommand(Command command, ExecutionHandlerContext context) {
@@ -133,27 +133,33 @@ public class ZRangeByLexExecutor extends SortedSetExecutor {
         throw new RuntimeException(e);
       }
     }
-    if (list == null)
+    if (list == null) {
       command.setResponse(Coder.getEmptyArrayResponse(context.getByteBufAllocator()));
-    else
+    } else {
       command.setResponse(getCustomBulkStringArrayResponse(list, context));
+    }
   }
 
   private List<ByteArrayWrapper> getRange(ByteArrayWrapper key,
-      Region<ByteArrayWrapper, DoubleWrapper> keyRegion, ExecutionHandlerContext context,
-      ByteArrayWrapper start, ByteArrayWrapper stop, boolean startInclusive, boolean stopInclusive,
-      int offset, int limit) throws FunctionDomainException, TypeMismatchException,
+      Region<ByteArrayWrapper, DoubleWrapper> keyRegion,
+      ExecutionHandlerContext context,
+      ByteArrayWrapper start, ByteArrayWrapper stop,
+      boolean startInclusive, boolean stopInclusive,
+      int offset, int limit)
+      throws FunctionDomainException, TypeMismatchException,
       NameResolutionException, QueryInvocationTargetException {
     if (start.equals(minus) && stop.equals(plus)) {
-      List<ByteArrayWrapper> l = new ArrayList<ByteArrayWrapper>(keyRegion.keySet());
+      List<ByteArrayWrapper> l = new ArrayList<>(keyRegion.keySet());
       int size = l.size();
       Collections.sort(l);
-      if (limit == 0)
+      if (limit == 0) {
         limit += size;
+      }
       l = l.subList(Math.min(size, offset), Math.min(offset + limit, size));
       return l;
-    } else if (start.equals(plus) || stop.equals(minus))
+    } else if (start.equals(plus) || stop.equals(minus)) {
       return null;
+    }
 
     Query query;
     Object[] params;
@@ -187,8 +193,10 @@ public class ZRangeByLexExecutor extends SortedSetExecutor {
       }
       params = new Object[] {start, stop, INFINITY_LIMIT};
     }
-    if (limit > 0)
+    if (limit > 0) {
       params[params.length - 1] = (limit + offset);
+    }
+    @SuppressWarnings("unchecked")
     SelectResults<ByteArrayWrapper> results =
         (SelectResults<ByteArrayWrapper>) query.execute(params);
     List<ByteArrayWrapper> list = results.asList();

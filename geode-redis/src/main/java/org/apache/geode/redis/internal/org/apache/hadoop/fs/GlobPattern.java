@@ -4,9 +4,9 @@
  * copyright ownership. The ASF licenses this file to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance with the License. You may obtain a
  * copy of the License at
- *
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  * Unless required by applicable law or agreed to in writing, software distributed under the License
  * is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
  * or implied. See the License for the specific language governing permissions and limitations under
@@ -15,6 +15,7 @@
 
 package org.apache.geode.redis.internal.org.apache.hadoop.fs;
 
+import java.util.Objects;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -23,7 +24,8 @@ import java.util.regex.PatternSyntaxException;
  */
 public class GlobPattern {
   private static final char BACKSLASH = '\\';
-  private Pattern compiled;
+  private final Pattern compiled;
+  private final String globPattern;
   private boolean hasWildcard = false;
 
   /**
@@ -32,7 +34,8 @@ public class GlobPattern {
    * @param globPattern the glob pattern string
    */
   public GlobPattern(String globPattern) {
-    set(globPattern);
+    this.compiled = createPattern(globPattern);
+    this.globPattern = globPattern;
   }
 
   /**
@@ -40,6 +43,13 @@ public class GlobPattern {
    */
   public Pattern compiled() {
     return compiled;
+  }
+
+  /**
+   * @return the original glob pattern
+   */
+  public String globPattern() {
+    return globPattern;
   }
 
   /**
@@ -67,7 +77,7 @@ public class GlobPattern {
    *
    * @param glob the glob pattern string
    */
-  public void set(String glob) {
+  private Pattern createPattern(String glob) {
     StringBuilder regex = new StringBuilder();
     int setOpen = 0;
     int curlyOpen = 0;
@@ -149,7 +159,7 @@ public class GlobPattern {
     if (curlyOpen > 0) {
       error("Unclosed group", glob, len);
     }
-    compiled = Pattern.compile(regex.toString());
+    return Pattern.compile(regex.toString());
   }
 
   /**
@@ -157,6 +167,23 @@ public class GlobPattern {
    */
   public boolean hasWildcard() {
     return hasWildcard;
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (!(o instanceof GlobPattern)) {
+      return false;
+    }
+    GlobPattern that = (GlobPattern) o;
+    return this.compiled.pattern().equals(that.compiled.pattern());
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(compiled, hasWildcard);
   }
 
   private static void error(String message, String pattern, int pos) {

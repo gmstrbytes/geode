@@ -27,6 +27,7 @@ import javax.servlet.http.HttpServletRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
@@ -51,13 +52,19 @@ public class ClusterMemberService implements PulseService {
 
   private final ObjectMapper mapper = new ObjectMapper();
 
-  private final String HEAP_USAGE = "heapUsage";
+  private static final String HEAP_USAGE = "heapUsage";
+  private final Repository repository;
+
+  @Autowired
+  public ClusterMemberService(Repository repository) {
+    this.repository = repository;
+  }
 
   @Override
   public ObjectNode execute(final HttpServletRequest request) throws Exception {
 
     // get cluster object
-    Cluster cluster = Repository.get().getCluster();
+    Cluster cluster = repository.getCluster();
 
     // json object to be sent as response
     ObjectNode responseJSON = mapper.createObjectNode();
@@ -80,22 +87,22 @@ public class ClusterMemberService implements PulseService {
         serverGroups.add(PulseConstants.DEFAULT_SERVER_GROUP);
       }
 
-      memberJSON.put("serverGroups", mapper.valueToTree(serverGroups));
+      memberJSON.set("serverGroups", mapper.valueToTree(serverGroups));
 
       List<String> redundancyZones = clusterMember.getRedundancyZones();
       if (redundancyZones.size() == 0) {
-        redundancyZones = new ArrayList<String>();
+        redundancyZones = new ArrayList<>();
         redundancyZones.add(PulseConstants.DEFAULT_REDUNDANCY_ZONE);
       }
-      memberJSON.put("redundancyZones", mapper.valueToTree(redundancyZones));
+      memberJSON.set("redundancyZones", mapper.valueToTree(redundancyZones));
 
       long usedHeapSize = cluster.getUsedHeapSize();
       long currentHeap = clusterMember.getCurrentHeapSize();
       if (usedHeapSize > 0) {
         double heapUsage = ((double) currentHeap / (double) usedHeapSize) * 100;
-        memberJSON.put(this.HEAP_USAGE, truncate(heapUsage, 2));
+        memberJSON.put(HEAP_USAGE, truncate(heapUsage, 2));
       } else {
-        memberJSON.put(this.HEAP_USAGE, 0);
+        memberJSON.put(HEAP_USAGE, 0);
       }
       double currentCPUUsage = clusterMember.getCpuUsage();
       double loadAvg = clusterMember.getLoadAverage();
@@ -116,7 +123,7 @@ public class ClusterMemberService implements PulseService {
       memberListJson.add(memberJSON);
     }
     // cluster's Members
-    responseJSON.put("members", memberListJson);
+    responseJSON.set("members", memberListJson);
     // Send json response
     return responseJSON;
   }

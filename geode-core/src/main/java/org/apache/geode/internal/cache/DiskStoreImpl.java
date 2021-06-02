@@ -74,6 +74,7 @@ import org.apache.geode.CancelCriterion;
 import org.apache.geode.CancelException;
 import org.apache.geode.StatisticsFactory;
 import org.apache.geode.SystemFailure;
+import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.annotations.internal.MutableForTesting;
 import org.apache.geode.cache.Cache;
@@ -85,7 +86,6 @@ import org.apache.geode.cache.DiskStoreFactory;
 import org.apache.geode.cache.RegionDestroyedException;
 import org.apache.geode.cache.persistence.PersistentID;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.cache.ExportDiskRegion.ExportWriter;
@@ -113,7 +113,6 @@ import org.apache.geode.internal.cache.versions.RegionVersionVector;
 import org.apache.geode.internal.cache.versions.VersionSource;
 import org.apache.geode.internal.cache.versions.VersionStamp;
 import org.apache.geode.internal.cache.versions.VersionTag;
-import org.apache.geode.internal.concurrent.ConcurrentHashSet;
 import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.internal.util.BlobHelper;
 import org.apache.geode.logging.internal.executors.LoggingExecutors;
@@ -124,6 +123,7 @@ import org.apache.geode.pdx.internal.EnumInfo;
 import org.apache.geode.pdx.internal.PdxField;
 import org.apache.geode.pdx.internal.PdxType;
 import org.apache.geode.pdx.internal.PeerTypeRegistration;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * Represents a (disk-based) persistent store for region data. Used for both persistent recoverable
@@ -138,20 +138,20 @@ public class DiskStoreImpl implements DiskStore {
   public static final boolean KRF_DEBUG = Boolean.getBoolean("disk.KRF_DEBUG");
 
   public static final int MAX_OPEN_INACTIVE_OPLOGS =
-      Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "MAX_OPEN_INACTIVE_OPLOGS", 7);
+      Integer.getInteger(GeodeGlossary.GEMFIRE_PREFIX + "MAX_OPEN_INACTIVE_OPLOGS", 7);
 
   /*
    * If less than 20MB (default - configurable through this property) of the available space is left
    * for logging and other misc stuff then it is better to bail out.
    */
   public static final int MIN_DISK_SPACE_FOR_LOGS =
-      Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "MIN_DISK_SPACE_FOR_LOGS", 20);
+      Integer.getInteger(GeodeGlossary.GEMFIRE_PREFIX + "MIN_DISK_SPACE_FOR_LOGS", 20);
 
   /** Represents an invalid id of a key/value on disk */
   public static final long INVALID_ID = 0L; // must be zero
 
   public static final String COMPLETE_COMPACTION_BEFORE_TERMINATION_PROPERTY_NAME =
-      DistributionConfig.GEMFIRE_PREFIX + "disk.completeCompactionBeforeTermination";
+      GeodeGlossary.GEMFIRE_PREFIX + "disk.completeCompactionBeforeTermination";
 
   static final int MINIMUM_DIR_SIZE = 1024;
 
@@ -172,27 +172,27 @@ public class DiskStoreImpl implements DiskStore {
    * Kept for backwards compat. Should use allowForceCompaction api/dtd instead.
    */
   private static final boolean ENABLE_NOTIFY_TO_ROLL =
-      Boolean.getBoolean(DistributionConfig.GEMFIRE_PREFIX + "ENABLE_NOTIFY_TO_ROLL");
+      Boolean.getBoolean(GeodeGlossary.GEMFIRE_PREFIX + "ENABLE_NOTIFY_TO_ROLL");
 
   public static final String RECOVER_VALUE_PROPERTY_NAME =
-      DistributionConfig.GEMFIRE_PREFIX + "disk.recoverValues";
+      GeodeGlossary.GEMFIRE_PREFIX + "disk.recoverValues";
 
   public static final String RECOVER_VALUES_SYNC_PROPERTY_NAME =
-      DistributionConfig.GEMFIRE_PREFIX + "disk.recoverValuesSync";
+      GeodeGlossary.GEMFIRE_PREFIX + "disk.recoverValuesSync";
 
   /**
    * Allows recovering values for LRU regions. By default values are not recovered for LRU regions
    * during recovery.
    */
   public static final String RECOVER_LRU_VALUES_PROPERTY_NAME =
-      DistributionConfig.GEMFIRE_PREFIX + "disk.recoverLruValues";
+      GeodeGlossary.GEMFIRE_PREFIX + "disk.recoverLruValues";
 
   boolean RECOVER_VALUES = getBoolean(DiskStoreImpl.RECOVER_VALUE_PROPERTY_NAME, true);
 
   boolean RECOVER_VALUES_SYNC = getBoolean(DiskStoreImpl.RECOVER_VALUES_SYNC_PROPERTY_NAME, false);
 
   boolean FORCE_KRF_RECOVERY =
-      getBoolean(DistributionConfig.GEMFIRE_PREFIX + "disk.FORCE_KRF_RECOVERY", false);
+      getBoolean(GeodeGlossary.GEMFIRE_PREFIX + "disk.FORCE_KRF_RECOVERY", false);
 
   final boolean RECOVER_LRU_VALUES =
       getBoolean(DiskStoreImpl.RECOVER_LRU_VALUES_PROPERTY_NAME, false);
@@ -219,12 +219,12 @@ public class DiskStoreImpl implements DiskStore {
    * static so tests can set it.
    */
   private final int MAX_OPLOGS_PER_COMPACTION = Integer.getInteger(
-      DistributionConfig.GEMFIRE_PREFIX + "MAX_OPLOGS_PER_COMPACTION",
-      Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "MAX_OPLOGS_PER_ROLL", 1).intValue());
+      GeodeGlossary.GEMFIRE_PREFIX + "MAX_OPLOGS_PER_COMPACTION",
+      Integer.getInteger(GeodeGlossary.GEMFIRE_PREFIX + "MAX_OPLOGS_PER_ROLL", 1).intValue());
 
   public static final int MAX_CONCURRENT_COMPACTIONS = Integer.getInteger(
-      DistributionConfig.GEMFIRE_PREFIX + "MAX_CONCURRENT_COMPACTIONS",
-      Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "MAX_CONCURRENT_ROLLS", 1).intValue());
+      GeodeGlossary.GEMFIRE_PREFIX + "MAX_CONCURRENT_COMPACTIONS",
+      Integer.getInteger(GeodeGlossary.GEMFIRE_PREFIX + "MAX_CONCURRENT_ROLLS", 1).intValue());
 
   /**
    * This system property indicates that maximum number of delayed write tasks that can be pending
@@ -232,7 +232,7 @@ public class DiskStoreImpl implements DiskStore {
    * delete oplogs, etc.
    */
   public static final int MAX_PENDING_TASKS =
-      Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "disk.MAX_PENDING_TASKS", 6);
+      Integer.getInteger(GeodeGlossary.GEMFIRE_PREFIX + "disk.MAX_PENDING_TASKS", 6);
 
   /**
    * This system property indicates that IF should also be preallocated. This property will be used
@@ -240,7 +240,7 @@ public class DiskStoreImpl implements DiskStore {
    * by default be ON but in order to switch it off you need to explicitly
    */
   static final boolean PREALLOCATE_IF =
-      !System.getProperty(DistributionConfig.GEMFIRE_PREFIX + "preAllocateIF", "true")
+      !System.getProperty(GeodeGlossary.GEMFIRE_PREFIX + "preAllocateIF", "true")
           .equalsIgnoreCase("false");
 
   /**
@@ -248,7 +248,7 @@ public class DiskStoreImpl implements DiskStore {
    * specified for the disk store.
    */
   static final boolean PREALLOCATE_OPLOGS =
-      !System.getProperty(DistributionConfig.GEMFIRE_PREFIX + "preAllocateDisk", "true")
+      !System.getProperty(GeodeGlossary.GEMFIRE_PREFIX + "preAllocateDisk", "true")
           .equalsIgnoreCase("false");
 
   /**
@@ -261,7 +261,7 @@ public class DiskStoreImpl implements DiskStore {
    * This system property turns on synchronous writes just the the init file.
    */
   static final boolean SYNC_IF_WRITES =
-      Boolean.getBoolean(DistributionConfig.GEMFIRE_PREFIX + "syncMetaDataWrites");
+      Boolean.getBoolean(GeodeGlossary.GEMFIRE_PREFIX + "syncMetaDataWrites");
 
   /**
    * For testing - to keep track of files for which fallocate happened
@@ -347,7 +347,7 @@ public class DiskStoreImpl implements DiskStore {
   /**
    * A set of overflow only regions that are using this disk store.
    */
-  private final Set<DiskRegion> overflowMap = new ConcurrentHashSet<DiskRegion>();
+  private final Set<DiskRegion> overflowMap = ConcurrentHashMap.newKeySet();
 
   /**
    * Contains all of the disk recovery stores for which we are recovering values asnynchronously.
@@ -378,9 +378,9 @@ public class DiskStoreImpl implements DiskStore {
     if (ct == DiskStoreFactory.DEFAULT_COMPACTION_THRESHOLD) {
       // allow the old sys prop for backwards compat.
       if (System
-          .getProperty(DistributionConfig.GEMFIRE_PREFIX + "OVERFLOW_ROLL_PERCENTAGE") != null) {
+          .getProperty(GeodeGlossary.GEMFIRE_PREFIX + "OVERFLOW_ROLL_PERCENTAGE") != null) {
         ct = (int) (Double.parseDouble(System
-            .getProperty(DistributionConfig.GEMFIRE_PREFIX + "OVERFLOW_ROLL_PERCENTAGE", "0.50"))
+            .getProperty(GeodeGlossary.GEMFIRE_PREFIX + "OVERFLOW_ROLL_PERCENTAGE", "0.50"))
             * 100.0);
       }
     }
@@ -481,7 +481,7 @@ public class DiskStoreImpl implements DiskStore {
       if (dirSizes[i] == DiskStoreFactory.DEFAULT_DISK_DIR_SIZE) {
         this.totalDiskStoreSpace = ManagementConstants.NOT_AVAILABLE_LONG;
       } else if (this.totalDiskStoreSpace != ManagementConstants.NOT_AVAILABLE_LONG) {
-        this.totalDiskStoreSpace += dirSizes[i] * (1024 * 1024);
+        this.totalDiskStoreSpace += (1024 * 1024) * ((long) dirSizes[i]);
       }
     }
     // stored in bytes
@@ -3517,33 +3517,85 @@ public class DiskStoreImpl implements DiskStore {
   }
 
   /**
-   * Set of OplogEntryIds (longs). Memory is optimized by using an int[] for ids in the unsigned int
-   * range.
+   * Set of OplogEntryIds (longs).
+   * Memory is optimized by using an int[] for ids in the unsigned int range.
+   * By default we can't have more than 805306401 ids for a load factor of 0.75, the internal lists
+   * are used to overcome this limit, allowing the disk-store to recover successfully (the internal
+   * class is **only** used during recovery to read all deleted entries).
    */
   static class OplogEntryIdSet {
-    private final IntOpenHashSet ints = new IntOpenHashSet((int) INVALID_ID);
-    private final LongOpenHashSet longs = new LongOpenHashSet((int) INVALID_ID);
+    private final List<IntOpenHashSet> allInts;
+    private final List<LongOpenHashSet> allLongs;
+    private final AtomicReference<IntOpenHashSet> currentInts;
+    private final AtomicReference<LongOpenHashSet> currentLongs;
+
+    // For testing purposes only.
+    @VisibleForTesting
+    OplogEntryIdSet(List<IntOpenHashSet> allInts, List<LongOpenHashSet> allLongs) {
+      this.allInts = allInts;
+      this.currentInts = new AtomicReference<>(this.allInts.get(0));
+
+      this.allLongs = allLongs;
+      this.currentLongs = new AtomicReference<>(this.allLongs.get(0));
+    }
+
+    public OplogEntryIdSet() {
+      IntOpenHashSet intHashSet = new IntOpenHashSet((int) INVALID_ID);
+      this.allInts = new ArrayList<>();
+      this.allInts.add(intHashSet);
+      this.currentInts = new AtomicReference<>(intHashSet);
+
+      LongOpenHashSet longHashSet = new LongOpenHashSet((int) INVALID_ID);
+      this.allLongs = new ArrayList<>();
+      this.allLongs.add(longHashSet);
+      this.currentLongs = new AtomicReference<>(longHashSet);
+    }
 
     public void add(long id) {
       if (id == 0) {
         throw new IllegalArgumentException();
-      } else if (id > 0 && id <= 0x00000000FFFFFFFFL) {
-        this.ints.add((int) id);
-      } else {
-        this.longs.add(id);
+      }
+
+      try {
+        if (id > 0 && id <= 0x00000000FFFFFFFFL) {
+          this.currentInts.get().add((int) id);
+        } else {
+          this.currentLongs.get().add(id);
+        }
+      } catch (IllegalArgumentException illegalArgumentException) {
+        // See GEODE-8029.
+        // Too many entries on the accumulated drf files, overflow and continue.
+        logger.warn(
+            "There is a large number of deleted entries within the disk-store, please execute an offline compaction.");
+
+        // Overflow to the next [Int|Long]OpenHashSet and continue.
+        if (id > 0 && id <= 0x00000000FFFFFFFFL) {
+          IntOpenHashSet overflownHashSet = new IntOpenHashSet((int) INVALID_ID);
+          allInts.add(overflownHashSet);
+          currentInts.set(overflownHashSet);
+
+          currentInts.get().add((int) id);
+        } else {
+          LongOpenHashSet overflownHashSet = new LongOpenHashSet((int) INVALID_ID);
+          allLongs.add(overflownHashSet);
+          currentLongs.set(overflownHashSet);
+
+          currentLongs.get().add(id);
+        }
       }
     }
 
     public boolean contains(long id) {
       if (id >= 0 && id <= 0x00000000FFFFFFFFL) {
-        return this.ints.contains((int) id);
+        return allInts.stream().anyMatch(ints -> ints.contains((int) id));
       } else {
-        return this.longs.contains(id);
+        return allLongs.stream().anyMatch(longs -> longs.contains(id));
       }
     }
 
-    public int size() {
-      return this.ints.size() + this.longs.size();
+    public long size() {
+      return allInts.stream().mapToInt(IntOpenHashSet::size).sum()
+          + allLongs.stream().mapToInt(LongOpenHashSet::size).sum();
     }
   }
 
@@ -3973,13 +4025,13 @@ public class DiskStoreImpl implements DiskStore {
     return this.liveEntryCount;
   }
 
-  private int deadRecordCount;
+  private long deadRecordCount;
 
-  void incDeadRecordCount(int count) {
+  void incDeadRecordCount(long count) {
     this.deadRecordCount += count;
   }
 
-  public int getDeadRecordCount() {
+  public long getDeadRecordCount() {
     return this.deadRecordCount;
   }
 
@@ -4272,9 +4324,23 @@ public class DiskStoreImpl implements DiskStore {
   }
 
   public static void validate(String name, File[] dirs) throws Exception {
+    offlineValidate(name, dirs);
+  }
+
+  /**
+   * Validates the disk-store in offline mode, and returns the validated DiskStore instance.
+   *
+   * @param name Disk store name.
+   * @param dirs Directories of the disk-store to validate.
+   * @return The validted {@link DiskStore}.
+   * @throws Exception If there's a problem while loading or validating the disk-store.
+   */
+  public static DiskStore offlineValidate(String name, File[] dirs) throws Exception {
     try {
-      DiskStoreImpl dsi = createForOfflineValidate(name, dirs);
-      dsi.validate();
+      DiskStoreImpl diskStore = createForOfflineValidate(name, dirs);
+      diskStore.validate();
+
+      return diskStore;
     } finally {
       cleanupOffline();
     }

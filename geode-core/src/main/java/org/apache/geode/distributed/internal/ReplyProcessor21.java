@@ -28,7 +28,6 @@ import org.apache.geode.CancelCriterion;
 import org.apache.geode.InternalGemFireException;
 import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.cache.TimeoutException;
-import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.DistributedSystemDisconnectedException;
 import org.apache.geode.distributed.internal.deadlock.MessageDependencyMonitor;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
@@ -40,6 +39,7 @@ import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.internal.util.Breadcrumbs;
 import org.apache.geode.internal.util.concurrent.StoppableCountDownLatch;
 import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * This class processes responses to {@link DistributionMessage}s. It handles a the generic case of
@@ -174,7 +174,7 @@ public class ReplyProcessor21 implements MembershipListener {
 
   static {
     String str = System
-        .getProperty(DistributionConfig.GEMFIRE_PREFIX + "ack-severe-alert-reduction-ratio", ".80");
+        .getProperty(GeodeGlossary.GEMFIRE_PREFIX + "ack-severe-alert-reduction-ratio", ".80");
     double ratio;
     try {
       ratio = Double.parseDouble(str);
@@ -1118,8 +1118,8 @@ public class ReplyProcessor21 implements MembershipListener {
           cause);
     } else if (suspectThem) {
       if (suspectMembers != null && suspectMembers.size() > 0) {
-        getDistributionManager().getMembershipManager().suspectMembers(
-            (Set<DistributedMember>) (Set<?>) suspectMembers,
+        getDistributionManager().getDistribution().suspectMembers(
+            suspectMembers,
             "Failed to respond within ack-wait-threshold");
       }
     }

@@ -15,20 +15,10 @@
 
 package org.apache.geode.management.internal;
 
-import static org.apache.geode.management.configuration.Links.URI_VERSION;
-import static org.apache.geode.management.internal.Constants.INCLUDE_CLASS_HEADER;
-
-import java.util.Date;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.stream.Collectors;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.lang3.NotImplementedException;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.web.client.RestTemplate;
 
 import org.apache.geode.management.api.ClusterManagementException;
 import org.apache.geode.management.api.ClusterManagementGetResult;
@@ -39,6 +29,8 @@ import org.apache.geode.management.api.ClusterManagementOperationResult;
 import org.apache.geode.management.api.ClusterManagementRealizationResult;
 import org.apache.geode.management.api.ClusterManagementResult;
 import org.apache.geode.management.api.ClusterManagementService;
+import org.apache.geode.management.api.ClusterManagementServiceTransport;
+import org.apache.geode.management.api.CommandType;
 import org.apache.geode.management.configuration.AbstractConfiguration;
 import org.apache.geode.management.runtime.OperationResult;
 import org.apache.geode.management.runtime.RuntimeInfo;
@@ -63,43 +55,26 @@ public class ClientClusterManagementService implements ClusterManagementService 
   // the restTemplate needs to have the context as the baseUrl, and request URI is the part after
   // the context (including /v1), it needs to be set up this way so that spring test
   // runner's injected RequestFactory can work
-  private final RestTemplate restTemplate;
-  private final ScheduledExecutorService longRunningStatusPollingThreadPool;
+  private final ClusterManagementServiceTransport transport;
 
-  ClientClusterManagementService(RestTemplate restTemplate) {
-    this.restTemplate = restTemplate;
-    this.longRunningStatusPollingThreadPool = Executors.newScheduledThreadPool(1);
+  public ClientClusterManagementService(ClusterManagementServiceTransport transport) {
+    this.transport = transport;
   }
 
   @Override
-  @SuppressWarnings("unchecked")
   public <T extends AbstractConfiguration<?>> ClusterManagementRealizationResult create(T config) {
-    String endPoint = URI_VERSION + config.getLinks().getList();
-    // the response status code info is represented by the ClusterManagementResult.errorCode already
-    return assertSuccessful(restTemplate
-        .exchange(endPoint, HttpMethod.POST, makeEntity(config),
-            ClusterManagementRealizationResult.class)
-        .getBody());
-  }
-
-  static <T> HttpEntity<T> makeEntity(T config) {
-    HttpHeaders headers = new HttpHeaders();
-    headers.add(INCLUDE_CLASS_HEADER, "true");
-    return new HttpEntity<>(config, headers);
+    ClusterManagementRealizationResult result =
+        transport.submitMessage(config, config.getCreationCommandType());
+    assertSuccessful(result);
+    return result;
   }
 
   @Override
-  @SuppressWarnings("unchecked")
   public <T extends AbstractConfiguration<?>> ClusterManagementRealizationResult delete(
       T config) {
-    String uri = getIdentityEndpoint(config);
-    return assertSuccessful(restTemplate
-        .exchange(uri + "?group={group}",
-            HttpMethod.DELETE,
-            makeEntity(null),
-            ClusterManagementRealizationResult.class,
-            config.getGroup())
-        .getBody());
+    ClusterManagementRealizationResult result = transport.submitMessage(config, CommandType.DELETE);
+    assertSuccessful(result);
+    return result;
   }
 
   @Override
@@ -109,85 +84,80 @@ public class ClientClusterManagementService implements ClusterManagementService 
   }
 
   @Override
-  @SuppressWarnings("unchecked")
   public <T extends AbstractConfiguration<R>, R extends RuntimeInfo> ClusterManagementListResult<T, R> list(
       T config) {
-    String endPoint = URI_VERSION + config.getLinks().getList();
-    return assertSuccessful(restTemplate
-        .exchange(endPoint + "/?id={id}&group={group}", HttpMethod.GET, makeEntity(config),
-            ClusterManagementListResult.class, config.getId(), config.getGroup())
-        .getBody());
+    ClusterManagementListResult<T, R> result = transport.submitMessageForList(config);
+    assertSuccessful(result);
+    return result;
   }
 
   @Override
-  @SuppressWarnings("unchecked")
   public <T extends AbstractConfiguration<R>, R extends RuntimeInfo> ClusterManagementGetResult<T, R> get(
       T config) {
-
-    return assertSuccessful(restTemplate
-        .exchange(getIdentityEndpoint(config), HttpMethod.GET, makeEntity(config),
-            ClusterManagementGetResult.class)
-        .getBody());
+    ClusterManagementGetResult<T, R> result = transport.submitMessageForGet(config);
+    assertSuccessful(result);
+    return result;
   }
 
   @Override
-  @SuppressWarnings("unchecked")
-  public <A extends ClusterManagementOperation<V>, V extends OperationResult> ClusterManagementOperationResult<V> start(
+  public <A extends ClusterManagementOperation<V>, V extends OperationResult> ClusterManagementOperationResult<A, V> start(
       A op) {
-    final ClusterManagementOperationResult result;
-
-    // make the REST call to start the operation
-    result = assertSuccessful(restTemplate
-        .exchange(URI_VERSION + op.getEndpoint(), HttpMethod.POST, makeEntity(op),
-            ClusterManagementOperationResult.class)
-        .getBody());
-
-    // our restTemplate requires the url to be modified to start from "/v1"
-    return reAnimate(result, op.getEndpoint());
-  }
-
-  private <V extends OperationResult> ClusterManagementOperationResult<V> reAnimate(
-      ClusterManagementOperationResult<V> result, String endPoint) {
-    String uri = URI_VERSION + endPoint + "/" + result.getOperationId();
-
-    // complete the future by polling the check-status REST endpoint
-    CompletableFuture<Date> futureOperationEnded = new CompletableFuture<>();
-    CompletableFutureProxy<V> operationResult =
-        new CompletableFutureProxy<>(restTemplate, uri, longRunningStatusPollingThreadPool,
-            futureOperationEnded);
-
-    return new ClusterManagementOperationResult<>(result, operationResult,
-        result.getOperationStart(), futureOperationEnded, result.getOperator(),
-        result.getOperationId());
+    ClusterManagementOperationResult<A, V> result = transport.submitMessageForStart(op);
+    assertSuccessful(result);
+    return result;
   }
 
   @Override
-  @SuppressWarnings("unchecked")
-  public <A extends ClusterManagementOperation<V>, V extends OperationResult> ClusterManagementListOperationsResult<V> list(
+  public <A extends ClusterManagementOperation<V>, V extends OperationResult> ClusterManagementOperationResult<A, V> get(
+      A opType, String opId) {
+    ClusterManagementOperationResult<A, V> result =
+        transport.submitMessageForGetOperation(opType, opId);
+    assertSuccessful(result);
+    return result;
+  }
+
+  @Override
+  public <A extends ClusterManagementOperation<V>, V extends OperationResult> CompletableFuture<ClusterManagementOperationResult<A, V>> getFuture(
+      A opType, String opId) {
+    AtomicReference<CompletableFuture<ClusterManagementOperationResult<A, V>>> futureAtomicReference =
+        new AtomicReference<>();
+    futureAtomicReference.set(CompletableFuture.supplyAsync(() -> {
+      while (futureAtomicReference.get() == null || !futureAtomicReference.get().isCancelled()) {
+        ClusterManagementOperationResult<A, V> result = this.get(opType, opId);
+        if (result.getOperationEnd() != null) {
+          return result;
+        }
+        try {
+          Thread.sleep(1000L);
+        } catch (InterruptedException e) {
+          throw new ClusterManagementException(result, e);
+        }
+      }
+      return null;
+    }));
+    return futureAtomicReference.get();
+  }
+
+  @Override
+  public <A extends ClusterManagementOperation<V>, V extends OperationResult> ClusterManagementListOperationsResult<A, V> list(
       A opType) {
-    final ClusterManagementListOperationsResult<V> result;
-
-    // make the REST call to list in-progress operations
-    result = assertSuccessful(restTemplate
-        .exchange(URI_VERSION + opType.getEndpoint(), HttpMethod.GET,
-            makeEntity(null), ClusterManagementListOperationsResult.class)
-        .getBody());
-
-    return new ClusterManagementListOperationsResult<>(
-        result.getResult().stream().map(r -> reAnimate(r, opType.getEndpoint()))
-            .collect(Collectors.toList()));
+    ClusterManagementListOperationsResult<A, V> result =
+        transport.submitMessageForListOperation(opType);
+    assertSuccessful(result);
+    return result;
   }
 
-  private String getIdentityEndpoint(AbstractConfiguration config) {
-    String uri = config.getLinks().getSelf();
-    if (uri == null) {
-      throw new IllegalArgumentException(
-          "Unable to construct the URI with the current configuration.");
-    }
-    return URI_VERSION + uri;
+  @Override
+  public boolean isConnected() {
+    return transport.isConnected();
   }
 
-  private <T extends ClusterManagementResult> T assertSuccessful(T result) {
+  @Override
+  public void close() {
+    transport.close();
+  }
+
+  private void assertSuccessful(ClusterManagementResult result) {
     if (result == null) {
       ClusterManagementResult somethingVeryBadHappened = new ClusterManagementResult(
           ClusterManagementResult.StatusCode.ERROR, "Unable to parse server response.");
@@ -195,20 +165,5 @@ public class ClientClusterManagementService implements ClusterManagementService 
     } else if (!result.isSuccessful()) {
       throw new ClusterManagementException(result);
     }
-    return result;
-  }
-
-  public boolean isConnected() {
-    try {
-      return restTemplate.getForEntity(URI_VERSION + "/ping", String.class)
-          .getBody().equals("pong");
-    } catch (Exception e) {
-      return false;
-    }
-  }
-
-  @Override
-  public void close() {
-    longRunningStatusPollingThreadPool.shutdownNow();
   }
 }

@@ -29,15 +29,16 @@ import org.junit.Test;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.internal.cache.execute.FunctionContextImpl;
 import org.apache.geode.internal.util.DriverJarUtil;
-import org.apache.geode.management.internal.cli.functions.CliFunctionResult;
+import org.apache.geode.management.internal.functions.CliFunctionResult;
 
 public class RegisterDriverFunctionTest {
   private RegisterDriverFunction function;
   private FunctionContext<Object[]> context;
   private DriverJarUtil util;
-  private final String DRIVER_CLASS_NAME = "Test.Driver.Name";
-  private final String MEMBER_NAME = "Test Member Name";
+  private static final String DRIVER_CLASS_NAME = "Test.Driver.Name";
+  private static final String MEMBER_NAME = "Test Member Name";
 
+  @SuppressWarnings("unchecked")
   @Before
   public void setUp() {
     context = mock(FunctionContextImpl.class);
@@ -52,7 +53,7 @@ public class RegisterDriverFunctionTest {
   public void testExecuteFunctionDoesNotReturnError() {
     CliFunctionResult functionResult = function.executeFunction(context);
     assertThat(functionResult.getStatusMessage())
-        .contains(DRIVER_CLASS_NAME + " was succesfully registered.");
+        .contains(DRIVER_CLASS_NAME + " was successfully registered.");
     assertThat(functionResult.getStatus()).contains(CliFunctionResult.StatusState.OK.toString());
   }
 

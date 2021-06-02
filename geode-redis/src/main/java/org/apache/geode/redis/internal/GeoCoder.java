@@ -46,7 +46,7 @@ public class GeoCoder {
         if (next == null) {
           tmp.writeBytes(Coder.bNIL);
         } else {
-          tmp.writeBytes(Coder.getBulkStringArrayResponse(alloc,
+          tmp.writeBytes(Coder.getArrayResponse(alloc,
               Arrays.asList(
                   Double.toString(next.getLon()),
                   Double.toString(next.getLat()))));
@@ -67,8 +67,9 @@ public class GeoCoder {
   public static ByteBuf geoRadiusResponse(ByteBufAllocator alloc,
       Collection<GeoRadiusResponseElement> list)
       throws CoderException {
-    if (list.isEmpty())
+    if (list.isEmpty()) {
       return Coder.getEmptyArrayResponse(alloc);
+    }
 
     List<Object> responseElements = new ArrayList<>();
     for (GeoRadiusResponseElement element : list) {
@@ -108,7 +109,7 @@ public class GeoCoder {
       }
     }
 
-    return Coder.getBulkStringArrayResponse(alloc, responseElements);
+    return Coder.getArrayResponse(alloc, responseElements);
   }
 
   /**
@@ -157,8 +158,8 @@ public class GeoCoder {
       double radiusMeters) {
     HashArea boundingBox = boundingBox(longitude, latitude, radiusMeters);
     int steps =
-        Math.max(1, GeoHash.hashLengthToCoverBoundingBox(boundingBox.maxlat, boundingBox.maxlon,
-            boundingBox.minlat, boundingBox.minlon));
+        Math.max(1, GeoHash.hashLengthToCoverBoundingBox(boundingBox.minlat, boundingBox.maxlon,
+            boundingBox.maxlat, boundingBox.minlon));
 
     List<String> extra = new ArrayList<>();
     // Large distance boundary condition
@@ -166,8 +167,8 @@ public class GeoCoder {
       extra.addAll(GeoHash.neighbours(GeoHash.encodeHash(latitude, longitude, steps)));
     }
 
-    Set<String> areas = GeoHash.coverBoundingBox(boundingBox.maxlat, boundingBox.maxlon,
-        boundingBox.minlat, boundingBox.minlon, steps).getHashes();
+    Set<String> areas = GeoHash.coverBoundingBox(boundingBox.maxlat, boundingBox.minlon,
+        boundingBox.minlat, boundingBox.maxlon, steps).getHashes();
     if (!extra.isEmpty()) {
       extra.forEach(ex -> areas.add(ex));
     }

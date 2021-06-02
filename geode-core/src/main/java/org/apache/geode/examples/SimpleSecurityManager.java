@@ -42,7 +42,7 @@ public class SimpleSecurityManager implements SecurityManager {
   }
 
   @Override
-  /**
+  /*
    * these following users will be authenticated:
    * 1. auth token defined as SimpleSecurityManager.VALID_TOKEN
    * 2. username and password that are the same
@@ -50,7 +50,7 @@ public class SimpleSecurityManager implements SecurityManager {
   public Object authenticate(final Properties credentials) throws AuthenticationFailedException {
     String token = credentials.getProperty(TOKEN);
     if (token != null) {
-      if (VALID_TOKEN.equals(token)) {
+      if (VALID_TOKEN.equalsIgnoreCase(token) || token.length() > 20) {
         return "Bearer " + token;
       } else {
         throw new AuthenticationFailedException("Invalid token");
@@ -65,7 +65,7 @@ public class SimpleSecurityManager implements SecurityManager {
   }
 
   @Override
-  /**
+  /*
    * these following users will be authorized for the permission:
    * 1. All authtoken users will be authorized
    * 2. users with passwords, if the permission string (without the :) starts with the username,

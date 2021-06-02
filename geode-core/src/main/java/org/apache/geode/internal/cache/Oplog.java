@@ -68,7 +68,6 @@ import org.apache.geode.cache.EntryNotFoundException;
 import org.apache.geode.cache.RegionDestroyedException;
 import org.apache.geode.cache.TimeoutException;
 import org.apache.geode.distributed.OplogCancelledException;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.internal.Assert;
 import org.apache.geode.internal.HeapDataOutputStream;
@@ -111,6 +110,7 @@ import org.apache.geode.internal.shared.NativeCalls;
 import org.apache.geode.internal.util.BlobHelper;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.pdx.internal.PdxWriterImpl;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * Implements an operation log to write to disk. As of prPersistSprint2 this file only supports
@@ -177,7 +177,7 @@ public class Oplog implements CompactableOplog, Flushable {
    * system. (Use rwd instead of rw - RandomAccessFile property)
    */
   private static final boolean SYNC_WRITES =
-      Boolean.getBoolean(DistributionConfig.GEMFIRE_PREFIX + "syncWrites");
+      Boolean.getBoolean(GeodeGlossary.GEMFIRE_PREFIX + "syncWrites");
 
   /**
    * The HighWaterMark of recentValues.
@@ -937,14 +937,14 @@ public class Oplog implements CompactableOplog, Flushable {
         // this.crf.raf.seek(this.crf.currSize);
       } else if (!offline) {
         // drf exists but crf has been deleted (because it was empty).
-        // I don't think the drf needs to be opened. It is only used during
-        // recovery.
-        // At some point the compacter my identify that it can be deleted.
+        // I don't think the drf needs to be opened. It is only used during recovery.
+        // At some point the compacter may identify that it can be deleted.
         this.crf.RAFClosed = true;
         deleteCRF();
         this.closed = true;
         this.deleted.set(true);
       }
+
       this.drf.RAFClosed = true; // since we never open it on a recovered oplog
     } catch (IOException ex) {
       getParent().getCancelCriterion().checkCancelInProgress(ex);
@@ -4923,7 +4923,7 @@ public class Oplog implements CompactableOplog, Flushable {
   }
 
   private void setMaxCrfDrfSize() {
-    int crfPct = Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "CRF_MAX_PERCENTAGE", 90);
+    int crfPct = Integer.getInteger(GeodeGlossary.GEMFIRE_PREFIX + "CRF_MAX_PERCENTAGE", 90);
     if (crfPct > 100 || crfPct < 0) {
       crfPct = 90;
     }
@@ -7220,7 +7220,8 @@ public class Oplog implements CompactableOplog, Flushable {
 
     @Override
     public boolean fillInValue(InternalRegion region, InitialImageOperation.Entry entry,
-        ByteArrayDataInput in, DistributionManager distributionManager, final Version version) {
+        ByteArrayDataInput in, DistributionManager distributionManager,
+        final Version version) {
       return false;
     }
 

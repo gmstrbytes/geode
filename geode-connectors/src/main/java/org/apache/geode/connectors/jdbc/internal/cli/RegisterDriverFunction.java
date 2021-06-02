@@ -18,7 +18,7 @@ import org.apache.geode.annotations.Experimental;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.internal.util.DriverJarUtil;
 import org.apache.geode.management.cli.CliFunction;
-import org.apache.geode.management.internal.cli.functions.CliFunctionResult;
+import org.apache.geode.management.internal.functions.CliFunctionResult;
 
 /**
  * The Object[] must always be of size two.
@@ -39,7 +39,7 @@ public class RegisterDriverFunction extends CliFunction<Object[]> {
       DriverJarUtil util = getDriverJarUtil();
       util.registerDriver(driverClassName);
       return new CliFunctionResult(context.getMemberName(), CliFunctionResult.StatusState.OK,
-          driverClassName + " was succesfully registered.");
+          driverClassName + " was successfully registered.");
     } catch (Exception ex) {
       return new CliFunctionResult(context.getMemberName(), CliFunctionResult.StatusState.ERROR,
           ex.getMessage());

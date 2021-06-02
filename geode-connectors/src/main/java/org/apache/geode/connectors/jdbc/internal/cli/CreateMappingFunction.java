@@ -26,7 +26,7 @@ import org.apache.geode.connectors.jdbc.internal.JdbcConnectorService;
 import org.apache.geode.connectors.jdbc.internal.RegionMappingExistsException;
 import org.apache.geode.connectors.jdbc.internal.configuration.RegionMapping;
 import org.apache.geode.management.cli.CliFunction;
-import org.apache.geode.management.internal.cli.functions.CliFunctionResult;
+import org.apache.geode.management.internal.functions.CliFunctionResult;
 
 /**
  * The Object[] must always be of size two.
@@ -78,9 +78,9 @@ public class CreateMappingFunction extends CliFunction<Object[]> {
    */
   private void alterRegion(Region<?, ?> region, String queueName, boolean synchronous) {
     if (!isAccessor(region)) {
-      region.getAttributesMutator().setCacheLoader(new JdbcLoader());
+      region.getAttributesMutator().setCacheLoader(new JdbcLoader<>());
       if (synchronous) {
-        region.getAttributesMutator().setCacheWriter(new JdbcWriter());
+        region.getAttributesMutator().setCacheWriter(new JdbcWriter<>());
       } else {
         region.getAttributesMutator().addAsyncEventQueueId(queueName);
       }
@@ -95,11 +95,8 @@ public class CreateMappingFunction extends CliFunction<Object[]> {
     if (!region.getAttributes().getDataPolicy().withStorage()) {
       return true;
     }
-    if (region.getAttributes().getPartitionAttributes() != null
-        && region.getAttributes().getPartitionAttributes().getLocalMaxMemory() == 0) {
-      return true;
-    }
-    return false;
+    return region.getAttributes().getPartitionAttributes() != null
+        && region.getAttributes().getPartitionAttributes().getLocalMaxMemory() == 0;
   }
 
   /**

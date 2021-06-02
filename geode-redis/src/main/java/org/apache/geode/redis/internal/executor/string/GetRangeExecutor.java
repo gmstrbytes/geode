@@ -27,38 +27,21 @@ import org.apache.geode.redis.internal.RedisDataType;
 
 public class GetRangeExecutor extends StringExecutor {
 
-  private final String ERROR_NOT_INT = "The indexes provided must be numeric values";
-
-  private final int startIndex = 2;
-
-  private final int stopIndex = 3;
+  private static final String ERROR_NOT_INT = "value is not an integer or out of range";
+  private static final int startIndex = 2;
+  private static final int stopIndex = 3;
 
   @Override
   public void executeCommand(Command command, ExecutionHandlerContext context) {
     List<byte[]> commandElems = command.getProcessedCommand();
 
-    Region<ByteArrayWrapper, ByteArrayWrapper> r = context.getRegionProvider().getStringsRegion();
-
-    if (commandElems.size() < 4) {
+    if (commandElems.size() != 4) {
       command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(), ArityDef.GETRANGE));
       return;
     }
 
-    ByteArrayWrapper key = command.getKey();
-    checkDataType(key, RedisDataType.REDIS_STRING, context);
-    ByteArrayWrapper valueWrapper = r.get(key);
-
-    if (valueWrapper == null) {
-      command.setResponse(Coder.getNilResponse(context.getByteBufAllocator()));
-      return;
-    }
-
-    byte[] value = valueWrapper.toBytes();
-    int length = value.length;
-
     long start;
     long end;
-
 
     try {
       byte[] startI = commandElems.get(startIndex);
@@ -69,21 +52,36 @@ public class GetRangeExecutor extends StringExecutor {
       command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(), ERROR_NOT_INT));
       return;
     }
+
+    Region<ByteArrayWrapper, ByteArrayWrapper> r = context.getRegionProvider().getStringsRegion();
+    ByteArrayWrapper key = command.getKey();
+    checkDataType(key, RedisDataType.REDIS_STRING, context);
+    ByteArrayWrapper valueWrapper = r.get(key);
+
+    if (valueWrapper == null) {
+      command.setResponse(Coder.getEmptyStringResponse(context.getByteBufAllocator()));
+      return;
+    }
+
+    byte[] value = valueWrapper.toBytes();
+    int length = value.length;
+
     start = getBoundedStartIndex(start, length);
     end = getBoundedEndIndex(end, length);
 
     /*
-     * If the properly formatted indexes are illegal, send nil
+     * Can't 'start' at end of value
      */
     if (start > end || start == length) {
-      command.setResponse(Coder.getNilResponse(context.getByteBufAllocator()));
+      command.setResponse(Coder.getEmptyStringResponse(context.getByteBufAllocator()));
       return;
     }
     /*
      * 1 is added to end because the end in copyOfRange is exclusive but in Redis it is inclusive
      */
-    if (end != length)
+    if (end != length) {
       end++;
+    }
     byte[] returnRange = Arrays.copyOfRange(value, (int) start, (int) end);
     if (returnRange == null || returnRange.length == 0) {
       command.setResponse(Coder.getNilResponse(context.getByteBufAllocator()));

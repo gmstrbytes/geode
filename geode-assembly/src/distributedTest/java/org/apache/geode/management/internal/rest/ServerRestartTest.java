@@ -28,22 +28,23 @@ import org.apache.geode.management.configuration.Region;
 import org.apache.geode.management.configuration.RegionType;
 import org.apache.geode.test.dunit.rules.ClusterStartupRule;
 import org.apache.geode.test.dunit.rules.MemberVM;
+import org.apache.geode.test.junit.rules.MemberStarterRule;
 
 public class ServerRestartTest {
   @Rule
   public ClusterStartupRule cluster = new ClusterStartupRule();
 
   @Test
-  public void serverReconnect() throws Exception {
-    MemberVM locator = cluster.startLocatorVM(0, l -> l.withHttpService());
+  public void serverReconnect() {
+    MemberVM locator = cluster.startLocatorVM(0, MemberStarterRule::withHttpService);
     cluster.startServerVM(1, locator.getPort());
 
     // we will stop the 2nd server so that we won't get "loss of qurom" error
     MemberVM server2 = cluster.startServerVM(2, locator.getPort());
 
     ClusterManagementService cmService =
-        ClusterManagementServiceBuilder.buildWithHostAddress()
-            .setHostAddress("localhost", locator.getHttpPort())
+        new ClusterManagementServiceBuilder()
+            .setPort(locator.getHttpPort())
             .build();
 
     Region region = new Region();
@@ -58,7 +59,7 @@ public class ServerRestartTest {
     server2.waitTilFullyReconnected();
 
     server2.invoke(() -> {
-      org.apache.geode.cache.Region foo = ClusterStartupRule.getCache().getRegion("Foo");
+      org.apache.geode.cache.Region<?, ?> foo = ClusterStartupRule.getCache().getRegion("Foo");
       assertThat(foo).isNotNull();
     });
   }

@@ -65,7 +65,7 @@ DEFAULT_GRADLE_TASK_OPTIONS="${PARALLEL_GRADLE} --console=plain --no-daemon"
 GRADLE_SKIP_TASK_OPTIONS=""
 
 SSHKEY_FILE="instance-data/sshkey"
-SSH_OPTIONS="-i ${SSHKEY_FILE} -o ConnectionAttempts=60 -o StrictHostKeyChecking=no -o ServerAliveInterval=60"
+SSH_OPTIONS="-i ${SSHKEY_FILE} -o ConnectionAttempts=60 -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -o ServerAliveCountMax=5"
 
 INSTANCE_IP_ADDRESS="$(cat instance-data/instance-ip-address)"
 
@@ -82,7 +82,8 @@ else
   DUNIT_PARALLEL_FORKS=""
 fi
 
-SET_JAVA_HOME="export JAVA_HOME=/usr/lib/jvm/java-${JAVA_BUILD_VERSION}-openjdk-amd64"
+# SET_JAVA_HOME="export JAVA_HOME=/usr/lib/jvm/java-${JAVA_BUILD_VERSION}-openjdk-amd64"
+SET_JAVA_HOME="export JAVA_HOME=/usr/lib/jvm/bellsoft-java${JAVA_BUILD_VERSION}-amd64"
 
 if [ -v CALL_STACK_TIMEOUT ]; then
   ssh ${SSH_OPTIONS} geode@${INSTANCE_IP_ADDRESS} "${SET_JAVA_HOME} && tmux new-session -d -s callstacks; tmux send-keys  ~/capture-call-stacks.sh\ ${PARALLEL_DUNIT}\ ${CALL_STACK_TIMEOUT} C-m"

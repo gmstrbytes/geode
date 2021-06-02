@@ -23,18 +23,19 @@ find-here-test-reports() {
   find .  -type d -name "test-results" >> ${output_directories_file}
   (find . -type d -name "*Test" | grep "build/[^/]*Test$") >> ${output_directories_file}
   find . -name "*-progress*txt" >> ${output_directories_file}
-  find . -name "*.hprof" >> ${output_directories_file}
+  find . -name "*.hprof" -o -name "hs_err*.log" -o -name "replay*.log" >> ${output_directories_file}
   find . -type d -name "callstacks" >> ${output_directories_file}
+  find .gradle_logs -name '*.log' >> ${output_directories_file}
   echo "Collecting the following artifacts..."
   cat ${output_directories_file}
   echo ""
 }
 
 ## Parsing functions for the Concourse Semver resource.
-## These functions expect one input in the form of the resource file, e.g., "1.9.0-SNAPSHOT.325"
+## These functions expect one input in the form of the resource file, e.g., "1.14.0-build.325"
 get-geode-version() {
   local CONCOURSE_VERSION=$1
-  # Prune all after '-', yielding e.g., "1.9.0"
+  # Prune all after '-', yielding e.g., "1.14.0"
   local GEODE_PRODUCT_VERSION=${CONCOURSE_VERSION%%-*}
   (>&2 echo "Geode product VERSION is ${GEODE_PRODUCT_VERSION}")
   echo ${GEODE_PRODUCT_VERSION}
@@ -42,9 +43,9 @@ get-geode-version() {
 
 get-geode-version-qualifier-slug() {
   local CONCOURSE_VERSION=$1
-  # Prune all before '-', yielding e.g., "SNAPSHOT.325"
+  # Prune all before '-', yielding e.g., "build.325"
   local CONCOURSE_BUILD_SLUG=${CONCOURSE_VERSION##*-}
-  # Prune all before '.', yielding e.g., "SNAPSHOT"
+  # Prune all before '.', yielding e.g., "build"
   local QUALIFIER_SLUG=${CONCOURSE_BUILD_SLUG%%.*}
   echo ${QUALIFIER_SLUG}
 }

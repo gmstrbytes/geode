@@ -838,9 +838,6 @@ public class ClientMembershipDUnitTest extends ClientServerTestCase {
     ClientCache clientCache = (ClientCache) getCache();
     Set<InetSocketAddress> servers = clientCache.getCurrentServers();
     assertTrue(!servers.isEmpty());
-    InetSocketAddress serverAddr = servers.iterator().next();
-    InetSocketAddress expectedAddr = new InetSocketAddress(serverMember.getHost(), ports[0]);
-    assertEquals(expectedAddr, serverAddr);
 
     // now check listener results
     assertTrue(fired[JOINED]);
@@ -1386,8 +1383,10 @@ public class ClientMembershipDUnitTest extends ClientServerTestCase {
       System.out.println("[testGetConnectedServers] creating connectionpool for "
           + NetworkUtils.getServerHostName(host) + " " + ports[i]);
       int[] thisServerPorts = new int[] {ports[i]};
-      ClientServerTestCase.configureConnectionPoolWithName(factory,
-          NetworkUtils.getServerHostName(host), thisServerPorts, false, -1, -1, null, "pooly" + i);
+      configureConnectionPoolWithNameAndFactory(factory, NetworkUtils.getServerHostName(host),
+          thisServerPorts, false, -1,
+          -1, null, "pooly" + i, PoolManager.createFactory(), -1, -1, -2,
+          -1);
       Region region = createRegion(name + "_" + i, factory.create());
       assertNotNull(getRootRegion().getSubregion(name + "_" + i));
       region.get("KEY-1");

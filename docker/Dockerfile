@@ -14,7 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM openjdk:8-jre-alpine
+# FROM openjdk:8-jre-alpine
+FROM bellsoft/liberica-openjdk-alpine:8
 
 # runtime dependencies
 RUN apk add --no-cache \
@@ -25,17 +26,17 @@ RUN apk add --no-cache \
 #       8763 31B4 5A97 E382 D1BD  FB44 4482 0F9C ABF4 396F
 # uid       [  undef ] Mike Stolz <mikestolz@apache.org>
 # sub   4096R/3871E6AD 2018-04-12 [expires: 2022-04-12]
-ENV GEODE_GPG 1603F3DE01E476E57860CCA8CAA41D28149202E6
+ENV GEODE_GPG 4EF7D5CB5C453A02954B0B9A1ACF9902D7D9EFBC
 # TODO does this change per-release like other Apache projects? (and thus needs to be a list of full fingerprints from a KEYS file instead?)
 
 ENV GEODE_HOME /geode
 ENV PATH $PATH:$GEODE_HOME/bin
 
 # https://geode.apache.org/releases/
-ENV GEODE_VERSION 1.11.0
+ENV GEODE_VERSION 1.13.1
 # Binaries TGZ SHA-256
 # https://dist.apache.org/repos/dist/release/geode/VERSION/apache-geode-VERSION.tgz.sha256
-ENV GEODE_SHA256 59bc86db88ccba3780c6fc44a91ece98fe93c69c281a10902efefd816b6f7afe
+ENV GEODE_SHA256 3239522afee932e0a06246b2b4130bc8a5cbae71aa5244cc4dcb24d4329044c3
 
 # http://apache.org/dyn/closer.cgi/geode/1.3.0/apache-geode-1.3.0.tgz
 
@@ -52,8 +53,7 @@ RUN set -eux; \
 		for url in \
 # https://issues.apache.org/jira/browse/INFRA-8753?focusedCommentId=14735394#comment-14735394
 			"https://www.apache.org/dyn/closer.cgi?action=download&filename=$file" \
-			"https://www-us.apache.org/dist/$file" \
-			"https://www.apache.org/dist/$file" \
+			"https://downloads.apache.org/$file" \
 			"https://archive.apache.org/dist/$file" \
 		; do \
 			if wget -O "$target" "$url"; then \

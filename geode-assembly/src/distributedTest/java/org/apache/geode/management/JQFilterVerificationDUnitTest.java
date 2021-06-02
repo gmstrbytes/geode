@@ -18,6 +18,7 @@ package org.apache.geode.management;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -34,62 +35,59 @@ import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Test;
 
-import org.apache.geode.cache.configuration.RegionConfig;
-import org.apache.geode.distributed.internal.InternalConfigurationPersistenceService;
-import org.apache.geode.lang.Identifiable;
 import org.apache.geode.management.api.ClusterManagementService;
 import org.apache.geode.management.client.ClusterManagementServiceBuilder;
+import org.apache.geode.management.configuration.DiskDir;
+import org.apache.geode.management.configuration.DiskStore;
+import org.apache.geode.management.configuration.Index;
+import org.apache.geode.management.configuration.IndexType;
 import org.apache.geode.management.configuration.Region;
 import org.apache.geode.management.configuration.RegionType;
 import org.apache.geode.test.dunit.rules.ClusterStartupRule;
 import org.apache.geode.test.dunit.rules.MemberVM;
 import org.apache.geode.test.junit.rules.GeodeDevRestClient;
+import org.apache.geode.test.junit.rules.MemberStarterRule;
 import org.apache.geode.test.junit.rules.RequiresGeodeHome;
 
 /**
- * this test is to make sure:
- * 1. we have a test to verify the jq filter we add to the controller
- * 2. the JQFilter we added is valid
+ * this test is to make sure: 1. we have a test to verify the jq filter we add to the controller 2.
+ * the JQFilter we added is valid
  */
 public class JQFilterVerificationDUnitTest {
 
   @ClassRule
   public static ClusterStartupRule cluster = new ClusterStartupRule();
 
-  private static MemberVM locator, server;
-  private static ClusterManagementService cms;
-
   @ClassRule
   public static RequiresGeodeHome requiresGeodeHome = new RequiresGeodeHome();
 
   private static GeodeDevRestClient client;
-  private static Map<String, JsonNode> apiWithJQFilters = new HashMap<>();
+  private static final Map<String, JsonNode> apiWithJQFilters = new HashMap<>();
   private static JqLibrary library;
 
   @BeforeClass
   public static void beforeClass() throws IOException {
-    locator = cluster.startLocatorVM(0, l -> l.withHttpService());
-    server = cluster.startServerVM(1, locator.getPort());
-    cms = ClusterManagementServiceBuilder.buildWithHostAddress()
-        .setHostAddress("localhost", locator.getHttpPort()).build();
+    MemberVM locator = cluster.startLocatorVM(0, MemberStarterRule::withHttpService);
+    cluster.startServerVM(1, locator.getPort());
+    ClusterManagementService cms =
+        new ClusterManagementServiceBuilder().setPort(locator.getHttpPort()).build();
     Region region = new Region();
     region.setName("regionA");
     region.setType(RegionType.REPLICATE);
     cms.create(region);
-    // create an index using CPS api since CMS doesn't support creating index yet
-    locator.invoke(() -> {
-      InternalConfigurationPersistenceService cps =
-          ClusterStartupRule.getLocator().getConfigurationPersistenceService();
-      cps.updateCacheConfig("cluster", cc -> {
-        RegionConfig regionA = Identifiable.find(cc.getRegions(), "regionA");
-        RegionConfig.Index index = new RegionConfig.Index();
-        index.setName("index1");
-        index.setFromClause("regionA");
-        index.setExpression("id");
-        regionA.getIndexes().add(index);
-        return cc;
-      });
-    });
+
+    Index index1 = new Index();
+    index1.setName("index1");
+    index1.setExpression("id");
+    index1.setRegionPath("/regionA");
+    index1.setIndexType(IndexType.RANGE);
+    cms.create(index1);
+
+    DiskStore diskStore = new DiskStore();
+    diskStore.setName("diskstore1");
+    DiskDir diskDir = new DiskDir("./diskDir", null);
+    diskStore.setDirectories(Collections.singletonList(diskDir));
+    cms.create(diskStore);
 
     client = new GeodeDevRestClient("/management", "localhost", locator.getHttpPort(), false);
     JsonNode jsonObject =
@@ -111,7 +109,7 @@ public class JQFilterVerificationDUnitTest {
   }
 
   @AfterClass
-  public static void afterClass() throws Exception {
+  public static void afterClass() {
     // after all the tests are done, the map has nothing left.
     assertThat(apiWithJQFilters).hasSize(0);
   }
@@ -191,5 +189,29 @@ public class JQFilterVerificationDUnitTest {
     Assertions.assertThat(response.hasErrors()).isFalse();
     System.out.println("JQ output: " + response.getOutput());
     Assertions.assertThat(response.getOutput()).contains("\"name\": \"index1\"");
+  }
+
+  @Test
+  public void listDiskStores() throws Exception {
+    String uri = "/v1/diskstores";
+    JqResponse response =
+        getJqResponse(uri, apiWithJQFilters.remove(uri).get("jqFilter").textValue());
+    Assertions.assertThat(response.hasErrors()).isFalse();
+    System.out.println("JQ output: " + response.getOutput());
+    Assertions.assertThat(response.getOutput()).contains("\"Member\": \"server-1\"");
+    Assertions.assertThat(response.getOutput()).contains("\"Disk Store Name\": \"diskstore1\"");
+  }
+
+  @Test
+  public void getDiskStore() throws Exception {
+    String uri = "/v1/diskstores/diskstore1";
+    JqResponse response =
+        getJqResponse(uri,
+            apiWithJQFilters.remove("/v1/diskstores/{id}").get("jqFilter").textValue());
+    response.getErrors().forEach(System.out::println);
+    Assertions.assertThat(response.hasErrors()).isFalse();
+    System.out.println("JQ output: " + response.getOutput());
+    Assertions.assertThat(response.getOutput()).contains("\"Member\": \"server-1\"");
+    Assertions.assertThat(response.getOutput()).contains("\"Disk Store Name\": \"diskstore1\"");
   }
 }

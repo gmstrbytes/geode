@@ -42,14 +42,13 @@ import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.cache.DiskStore;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.execute.FunctionService;
+import org.apache.geode.cache.internal.CommandProcessor;
 import org.apache.geode.cache.wan.GatewayReceiver;
 import org.apache.geode.cache.wan.GatewaySender;
 import org.apache.geode.distributed.Locator;
 import org.apache.geode.distributed.LocatorLauncher;
 import org.apache.geode.distributed.ServerLauncher;
-import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionConfig;
-import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.DistributionStats;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.locks.DLockService;
@@ -67,8 +66,8 @@ import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.PartitionedRegionStats;
 import org.apache.geode.internal.cache.control.ResourceManagerStats;
 import org.apache.geode.internal.cache.execute.metrics.FunctionServiceStats;
+import org.apache.geode.internal.inet.LocalHostUtil;
 import org.apache.geode.internal.logging.log4j.LogMarker;
-import org.apache.geode.internal.net.SocketCreator;
 import org.apache.geode.internal.offheap.MemoryAllocator;
 import org.apache.geode.internal.offheap.OffHeapMemoryStats;
 import org.apache.geode.internal.process.PidUnavailableException;
@@ -100,8 +99,6 @@ import org.apache.geode.management.internal.beans.stats.StatsKey;
 import org.apache.geode.management.internal.beans.stats.StatsLatency;
 import org.apache.geode.management.internal.beans.stats.StatsRate;
 import org.apache.geode.management.internal.beans.stats.VMStatsMonitor;
-import org.apache.geode.management.internal.cli.remote.OnlineCommandProcessor;
-import org.apache.geode.management.internal.cli.result.model.ResultModel;
 
 /**
  * This class acts as an Bridge between MemberMBean and GemFire Cache and Distributed System
@@ -119,10 +116,9 @@ public class MemberMBeanBridge {
   private DistributionConfig config;
 
   private GemFireProperties gemFirePropertyData;
-  private InternalDistributedSystem system;
-  private StatisticsManager statisticsManager;
-  private DistributionManager dm;
-  private OnlineCommandProcessor commandProcessor;
+  private final InternalDistributedSystem system;
+  private final StatisticsManager statisticsManager;
+  private CommandProcessor commandProcessor;
 
   private String commandServiceInitError;
   private MemoryMXBean memoryMXBean;
@@ -131,10 +127,10 @@ public class MemberMBeanBridge {
   private String hostname;
   private int processId;
   private ObjectName osObjectName;
-  private MBeanStatsMonitor monitor;
+  private final MBeanStatsMonitor monitor;
   private SystemManagementService service;
-  private MemberLevelDiskMonitor diskMonitor;
-  private AggregateRegionStatsMonitor regionMonitor;
+  private final MemberLevelDiskMonitor diskMonitor;
+  private final AggregateRegionStatsMonitor regionMonitor;
   private StatsRate createsRate;
   private StatsRate bytesReceivedRate;
   private StatsRate bytesSentRate;
@@ -170,20 +166,20 @@ public class MemberMBeanBridge {
   private String classPath;
   private String name;
   private String id;
-  private String osName = System.getProperty("os.name", "unknown");
-  private GCStatsMonitor gcMonitor;
-  private VMStatsMonitor vmStatsMonitor;
-  private MBeanStatsMonitor systemStatsMonitor;
-  private float instCreatesRate = 0;
-  private float instGetsRate = 0;
-  private float instPutsRate = 0;
-  private float instPutAllRate = 0;
+  private final String osName = System.getProperty("os.name", "unknown");
+  private final GCStatsMonitor gcMonitor;
+  private final VMStatsMonitor vmStatsMonitor;
+  private final MBeanStatsMonitor systemStatsMonitor;
+  private float instCreatesRate;
+  private float instGetsRate;
+  private float instPutsRate;
+  private float instPutAllRate;
   private Statistics systemStat;
-  private boolean cacheServer = false;
+  private boolean cacheServer;
   private String redundancyZone = "";
   private ResourceManagerStats resourceManagerStats;
 
-  private volatile boolean lockServicesStatsAdded = false;
+  private volatile boolean lockServicesStatsAdded;
 
   MemberMBeanBridge(InternalCache cache, SystemManagementService service) {
     this.cache = cache;
@@ -192,19 +188,12 @@ public class MemberMBeanBridge {
     system = (InternalDistributedSystem) cache.getDistributedSystem();
     statisticsManager = system.getStatisticsManager();
 
-    dm = system.getDistributionManager();
-
-    if (dm instanceof ClusterDistributionManager) {
-      ClusterDistributionManager distManager =
-          (ClusterDistributionManager) system.getDistributionManager();
-      redundancyZone = distManager
-          .getRedundancyZone(cache.getInternalDistributedSystem().getDistributedMember());
-    }
+    redundancyZone = system.getDistributionManager()
+        .getRedundancyZone(cache.getInternalDistributedSystem().getDistributedMember());
 
     config = system.getConfig();
     try {
-      commandProcessor =
-          new OnlineCommandProcessor(system.getProperties(), cache.getSecurityService(), cache);
+      commandProcessor = cache.getService(CommandProcessor.class);
     } catch (Exception e) {
       commandServiceInitError = e.getMessage();
       logger.info(LogMarker.CONFIG_MARKER, "Command processor could not be initialized. {}",
@@ -214,7 +203,7 @@ public class MemberMBeanBridge {
     initGemfireProperties();
 
     try {
-      hostname = SocketCreator.getLocalHost().getHostName();
+      hostname = LocalHostUtil.getLocalHostName();
     } catch (UnknownHostException ignore) {
       hostname = ManagementConstants.DEFAULT_HOST_NAME;
     }
@@ -234,16 +223,13 @@ public class MemberMBeanBridge {
     osBean = ManagementFactory.getOperatingSystemMXBean();
 
     // Initialize all the Stats Monitors
-    monitor =
-        new MBeanStatsMonitor("MemberMXBeanMonitor");
+    monitor = new MBeanStatsMonitor("MemberMXBeanMonitor");
     diskMonitor = new MemberLevelDiskMonitor(MEMBER_LEVEL_DISK_MONITOR);
     regionMonitor = new AggregateRegionStatsMonitor(MEMBER_LEVEL_REGION_MONITOR);
     gcMonitor = new GCStatsMonitor("GCStatsMonitor");
-    vmStatsMonitor =
-        new VMStatsMonitor("VMStatsMonitor");
+    vmStatsMonitor = new VMStatsMonitor("VMStatsMonitor");
 
-    systemStatsMonitor =
-        new MBeanStatsMonitor("SystemStatsManager");
+    systemStatsMonitor = new MBeanStatsMonitor("SystemStatsManager");
 
     // Initialize Process related information
 
@@ -260,8 +246,7 @@ public class MemberMBeanBridge {
       }
     }
 
-    QueryDataFunction qDataFunction = new QueryDataFunction();
-    FunctionService.registerFunction(qDataFunction);
+    FunctionService.registerFunction(new QueryDataFunction());
 
     resourceManagerStats = cache.getInternalResourceManager().getStats();
   }
@@ -295,7 +280,7 @@ public class MemberMBeanBridge {
     systemStat = fetchSystemStats();
 
     MemoryAllocator allocator = cache.getOffHeapStore();
-    if ((null != allocator)) {
+    if (null != allocator) {
       OffHeapMemoryStats offHeapStats = allocator.getStats();
 
       if (null != offHeapStats) {
@@ -313,8 +298,7 @@ public class MemberMBeanBridge {
 
   private Statistics fetchSystemStats() {
     if (osStatisticsProvider.osStatsSupported()) {
-      Statistics[] systemStats;
-      systemStats = system.findStatisticsByType(LinuxSystemStats.getType());
+      Statistics[] systemStats = system.findStatisticsByType(LinuxSystemStats.getType());
 
       if (systemStats != null) {
         return systemStats[0];
@@ -798,8 +782,7 @@ public class MemberMBeanBridge {
    * before deciding to shut itself down
    */
   void shutDownMember() {
-    final InternalDistributedSystem ids = dm.getSystem();
-    if (ids.isConnected()) {
+    if (system.isConnected()) {
       Thread t = new LoggingThread("Shutdown member", false, () -> {
         try {
           // Allow the Function call to exit
@@ -807,8 +790,8 @@ public class MemberMBeanBridge {
         } catch (InterruptedException ignore) {
         }
         ConnectionTable.threadWantsSharedResources();
-        if (ids.isConnected()) {
-          ids.disconnect();
+        if (system.isConnected()) {
+          system.disconnect();
         }
       });
       t.start();
@@ -842,7 +825,7 @@ public class MemberMBeanBridge {
   }
 
   String[] listConnectedGatewayReceivers() {
-    if ((cache != null && !cache.getGatewayReceivers().isEmpty())) {
+    if (cache != null && !cache.getGatewayReceivers().isEmpty()) {
       Set<GatewayReceiver> receivers = cache.getGatewayReceivers();
       String[] receiverArray = new String[receivers.size()];
       int j = 0;
@@ -856,7 +839,7 @@ public class MemberMBeanBridge {
   }
 
   String[] listConnectedGatewaySenders() {
-    if ((cache != null && !cache.getGatewaySenders().isEmpty())) {
+    if (cache != null && !cache.getGatewaySenders().isEmpty()) {
       Set<GatewaySender> senders = cache.getGatewaySenders();
       String[] senderArray = new String[senders.size()];
       int j = 0;
@@ -896,11 +879,11 @@ public class MemberMBeanBridge {
   String status() {
     if (LocatorLauncher.getInstance() != null) {
       return LocatorLauncher.getLocatorState().toJson();
-    } else if (ServerLauncher.getInstance() != null) {
+    }
+    if (ServerLauncher.getInstance() != null) {
       return ServerLauncher.getServerState().toJson();
     }
 
-    // TODO implement for non-launcher processes and other GemFire processes (Managers, etc)...
     return null;
   }
 
@@ -965,11 +948,11 @@ public class MemberMBeanBridge {
   }
 
   boolean hasGatewayReceiver() {
-    return (cache != null && !cache.getGatewayReceivers().isEmpty());
+    return cache != null && !cache.getGatewayReceivers().isEmpty();
   }
 
   boolean hasGatewaySender() {
-    return (cache != null && !cache.getAllGatewaySenders().isEmpty());
+    return cache != null && !cache.getAllGatewaySenders().isEmpty();
   }
 
   boolean isLocator() {
@@ -1251,10 +1234,8 @@ public class MemberMBeanBridge {
               + commandServiceInitError);
     }
 
-    ResultModel result =
-        commandProcessor.executeCommand(commandString, environment, stagedFilePaths);
-
-    return result.toJson();
+    return commandProcessor.executeCommandReturningJson(commandString, environment,
+        stagedFilePaths);
   }
 
   public long getTotalDiskUsage() {
@@ -1269,11 +1250,11 @@ public class MemberMBeanBridge {
     return instCreatesRate + instPutsRate + instPutAllRate;
   }
 
-  long getGarbageCollectionTime() {
+  public long getGarbageCollectionTime() {
     return getGCStatistic(StatsKey.VM_GC_STATS_COLLECTION_TIME).longValue();
   }
 
-  long getGarbageCollectionCount() {
+  public long getGarbageCollectionCount() {
     return getGCStatistic(StatsKey.VM_GC_STATS_COLLECTIONS).longValue();
   }
 
@@ -1394,9 +1375,8 @@ public class MemberMBeanBridge {
   int getHostCpuUsage() {
     if (systemStat != null) {
       return systemStat.get(StatsKey.SYSTEM_CPU_ACTIVE).intValue();
-    } else {
-      return ManagementConstants.NOT_AVAILABLE_INT;
     }
+    return ManagementConstants.NOT_AVAILABLE_INT;
   }
 
   public boolean isCacheServer() {

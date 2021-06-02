@@ -35,7 +35,7 @@ import org.apache.geode.annotations.Immutable;
  * @since GemFire 5.7
  */
 @Immutable
-public class Version implements Comparable<Version> {
+public class Version extends VersionOrdinalImpl {
 
   /** The name of this version */
   private final transient String name;
@@ -52,10 +52,7 @@ public class Version implements Comparable<Version> {
   private final byte release;
   private final byte patch;
 
-  /** byte used as ordinal to represent this <code>Version</code> */
-  private final short ordinal;
-
-  public static final int HIGHEST_VERSION = 110;
+  public static final int HIGHEST_VERSION = 121;
 
   @Immutable
   private static final Version[] VALUES = new Version[HIGHEST_VERSION + 1];
@@ -274,6 +271,32 @@ public class Version implements Comparable<Version> {
   public static final Version GEODE_1_11_0 =
       new Version("GEODE", "1.11.0", (byte) 1, (byte) 11, (byte) 0, (byte) 0, GEODE_1_11_0_ORDINAL);
 
+  private static final short GEODE_1_12_0_ORDINAL = 115;
+
+  @Immutable
+  public static final Version GEODE_1_12_0 =
+      new Version("GEODE", "1.12.0", (byte) 1, (byte) 12, (byte) 0, (byte) 0, GEODE_1_12_0_ORDINAL);
+
+  private static final short GEODE_1_12_1_ORDINAL = 116;
+
+  @Immutable
+  public static final Version GEODE_1_12_1 =
+      new Version("GEODE", "1.12.1", (byte) 1, (byte) 12, (byte) 1, (byte) 0, GEODE_1_12_1_ORDINAL);
+
+  private static final short GEODE_1_13_0_ORDINAL = 120;
+
+  @Immutable
+  public static final Version GEODE_1_13_0 =
+      new Version("GEODE", "1.13.0", (byte) 1, (byte) 13, (byte) 0, (byte) 0, GEODE_1_13_0_ORDINAL);
+
+  private static final short GEODE_1_13_1_ORDINAL = 121;
+
+  @Immutable
+  public static final Version GEODE_1_13_1 =
+      new Version("GEODE", "1.13.1", (byte) 1, (byte) 13, (byte) 1, (byte) 0, GEODE_1_13_1_ORDINAL);
+
+  /* NOTE: when adding a new version bump the ordinal by 5. Ordinals can be short ints */
+
   /* NOTE: when adding a new version bump the ordinal by 2. Ordinals can be short ints */
 
   /**
@@ -281,7 +304,7 @@ public class Version implements Comparable<Version> {
    * HIGHEST_VERSION when changing CURRENT !!!
    */
   @Immutable
-  public static final Version CURRENT = GEODE_1_11_0;
+  public static final Version CURRENT = GEODE_1_13_1;
 
   /**
    * A lot of versioning code needs access to the current version's ordinal
@@ -301,13 +324,13 @@ public class Version implements Comparable<Version> {
   /** Creates a new instance of <code>Version</code> */
   private Version(String product, String name, byte major, byte minor, byte release, byte patch,
       short ordinal) {
+    super(ordinal);
     this.productName = product;
     this.name = name;
     this.majorVersion = major;
     this.minorVersion = minor;
     this.release = release;
     this.patch = patch;
-    this.ordinal = ordinal;
     this.methodSuffix = this.productName + "_" + this.majorVersion + "_" + this.minorVersion + "_"
         + this.release + "_" + this.patch;
     if (ordinal != TOKEN_ORDINAL) {
@@ -509,11 +532,6 @@ public class Version implements Comparable<Version> {
     return this.patch;
   }
 
-  public short ordinal() {
-    return this.ordinal;
-  }
-
-
   /**
    * Returns whether this <code>Version</code> is compatible with the input <code>Version</code>
    *
@@ -525,39 +543,6 @@ public class Version implements Comparable<Version> {
   }
 
   /**
-   * Finds the Version instance corresponding to the given ordinal and returns the result of
-   * compareTo(Version)
-   *
-   * @param other the ordinal of the other Version object
-   * @return negative if this version is older, positive if this version is newer, 0 if this is the
-   *         same version
-   */
-  public int compareTo(short other) {
-    // first try to find the actual Version object
-    Version v = fromOrdinalNoThrow(other, false);
-    if (v == null) {
-      // failing that we use the old method of comparing Versions:
-      return this.ordinal() - other;
-    }
-    return compareTo(v);
-  }
-
-  /**
-   * {@inheritDoc}
-   */
-  @Override
-  public int compareTo(Version other) {
-    if (other != null) {
-      // byte min/max can't overflow int, so use (a-b)
-      final int thisOrdinal = this.ordinal;
-      final int otherOrdinal = other.ordinal;
-      return (thisOrdinal - otherOrdinal);
-    } else {
-      return 1;
-    }
-  }
-
-  /**
    * Returns a string representation for this <code>Version</code>.
    *
    * @return the name of this operation.
@@ -565,40 +550,6 @@ public class Version implements Comparable<Version> {
   @Override
   public String toString() {
     return this.productName + " " + this.name;
-  }
-
-  public static String toString(short ordinal) {
-    if (ordinal <= CURRENT.ordinal) {
-      try {
-        return fromOrdinal(ordinal).toString();
-      } catch (UnsupportedSerializationVersionException uve) {
-        // ignored in toString()
-      }
-    }
-    return "UNKNOWN[ordinal=" + ordinal + ']';
-  }
-
-  @Override
-  public boolean equals(Object other) {
-    if (other == this)
-      return true;
-    if (other != null && other.getClass() == Version.class) {
-      return this.ordinal == ((Version) other).ordinal;
-    } else {
-      return false;
-    }
-  }
-
-  public boolean equals(Version other) {
-    return other != null && this.ordinal == other.ordinal;
-  }
-
-  @Override
-  public int hashCode() {
-    int result = 17;
-    final int mult = 37;
-    result = mult * result + this.ordinal;
-    return result;
   }
 
   public byte[] toBytes() {
@@ -617,7 +568,4 @@ public class Version implements Comparable<Version> {
         .collect(Collectors.toList());
   }
 
-  public boolean isCurrentVersion() {
-    return this.ordinal == CURRENT.ordinal;
-  }
 }

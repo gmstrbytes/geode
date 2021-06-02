@@ -28,7 +28,6 @@ import it.unimi.dsi.fastutil.objects.ObjectIterator;
 
 import org.apache.geode.DataSerializer;
 import org.apache.geode.distributed.internal.DMStats;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.internal.Assert;
 import org.apache.geode.internal.ByteBufferWriter;
@@ -38,6 +37,7 @@ import org.apache.geode.internal.ObjToByteArraySerializer;
 import org.apache.geode.internal.net.BufferPool;
 import org.apache.geode.internal.serialization.StaticSerialization;
 import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * <p>
@@ -155,7 +155,9 @@ public class MsgStreamer extends OutputStream
       int numVersioned = 0;
       for (Object c : cons) {
         con = (Connection) c;
-        if ((version = con.getRemoteVersion()) != null) {
+        version = con.getRemoteVersion();
+        if (version != null
+            && Version.CURRENT_ORDINAL > version.ordinal()) {
           if (versionToConnMap == null) {
             versionToConnMap = new Object2ObjectOpenHashMap();
           }
@@ -181,15 +183,17 @@ public class MsgStreamer extends OutputStream
         if (numCons > numVersioned) {
           // allocating list of numCons size so that as the result of
           // getSentConnections it may not need to be reallocted later
-          final ArrayList<Object> unversionedCons = new ArrayList<Object>(numCons);
+          final ArrayList<Object> currentVersionConnections = new ArrayList<Object>(numCons);
           for (Object c : cons) {
             con = (Connection) c;
-            if ((version = con.getRemoteVersion()) == null) {
-              unversionedCons.add(con);
+            version = con.getRemoteVersion();
+            if (version == null || version.ordinal() >= Version.CURRENT_ORDINAL) {
+              currentVersionConnections.add(con);
             }
           }
-          streamers.add(new MsgStreamer(unversionedCons, msg, directReply, stats, sendBufferSize,
-              bufferPool));
+          streamers.add(
+              new MsgStreamer(currentVersionConnections, msg, directReply, stats, sendBufferSize,
+                  bufferPool));
         }
         for (ObjectIterator<Object2ObjectMap.Entry> itr =
             versionToConnMap.object2ObjectEntrySet().fastIterator(); itr.hasNext();) {
@@ -733,7 +737,7 @@ public class MsgStreamer extends OutputStream
    * to true gives a performance improvement.
    */
   private static final boolean ASCII_STRINGS =
-      Boolean.getBoolean(DistributionConfig.GEMFIRE_PREFIX + "ASCII_STRINGS");
+      Boolean.getBoolean(GeodeGlossary.GEMFIRE_PREFIX + "ASCII_STRINGS");
 
   /**
    * Writes two bytes of length information to the output stream, followed by the Java modified UTF

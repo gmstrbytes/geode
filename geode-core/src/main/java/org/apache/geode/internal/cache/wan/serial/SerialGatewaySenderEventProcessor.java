@@ -878,7 +878,6 @@ public class SerialGatewaySenderEventProcessor extends AbstractGatewaySenderEven
 
   @Override
   protected void registerEventDroppedInPrimaryQueue(EntryEventImpl droppedEvent) {
-    this.getSender().setModifiedEventId(droppedEvent);
     sendBatchDestroyOperationForDroppedEvent(droppedEvent, -1);
   }
 
@@ -901,5 +900,9 @@ public class SerialGatewaySenderEventProcessor extends AbstractGatewaySenderEven
     synchronized (this.unprocessedEventsLock) {
       return printEventIdList(this.unprocessedTokens.keySet());
     }
+  }
+
+  public int numUnprocessedEventTokens() {
+    return unprocessedTokens.entrySet().size();
   }
 }

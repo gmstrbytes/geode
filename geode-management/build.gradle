@@ -18,15 +18,16 @@
 apply from: "${rootDir}/${scriptDir}/standard-subproject-configuration.gradle"
 
 apply from: "${project.projectDir}/../gradle/publish-java.gradle"
+apply from: "${project.projectDir}/../gradle/warnings.gradle"
 
 dependencies {
   compile(platform(project(':boms:geode-all-bom')))
-  compile('org.apache.commons:commons-lang3')
-  compile('com.fasterxml.jackson.core:jackson-databind')
-  compile('com.fasterxml.jackson.core:jackson-core')
-  compile('com.fasterxml.jackson.core:jackson-annotations')
-  compile('org.springframework:spring-web')
-  compile('org.apache.httpcomponents:httpclient')
+  implementation('org.apache.commons:commons-lang3')
+  implementation('com.fasterxml.jackson.core:jackson-databind')
+  implementation('com.fasterxml.jackson.core:jackson-core')
+  implementation('com.fasterxml.jackson.core:jackson-annotations')
+  implementation('org.springframework:spring-web')
+  implementation('org.apache.httpcomponents:httpclient')
 
   compileOnly(project(':geode-common')) {
     exclude module: 'junit'
@@ -36,8 +37,16 @@ dependencies {
     exclude module: "jackson-annotations"
   }
 
-  testCompile(project(':geode-common'))
-  testCompile(project(':geode-junit')) {
+  testImplementation(project(':geode-common'))
+  testImplementation(project(':geode-junit')) {
     exclude module: 'geode-core'
   }
+
+  testCompileOnly(platform(project(':boms:geode-all-bom')))
+  testCompileOnly('io.swagger:swagger-annotations')
+
+  integrationTestImplementation(project(':geode-dunit'))
+  integrationTestImplementation(project(':geode-junit'))
+  integrationTestImplementation('junit:junit')
+  integrationTestImplementation('org.awaitility:awaitility')
 }

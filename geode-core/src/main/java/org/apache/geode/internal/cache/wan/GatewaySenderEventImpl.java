@@ -30,7 +30,6 @@ import org.apache.geode.cache.Region;
 import org.apache.geode.cache.asyncqueue.AsyncEvent;
 import org.apache.geode.cache.util.ObjectSizer;
 import org.apache.geode.cache.wan.EventSequenceID;
-import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.cache.CachedDeserializable;
 import org.apache.geode.internal.cache.CachedDeserializableFactory;
 import org.apache.geode.internal.cache.Conflatable;
@@ -53,6 +52,7 @@ import org.apache.geode.internal.offheap.annotations.Unretained;
 import org.apache.geode.internal.serialization.DataSerializableFixedID;
 import org.apache.geode.internal.serialization.DeserializationContext;
 import org.apache.geode.internal.serialization.SerializationContext;
+import org.apache.geode.internal.serialization.StaticSerialization;
 import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.internal.serialization.VersionedDataInputStream;
 import org.apache.geode.internal.size.Sizeable;
@@ -612,7 +612,13 @@ public class GatewaySenderEventImpl
         // Using Arrays.toString(bav) can cause us to run out of memory
         return "byte[" + bav.length + "]";
       } else {
-        return v.toString();
+        String valueStr;
+        try {
+          valueStr = v.toString();
+        } catch (Exception e) {
+          valueStr = "Could not convert value to string because " + e;
+        }
+        return valueStr;
       }
     } else {
       return "";
@@ -739,7 +745,7 @@ public class GatewaySenderEventImpl
     this.numberOfParts = in.readInt();
     // this._id = in.readUTF();
     if (version < 0x11 && (in instanceof InputStream)
-        && InternalDataSerializer.getVersionForDataStream(in) == Version.CURRENT) {
+        && StaticSerialization.getVersionForDataStream(in) == Version.CURRENT) {
       in = new VersionedDataInputStream((InputStream) in, Version.GFE_701);
     }
     this.id = (EventID) context.getDeserializer().readObject(in);
@@ -922,7 +928,7 @@ public class GatewaySenderEventImpl
     if (this.substituteValue == null) {
       // If the value is already serialized, use it.
       this.valueIsObject = 0x01;
-      /**
+      /*
        * so ends up being stored in this.valueObj
        */
       @Retained(OffHeapIdentifier.GATEWAY_SENDER_EVENT_IMPL_VALUE)

@@ -437,6 +437,35 @@ public class WANTestBase extends DistributedTestCase {
     }
   }
 
+
+  public static void createReplicatedProxyRegion(String regionName, String senderIds,
+      Boolean offHeap) {
+    IgnoredException exp =
+        IgnoredException.addIgnoredException(ForceReattemptException.class.getName());
+    IgnoredException exp1 =
+        IgnoredException.addIgnoredException(InterruptedException.class.getName());
+    IgnoredException exp2 =
+        IgnoredException.addIgnoredException(GatewaySenderException.class.getName());
+    try {
+      RegionFactory fact = cache.createRegionFactory(RegionShortcut.REPLICATE_PROXY);
+      if (senderIds != null) {
+        StringTokenizer tokenizer = new StringTokenizer(senderIds, ",");
+        while (tokenizer.hasMoreTokens()) {
+          String senderId = tokenizer.nextToken();
+          fact.addGatewaySenderId(senderId);
+        }
+      }
+
+      fact.setOffHeap(offHeap);
+      Region r = fact.create(regionName);
+      assertNotNull(r);
+    } finally {
+      exp.remove();
+      exp1.remove();
+      exp2.remove();
+    }
+  }
+
   public static void createNormalRegion(String regionName, String senderIds) {
     RegionFactory fact = cache.createRegionFactory(RegionShortcut.LOCAL);
     if (senderIds != null) {
@@ -1047,7 +1076,7 @@ public class WANTestBase extends DistributedTestCase {
     for (AsyncInvocation invocation : tasks) {
       try {
         invocation.await();
-      } catch (InterruptedException | ExecutionException e) {
+      } catch (InterruptedException e) {
         fail("Starting senders was interrupted");
       }
     }
@@ -2255,6 +2284,24 @@ public class WANTestBase extends DistributedTestCase {
     }
   }
 
+  public static void doPutsSameKey(String regionName, int numPuts, String key) {
+    IgnoredException exp1 =
+        IgnoredException.addIgnoredException(InterruptedException.class.getName());
+    IgnoredException exp2 =
+        IgnoredException.addIgnoredException(GatewaySenderException.class.getName());
+    try {
+      Region r = cache.getRegion(Region.SEPARATOR + regionName);
+      assertNotNull(r);
+      for (long i = 0; i < numPuts; i++) {
+        r.put(key, "Value_" + i);
+      }
+    } finally {
+      exp1.remove();
+      exp2.remove();
+    }
+  }
+
+
   public static void doPutsAfter300(String regionName, int numPuts) {
     Region r = cache.getRegion(Region.SEPARATOR + regionName);
     assertNotNull(r);
@@ -2732,11 +2779,6 @@ public class WANTestBase extends DistributedTestCase {
   }
 
   public static void validateRegionSize(String regionName, final int regionSize) {
-    validateRegionSize(regionName, regionSize, 60000);
-  }
-
-  public static void validateRegionSize(String regionName, final int regionSize,
-      long waitTimeInMilliSec) {
     IgnoredException exp =
         IgnoredException.addIgnoredException(ForceReattemptException.class.getName());
     IgnoredException exp1 =
@@ -3397,6 +3439,21 @@ public class WANTestBase extends DistributedTestCase {
       numEntries = ((ConcurrentParallelGatewaySenderQueue) regionQueue).getNumEntriesInVMTestOnly();
     }
     return numEntries;
+  }
+
+  public static void verifyTmpDroppedEventSize(String senderId, int size) {
+    Set<GatewaySender> senders = cache.getGatewaySenders();
+    GatewaySender sender = null;
+    for (GatewaySender s : senders) {
+      if (s.getId().equals(senderId)) {
+        sender = s;
+        break;
+      }
+    }
+
+    AbstractGatewaySender ags = (AbstractGatewaySender) sender;
+    await().untilAsserted(() -> assertEquals("Expected tmpDroppedEvents size: " + size
+        + " but actual size: " + ags.getTmpDroppedEventSize(), size, ags.getTmpDroppedEventSize()));
   }
 
   public static void verifyQueueSize(String senderId, int size) {

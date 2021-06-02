@@ -21,6 +21,7 @@ import java.net.SocketException;
 import java.nio.ByteBuffer;
 
 import org.apache.geode.InternalGemFireException;
+import org.apache.geode.cache.client.internal.pooling.ConnectionDestroyedException;
 import org.apache.geode.distributed.internal.ServerLocation;
 import org.apache.geode.internal.cache.tier.sockets.ServerQueueStatus;
 
@@ -35,9 +36,15 @@ public interface Connection {
 
   Socket getSocket();
 
+  long getBirthDate();
+
+  void setBirthDate(long ts);
+
   ByteBuffer getCommBuffer() throws SocketException;
 
   ConnectionStats getStats();
+
+  boolean isActive();
 
   /**
    * Forcefully close the resources used by this connection. This should be called if the connection

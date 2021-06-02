@@ -24,8 +24,8 @@ import org.apache.commons.lang3.StringUtils;
 
 import org.apache.geode.LogWriter;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.distributed.internal.membership.gms.api.Authenticator;
-import org.apache.geode.distributed.internal.membership.gms.api.MemberIdentifier;
+import org.apache.geode.distributed.internal.membership.api.Authenticator;
+import org.apache.geode.distributed.internal.membership.api.MemberIdentifier;
 import org.apache.geode.internal.cache.tier.sockets.Handshake;
 import org.apache.geode.internal.security.CallbackInstantiator;
 import org.apache.geode.internal.security.SecurityService;
@@ -34,7 +34,7 @@ import org.apache.geode.security.GemFireSecurityException;
 import org.apache.geode.security.ResourcePermission.Operation;
 import org.apache.geode.security.ResourcePermission.Resource;
 
-public class GMSAuthenticator implements Authenticator {
+public class GMSAuthenticator implements Authenticator<InternalDistributedMember> {
 
   private final Properties securityProps;
   private final SecurityService securityService;
@@ -61,7 +61,7 @@ public class GMSAuthenticator implements Authenticator {
    *         failure message
    */
   @Override
-  public String authenticate(MemberIdentifier member, Properties credentials) {
+  public String authenticate(InternalDistributedMember member, Properties credentials) {
     return authenticate(member, credentials, this.securityProps);
   }
 
@@ -137,7 +137,7 @@ public class GMSAuthenticator implements Authenticator {
    * @return the credentials
    */
   @Override
-  public Properties getCredentials(MemberIdentifier member) {
+  public Properties getCredentials(InternalDistributedMember member) {
     try {
       return getCredentials(member, securityProps);
 

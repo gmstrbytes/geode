@@ -16,13 +16,14 @@ package org.apache.geode.test.dunit.internal;
 
 import static org.apache.geode.distributed.ConfigurationProperties.DISABLE_AUTO_RECONNECT;
 import static org.apache.geode.distributed.ConfigurationProperties.ENABLE_CLUSTER_CONFIGURATION;
+import static org.apache.geode.distributed.ConfigurationProperties.ENABLE_MANAGEMENT_REST_SERVICE;
 import static org.apache.geode.distributed.ConfigurationProperties.JMX_MANAGER;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.LOG_LEVEL;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
 import static org.apache.geode.distributed.ConfigurationProperties.USE_CLUSTER_CONFIGURATION;
 import static org.apache.geode.distributed.ConfigurationProperties.VALIDATE_SERIALIZABLE_OBJECTS;
-import static org.apache.geode.distributed.internal.DistributionConfig.GEMFIRE_PREFIX;
+import static org.apache.geode.util.internal.GeodeGlossary.GEMFIRE_PREFIX;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -96,7 +97,7 @@ public class DUnitLauncher {
   /**
    * VM ID for the VM to use for the debugger.
    */
-  static final int DEBUGGING_VM_NUM = -1;
+  public static final int DEBUGGING_VM_NUM = -1;
 
   /**
    * VM ID for the VM to use for the locator.
@@ -260,10 +261,17 @@ public class DUnitLauncher {
   private static void addSuspectFileAppender(final String workspaceDir) {
     final String suspectFilename = new File(workspaceDir, SUSPECT_FILENAME).getAbsolutePath();
 
+
+    Object mainLogger = LogManager.getLogger(LoggingProvider.MAIN_LOGGER_NAME);
+    if (!(mainLogger instanceof org.apache.logging.log4j.core.Logger)) {
+      System.err.format(
+          "Unable to configure suspect file appender - cannot retrieve LoggerContext from type: %s\n",
+          mainLogger.getClass().getName());
+      return;
+    }
+
     final LoggerContext appenderContext =
-        ((org.apache.logging.log4j.core.Logger) LogManager
-            .getLogger(LoggingProvider.MAIN_LOGGER_NAME))
-                .getContext();
+        ((org.apache.logging.log4j.core.Logger) mainLogger).getContext();
 
     final PatternLayout layout = PatternLayout.createLayout(
         "[%level{lowerCase=true} %date{yyyy/MM/dd HH:mm:ss.SSS z} <%thread> tid=%tid] %message%n%throwable%n",
@@ -290,6 +298,7 @@ public class DUnitLauncher {
         // I never want this locator to end up starting a jmx manager
         // since it is part of the unit test framework
         p.setProperty(JMX_MANAGER, "false");
+        p.setProperty(ENABLE_MANAGEMENT_REST_SERVICE, "false");
         // Disable the shared configuration on this locator.
         // Shared configuration tests create their own locator
         p.setProperty(ENABLE_CLUSTER_CONFIGURATION, "false");

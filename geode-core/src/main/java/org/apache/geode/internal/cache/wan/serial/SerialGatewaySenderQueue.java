@@ -14,7 +14,8 @@
  */
 package org.apache.geode.internal.cache.wan.serial;
 
-import java.io.IOException;
+import static org.apache.geode.cache.wan.GatewaySender.DEFAULT_BATCH_SIZE;
+
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
@@ -24,14 +25,12 @@ import java.util.Set;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.CancelException;
 import org.apache.geode.SystemFailure;
 import org.apache.geode.annotations.Immutable;
-import org.apache.geode.cache.AttributesFactory;
 import org.apache.geode.cache.AttributesMutator;
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.CacheException;
@@ -45,11 +44,11 @@ import org.apache.geode.cache.Operation;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.RegionAttributes;
 import org.apache.geode.cache.RegionDestroyedException;
+import org.apache.geode.cache.RegionShortcut;
 import org.apache.geode.cache.Scope;
 import org.apache.geode.cache.TimeoutException;
 import org.apache.geode.cache.asyncqueue.AsyncEvent;
 import org.apache.geode.cache.asyncqueue.internal.AsyncEventQueueImpl;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.internal.cache.CachedDeserializable;
 import org.apache.geode.internal.cache.Conflatable;
@@ -57,6 +56,7 @@ import org.apache.geode.internal.cache.DistributedRegion;
 import org.apache.geode.internal.cache.EntryEventImpl;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.InternalRegionArguments;
+import org.apache.geode.internal.cache.InternalRegionFactory;
 import org.apache.geode.internal.cache.LocalRegion;
 import org.apache.geode.internal.cache.RegionQueue;
 import org.apache.geode.internal.cache.Token;
@@ -74,6 +74,7 @@ import org.apache.geode.management.ManagementService;
 import org.apache.geode.management.internal.beans.AsyncEventQueueMBean;
 import org.apache.geode.management.internal.beans.GatewaySenderMBean;
 import org.apache.geode.pdx.internal.PeerTypeRegistration;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * @since GemFire 7.0
@@ -139,13 +140,6 @@ public class SerialGatewaySenderQueue implements RegionQueue {
   private boolean isDiskSynchronous;
 
   /**
-   * The writeLock of this concurrent lock is used to protect access to the queue.
-   * It is implemented as a fair lock to ensure FIFO ordering of queueing attempts.
-   * Otherwise threads can be unfairly delayed.
-   */
-  private ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
-
-  /**
    * The <code>Map</code> mapping the regionName->key to the queue key. This index allows fast
    * updating of entries in the queue for conflation.
    */
@@ -162,7 +156,7 @@ public class SerialGatewaySenderQueue implements RegionQueue {
    * Whether the <code>Gateway</code> queue should be no-ack instead of ack.
    */
   private static final boolean NO_ACK =
-      Boolean.getBoolean(DistributionConfig.GEMFIRE_PREFIX + "gateway-queue-no-ack");
+      Boolean.getBoolean(GeodeGlossary.GEMFIRE_PREFIX + "gateway-queue-no-ack");
 
   private volatile long lastDispatchedKey = -1;
 
@@ -217,23 +211,18 @@ public class SerialGatewaySenderQueue implements RegionQueue {
   }
 
   @Override
-  public boolean put(Object event) throws CacheException {
-    lock.writeLock().lock();
-    try {
-      GatewaySenderEventImpl eventImpl = (GatewaySenderEventImpl) event;
-      final Region r = eventImpl.getRegion();
-      final boolean isPDXRegion =
-          (r instanceof DistributedRegion && r.getName().equals(PeerTypeRegistration.REGION_NAME));
-      final boolean isWbcl =
-          this.regionName.startsWith(AsyncEventQueueImpl.ASYNC_EVENT_QUEUE_PREFIX);
-      if (!(isPDXRegion && isWbcl)) {
-        putAndGetKey(event);
-        return true;
-      }
-      return false;
-    } finally {
-      lock.writeLock().unlock();
+  public synchronized boolean put(Object event) throws CacheException {
+    GatewaySenderEventImpl eventImpl = (GatewaySenderEventImpl) event;
+    final Region r = eventImpl.getRegion();
+    final boolean isPDXRegion =
+        (r instanceof DistributedRegion && r.getName().equals(PeerTypeRegistration.REGION_NAME));
+    final boolean isWbcl =
+        this.regionName.startsWith(AsyncEventQueueImpl.ASYNC_EVENT_QUEUE_PREFIX);
+    if (!(isPDXRegion && isWbcl)) {
+      putAndGetKey(event);
+      return true;
     }
+    return false;
   }
 
   private long putAndGetKey(Object object) throws CacheException {
@@ -257,6 +246,7 @@ public class SerialGatewaySenderQueue implements RegionQueue {
     return key.longValue();
   }
 
+
   @Override
   public AsyncEvent take() throws CacheException {
     // Unsupported since we have no callers.
@@ -278,49 +268,44 @@ public class SerialGatewaySenderQueue implements RegionQueue {
    * have peeked. If the entry was not peeked, this method will silently return.
    */
   @Override
-  public void remove() throws CacheException {
-    lock.writeLock().lock();
+  public synchronized void remove() throws CacheException {
+    if (this.peekedIds.isEmpty()) {
+      return;
+    }
+    Long key = this.peekedIds.remove();
     try {
-      if (this.peekedIds.isEmpty()) {
-        return;
-      }
-      Long key = this.peekedIds.remove();
-      try {
-        // Increment the head key
-        updateHeadKey(key.longValue());
-        removeIndex(key);
-        // Remove the entry at that key with a callback arg signifying it is
-        // a WAN queue so that AbstractRegionEntry.destroy can get the value
-        // even if it has been evicted to disk. In the normal case, the
-        // AbstractRegionEntry.destroy only gets the value in the VM.
-        this.region.localDestroy(key, WAN_QUEUE_TOKEN);
-        this.stats.decQueueSize();
+      // Increment the head key
+      updateHeadKey(key.longValue());
+      removeIndex(key);
+      // Remove the entry at that key with a callback arg signifying it is
+      // a WAN queue so that AbstractRegionEntry.destroy can get the value
+      // even if it has been evicted to disk. In the normal case, the
+      // AbstractRegionEntry.destroy only gets the value in the VM.
+      this.region.localDestroy(key, WAN_QUEUE_TOKEN);
+      this.stats.decQueueSize();
 
-      } catch (EntryNotFoundException ok) {
-        // this is acceptable because the conflation can remove entries
-        // out from underneath us.
-        if (logger.isDebugEnabled()) {
-          logger.debug(
-              "{}: Did not destroy entry at {} it was not there. It should have been removed by conflation.",
-              this, key);
-        }
-      }
-
-      boolean wasEmpty = this.lastDispatchedKey == this.lastDestroyedKey;
-      this.lastDispatchedKey = key;
-      if (wasEmpty) {
-        synchronized (this) {
-          notifyAll();
-        }
-      }
-
+    } catch (EntryNotFoundException ok) {
+      // this is acceptable because the conflation can remove entries
+      // out from underneath us.
       if (logger.isDebugEnabled()) {
         logger.debug(
-            "{}: Destroyed entry at key {} setting the lastDispatched Key to {}. The last destroyed entry was {}",
-            this, key, this.lastDispatchedKey, this.lastDestroyedKey);
+            "{}: Did not destroy entry at {} it was not there. It should have been removed by conflation.",
+            this, key);
       }
-    } finally {
-      lock.writeLock().unlock();
+    }
+
+    boolean wasEmpty = this.lastDispatchedKey == this.lastDestroyedKey;
+    this.lastDispatchedKey = key;
+    if (wasEmpty) {
+      synchronized (this) {
+        notifyAll();
+      }
+    }
+
+    if (logger.isDebugEnabled()) {
+      logger.debug(
+          "{}: Destroyed entry at key {} setting the lastDispatched Key to {}. The last destroyed entry was {}",
+          this, key, this.lastDispatchedKey, this.lastDestroyedKey);
     }
   }
 
@@ -367,9 +352,9 @@ public class SerialGatewaySenderQueue implements RegionQueue {
       logger.trace("{}: Peek start time={} end time={} time to wait={}", this, start, end,
           timeToWait);
     }
-    List<AsyncEvent> batch = new ArrayList<AsyncEvent>(size * 2); // why
-                                                                  // *2?
-    while (batch.size() < size) {
+    List<AsyncEvent> batch =
+        new ArrayList<AsyncEvent>(size == BATCH_BASED_ON_TIME_ONLY ? DEFAULT_BATCH_SIZE : size);
+    while (size == BATCH_BASED_ON_TIME_ONLY || batch.size() < size) {
       AsyncEvent object = peekAhead();
       // Conflate here
       if (object != null) {
@@ -461,8 +446,7 @@ public class SerialGatewaySenderQueue implements RegionQueue {
       Object key = object.getKeyToConflate();
       Long previousIndex;
 
-      lock.writeLock().lock();
-      try {
+      synchronized (this) {
         Map<Object, Long> latestIndexesForRegion = this.indexes.get(rName);
         if (latestIndexesForRegion == null) {
           latestIndexesForRegion = new HashMap<Object, Long>();
@@ -470,8 +454,6 @@ public class SerialGatewaySenderQueue implements RegionQueue {
         }
 
         previousIndex = latestIndexesForRegion.put(key, tailKey);
-      } finally {
-        lock.writeLock().unlock();
       }
 
       if (isDebugEnabled) {
@@ -552,7 +534,7 @@ public class SerialGatewaySenderQueue implements RegionQueue {
   }
 
   /*
-   * this must be invoked with lock.writeLock() held
+   * this must be invoked under synchronization
    */
   private void removeIndex(Long qkey) {
     // Determine whether conflation is enabled for this queue and object
@@ -740,8 +722,7 @@ public class SerialGatewaySenderQueue implements RegionQueue {
     if (tailKey.get() != -1) {
       return;
     }
-    lock.writeLock().lock();
-    try {
+    synchronized (this) {
       long largestKey = -1;
       long largestKeyLessThanHalfMax = -1;
       long smallestKey = -1;
@@ -789,8 +770,6 @@ public class SerialGatewaySenderQueue implements RegionQueue {
         logger.debug("{}: Initialized tail key to: {}, head key to: {}", this, this.tailKey,
             this.headKey);
       }
-    } finally {
-      lock.writeLock().unlock();
     }
   }
 
@@ -845,10 +824,17 @@ public class SerialGatewaySenderQueue implements RegionQueue {
     final InternalCache gemCache = sender.getCache();
     this.region = gemCache.getRegion(this.regionName);
     if (this.region == null) {
-      AttributesFactory<Long, AsyncEvent> factory = new AttributesFactory<Long, AsyncEvent>();
-      factory.setScope(NO_ACK ? Scope.DISTRIBUTED_NO_ACK : Scope.DISTRIBUTED_ACK);
-      factory.setDataPolicy(
-          this.enablePersistence ? DataPolicy.PERSISTENT_REPLICATE : DataPolicy.REPLICATE);
+      RegionShortcut regionShortcut;
+      if (enablePersistence) {
+        regionShortcut = RegionShortcut.REPLICATE_PERSISTENT;
+      } else {
+        regionShortcut = RegionShortcut.REPLICATE;
+      }
+      InternalRegionFactory<Long, AsyncEvent> factory =
+          gemCache.createInternalRegionFactory(regionShortcut);
+      if (NO_ACK) {
+        factory.setScope(Scope.DISTRIBUTED_NO_ACK);
+      }
       if (logger.isDebugEnabled()) {
         logger.debug("The policy of region is {}",
             (this.enablePersistence ? DataPolicy.PERSISTENT_REPLICATE : DataPolicy.REPLICATE));
@@ -874,29 +860,22 @@ public class SerialGatewaySenderQueue implements RegionQueue {
       if (logger.isDebugEnabled()) {
         logger.debug("{}: Attempting to create queue region: {}", this, this.regionName);
       }
-      final RegionAttributes<Long, AsyncEvent> ra = factory.create();
+      final RegionAttributes<Long, AsyncEvent> ra = factory.getCreateAttributes();
       try {
         SerialGatewaySenderQueueMetaRegion meta =
             new SerialGatewaySenderQueueMetaRegion(this.regionName, ra, null, gemCache, sender,
                 sender.getStatisticsClock());
-        try {
-          this.region = gemCache.createVMRegion(this.regionName, ra,
-              new InternalRegionArguments().setInternalMetaRegion(meta).setDestroyLockFlag(true)
-                  .setSnapshotInputStream(null).setImageTarget(null)
-                  .setIsUsedForSerialGatewaySenderQueue(true).setInternalRegion(true)
-                  .setSerialGatewaySender(sender));
-
-          // Add overflow statistics to the mbean
-          addOverflowStatisticsToMBean(gemCache, sender);
-        } catch (IOException veryUnLikely) {
-          logger.fatal(String.format("Unexpected Exception during init of %s",
-              this.getClass()),
-              veryUnLikely);
-        } catch (ClassNotFoundException alsoUnlikely) {
-          logger.fatal(String.format("Unexpected Exception during init of %s",
-              this.getClass()),
-              alsoUnlikely);
-        }
+        factory
+            .setInternalMetaRegion(meta)
+            .setDestroyLockFlag(true)
+            .setSnapshotInputStream(null)
+            .setImageTarget(null)
+            .setIsUsedForSerialGatewaySenderQueue(true)
+            .setInternalRegion(true)
+            .setSerialGatewaySender(sender);
+        region = factory.create(regionName);
+        // Add overflow statistics to the mbean
+        addOverflowStatisticsToMBean(gemCache, sender);
         if (logger.isDebugEnabled()) {
           logger.debug("{}: Created queue region: {}", this, this.region);
         }
@@ -1029,8 +1008,7 @@ public class SerialGatewaySenderQueue implements RegionQueue {
             }
 
             long temp;
-            lock.writeLock().lock();
-            try {
+            synchronized (SerialGatewaySenderQueue.this) {
               temp = lastDispatchedKey;
               boolean wasEmpty = temp == lastDestroyedKey;
               while (lastDispatchedKey == lastDestroyedKey) {
@@ -1039,8 +1017,6 @@ public class SerialGatewaySenderQueue implements RegionQueue {
               }
               if (wasEmpty)
                 continue;
-            } finally {
-              lock.writeLock().unlock();
             }
             // release not needed since disallowOffHeapValues called
             EntryEventImpl event = EntryEventImpl.create((LocalRegion) region, Operation.DESTROY,
@@ -1207,10 +1183,11 @@ public class SerialGatewaySenderQueue implements RegionQueue {
     @Override
     public boolean virtualPut(EntryEventImpl event, boolean ifNew, boolean ifOld,
         Object expectedOldValue, boolean requireOldValue, long lastModified,
-        boolean overwriteDestroyed) throws TimeoutException, CacheWriterException {
+        boolean overwriteDestroyed, boolean invokeCallbacks, boolean throwConcurrentModificaiton)
+        throws TimeoutException, CacheWriterException {
       try {
         boolean success = super.virtualPut(event, ifNew, ifOld, expectedOldValue, requireOldValue,
-            lastModified, overwriteDestroyed);
+            lastModified, overwriteDestroyed, invokeCallbacks, throwConcurrentModificaiton);
         if (!success) {
           // release offheap reference if GatewaySenderEventImpl is not put into
           // the region queue

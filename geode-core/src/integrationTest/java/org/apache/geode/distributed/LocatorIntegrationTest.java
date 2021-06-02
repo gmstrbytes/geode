@@ -21,15 +21,14 @@ import static org.apache.geode.distributed.ConfigurationProperties.JMX_MANAGER_S
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATOR_WAIT_TIME;
 import static org.apache.geode.distributed.ConfigurationProperties.LOG_FILE;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
-import static org.apache.geode.distributed.internal.DistributionConfig.GEMFIRE_PREFIX;
 import static org.apache.geode.internal.AvailablePort.SOCKET;
 import static org.apache.geode.internal.AvailablePort.getRandomAvailablePort;
+import static org.apache.geode.util.internal.GeodeGlossary.GEMFIRE_PREFIX;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.InetAddress;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
@@ -49,14 +48,17 @@ import org.junit.runners.Parameterized.Parameter;
 import org.junit.runners.Parameterized.Parameters;
 import org.junit.runners.Parameterized.UseParametersRunnerFactory;
 
-import org.apache.geode.SystemConnectException;
 import org.apache.geode.distributed.internal.InternalLocator;
 import org.apache.geode.distributed.internal.ServerLocation;
-import org.apache.geode.distributed.internal.membership.gms.messenger.JGroupsMessenger;
+import org.apache.geode.distributed.internal.tcpserver.HostAndPort;
 import org.apache.geode.distributed.internal.tcpserver.TcpClient;
+import org.apache.geode.distributed.internal.tcpserver.TcpSocketFactory;
 import org.apache.geode.internal.AvailablePortHelper;
-import org.apache.geode.internal.OSProcess;
+import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.cache.GemFireCacheImpl;
+import org.apache.geode.internal.net.SocketCreatorFactory;
+import org.apache.geode.internal.security.SecurableCommunicationChannel;
+import org.apache.geode.logging.internal.OSProcess;
 import org.apache.geode.management.internal.JmxManagerAdvisor.JmxManagerProfile;
 import org.apache.geode.management.internal.configuration.messages.SharedConfigurationStatusRequest;
 import org.apache.geode.test.junit.categories.MembershipTest;
@@ -96,7 +98,6 @@ public class LocatorIntegrationTest {
 
   @After
   public void tearDown() {
-    JGroupsMessenger.THROW_EXCEPTION_ON_START_HOOK = false;
     if (locator != null) {
       locator.stop();
     }
@@ -170,8 +171,12 @@ public class LocatorIntegrationTest {
   public void testBasicInfo() throws Exception {
     locator = Locator.startLocator(port, tmpFile);
     int boundPort = port == 0 ? locator.getPort() : port;
-    TcpClient client = new TcpClient();
-    String[] info = client.getInfo(InetAddress.getLocalHost(), boundPort);
+    TcpClient client = new TcpClient(SocketCreatorFactory
+        .getSocketCreatorForComponent(SecurableCommunicationChannel.LOCATOR),
+        InternalDataSerializer.getDSFIDSerializer().getObjectSerializer(),
+        InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer(),
+        TcpSocketFactory.DEFAULT);
+    String[] info = client.getInfo(new HostAndPort("localhost", boundPort));
 
     assertThat(info).isNotNull();
     assertThat(info.length).isGreaterThanOrEqualTo(1);
@@ -179,8 +184,6 @@ public class LocatorIntegrationTest {
 
   @Test
   public void testNoThreadLeftBehind() throws Exception {
-    JGroupsMessenger.THROW_EXCEPTION_ON_START_HOOK = true;
-
     Properties configProperties = new Properties();
     configProperties.setProperty(MCAST_PORT, "0");
     configProperties.setProperty(JMX_MANAGER_START, "false");
@@ -189,9 +192,9 @@ public class LocatorIntegrationTest {
     int threadCount = Thread.activeCount();
 
     Throwable thrown = catchThrowable(
-        () -> locator = Locator.startLocatorAndDS(port, new File(""), configProperties));
+        () -> locator = Locator.startLocatorAndDS(-2, new File(""), configProperties));
 
-    assertThat(thrown).isInstanceOf(SystemConnectException.class);
+    assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
 
     for (int i = 0; i < 10; i++) {
       if (threadCount < Thread.activeCount()) {

@@ -32,6 +32,7 @@ import java.io.IOException;
 import java.net.ConnectException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -54,9 +55,9 @@ import org.apache.geode.CancelCriterion;
 import org.apache.geode.ToDataException;
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.CacheFactory;
-import org.apache.geode.cache.GemFireCache;
 import org.apache.geode.cache.NoSubscriptionServersAvailableException;
 import org.apache.geode.cache.client.NoAvailableLocatorsException;
+import org.apache.geode.cache.client.SocketFactory;
 import org.apache.geode.cache.client.SubscriptionNotEnabledException;
 import org.apache.geode.cache.client.internal.locator.ClientConnectionRequest;
 import org.apache.geode.cache.client.internal.locator.ClientConnectionResponse;
@@ -64,23 +65,26 @@ import org.apache.geode.cache.client.internal.locator.LocatorListResponse;
 import org.apache.geode.cache.client.internal.locator.ServerLocationRequest;
 import org.apache.geode.cache.query.QueryService;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.distributed.internal.DistributionConfig;
-import org.apache.geode.distributed.internal.InternalConfigurationPersistenceService;
+import org.apache.geode.distributed.internal.DistributionStats;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
-import org.apache.geode.distributed.internal.PoolStatHelper;
-import org.apache.geode.distributed.internal.RestartableTcpHandler;
+import org.apache.geode.distributed.internal.ProtocolCheckerImpl;
 import org.apache.geode.distributed.internal.ServerLocation;
-import org.apache.geode.distributed.internal.membership.gms.membership.HostAddress;
+import org.apache.geode.distributed.internal.tcpserver.HostAndPort;
 import org.apache.geode.distributed.internal.tcpserver.TcpClient;
+import org.apache.geode.distributed.internal.tcpserver.TcpHandler;
 import org.apache.geode.distributed.internal.tcpserver.TcpServer;
+import org.apache.geode.distributed.internal.tcpserver.TcpSocketFactory;
 import org.apache.geode.internal.AvailablePortHelper;
+import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.cache.PoolStats;
+import org.apache.geode.internal.cache.client.protocol.ClientProtocolServiceLoader;
 import org.apache.geode.internal.cache.tier.InternalClientMembership;
-import org.apache.geode.internal.cache.tier.sockets.TcpServerFactory;
+import org.apache.geode.internal.net.SocketCreatorFactory;
+import org.apache.geode.internal.security.SecurableCommunicationChannel;
 import org.apache.geode.management.membership.ClientMembershipEvent;
 import org.apache.geode.management.membership.ClientMembershipListener;
-import org.apache.geode.test.dunit.NetworkUtils;
 import org.apache.geode.test.junit.categories.ClientServerTest;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 @SuppressWarnings("deprecation")
 @Category(ClientServerTest.class)
@@ -120,9 +124,9 @@ public class AutoConnectionSourceImplJUnitTest {
     InetAddress ia = InetAddress.getLocalHost();
     InetSocketAddress isa = new InetSocketAddress(ia, port);
     locators.add(isa);
-    List<HostAddress> la = new ArrayList<>();
-    la.add(new HostAddress(isa, ia.getHostName()));
-    source = new AutoConnectionSourceImpl(la, "", 60 * 1000);
+    List<HostAndPort> la = new ArrayList<>();
+    la.add(new HostAndPort(ia.getHostName(), port));
+    source = new AutoConnectionSourceImpl(la, "", 60 * 1000, SocketFactory.DEFAULT);
     source.start(pool);
   }
 
@@ -137,7 +141,7 @@ public class AutoConnectionSourceImplJUnitTest {
     try {
       if (server != null && server.isAlive()) {
         try {
-          new TcpClient().stop(InetAddress.getLocalHost(), port);
+          issueStopRequest(port);
         } catch (ConnectException ignore) {
           // must not be running
         }
@@ -154,39 +158,14 @@ public class AutoConnectionSourceImplJUnitTest {
     }
   }
 
-  /**
-   * This test validates the AutoConnectionSourceImpl.updateLocatorInLocatorList method. That method
-   * takes InetSocketAddres of locator which unable to connect to locator. And update that
-   * InetSocketAddres with hostaddress of locator in locatorlist.
-   *
-   * In this test we validate this using identityHashCode.
-   */
-  @Test
-  public void testLocatorIpChange() {
-    int port = 11011;
-    List<InetSocketAddress> locators = new ArrayList<>();
-    InetSocketAddress floc1 = new InetSocketAddress("fakeLocalHost1", port);
-    InetSocketAddress floc2 = new InetSocketAddress("fakeLocalHost2", port);
-
-    locators.add(floc1);
-    locators.add(floc2);
-
-    List<HostAddress> la = new ArrayList<>();
-    la.add(new HostAddress(floc1, floc1.getHostName()));
-    la.add(new HostAddress(floc2, floc2.getHostName()));
-
-    AutoConnectionSourceImpl src = new AutoConnectionSourceImpl(la, "", 60 * 1000);
-
-    // This method will create a new InetSocketAddress of floc1
-    src.updateLocatorInLocatorList(new HostAddress(floc1, floc1.getHostName()));
-
-    List<InetSocketAddress> cLocList = src.getCurrentLocators();
-
-    Assert.assertEquals(2, cLocList.size());
-
-    for (InetSocketAddress t : cLocList) {
-      Assert.assertNotSame("Should have replaced floc1 intsance", t, floc1);
-    }
+  private void issueStopRequest(final int port)
+      throws ConnectException, UnknownHostException {
+    new TcpClient(SocketCreatorFactory
+        .getSocketCreatorForComponent(SecurableCommunicationChannel.LOCATOR),
+        InternalDataSerializer.getDSFIDSerializer().getObjectSerializer(),
+        InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer(),
+        TcpSocketFactory.DEFAULT)
+            .stop(new HostAndPort(InetAddress.getLocalHost().getHostName(), port));
   }
 
   /**
@@ -202,18 +181,19 @@ public class AutoConnectionSourceImplJUnitTest {
     InetSocketAddress floc2 = new InetSocketAddress("fakeLocalHost2", port);
     locators.add(floc1);
     locators.add(floc2);
-    List<HostAddress> la = new ArrayList<>();
-    la.add(new HostAddress(floc1, floc1.getHostName()));
-    la.add(new HostAddress(floc2, floc2.getHostName()));
-    AutoConnectionSourceImpl src = new AutoConnectionSourceImpl(la, "", 60 * 1000);
+    List<HostAndPort> la = new ArrayList<>();
+    la.add(new HostAndPort(floc1.getHostName(), floc1.getPort()));
+    la.add(new HostAndPort(floc2.getHostName(), floc2.getPort()));
+    AutoConnectionSourceImpl src =
+        new AutoConnectionSourceImpl(la, "", 60 * 1000, SocketFactory.DEFAULT);
 
 
     InetSocketAddress b1 = new InetSocketAddress("fakeLocalHost1", port);
     InetSocketAddress b2 = new InetSocketAddress("fakeLocalHost3", port);
 
-    Set<HostAddress> bla = new HashSet<>();
-    bla.add(new HostAddress(b1, b1.getHostName()));
-    bla.add(new HostAddress(b2, b2.getHostName()));
+    Set<HostAndPort> bla = new HashSet<>();
+    bla.add(new HostAndPort(b1.getHostName(), b1.getPort()));
+    bla.add(new HostAndPort(b2.getHostName(), b2.getPort()));
 
 
     src.addbadLocators(la, bla);
@@ -235,13 +215,12 @@ public class AutoConnectionSourceImplJUnitTest {
   @Test
   public void testSourceHandlesToDataException() throws IOException, ClassNotFoundException {
     TcpClient mockConnection = mock(TcpClient.class);
-    when(mockConnection.requestToServer(isA(InetSocketAddress.class), any(Object.class),
+    when(mockConnection.requestToServer(isA(HostAndPort.class), any(Object.class),
         isA(Integer.class), isA(Boolean.class))).thenThrow(new ToDataException("testing"));
     try {
-      InetSocketAddress address = new InetSocketAddress(NetworkUtils.getServerHostName(), 1234);
-      source.queryOneLocatorUsingConnection(new HostAddress(address, "locator[1234]"), mock(
+      source.queryOneLocatorUsingConnection(new HostAndPort("locator[1234]", 1234), mock(
           ServerLocationRequest.class), mockConnection);
-      verify(mockConnection).requestToServer(isA(InetSocketAddress.class),
+      verify(mockConnection).requestToServer(isA(HostAndPort.class),
           isA(ServerLocationRequest.class), isA(Integer.class), isA(Boolean.class));
     } catch (NoAvailableLocatorsException expected) {
       // do nothing
@@ -317,9 +296,18 @@ public class AutoConnectionSourceImplJUnitTest {
   public void test_DiscoverLocators_whenOneLocatorWasShutdown() throws Exception {
     startFakeLocator();
     int secondPort = AvailablePortHelper.getRandomAvailableTCPPort();
+
     TcpServer server2 =
-        new TcpServerFactory().makeTcpServer(secondPort, InetAddress.getLocalHost(), null, null,
-            handler, new FakeHelper(), "tcp server", null);
+        new TcpServer(secondPort, InetAddress.getLocalHost(), handler,
+            "tcp server", new ProtocolCheckerImpl(null, new ClientProtocolServiceLoader()),
+            DistributionStats::getStatTime,
+            Executors::newCachedThreadPool,
+            SocketCreatorFactory
+                .getSocketCreatorForComponent(SecurableCommunicationChannel.LOCATOR),
+            InternalDataSerializer.getDSFIDSerializer().getObjectSerializer(),
+            InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer(),
+            GeodeGlossary.GEMFIRE_PREFIX + "TcpServer.READ_TIMEOUT",
+            GeodeGlossary.GEMFIRE_PREFIX + "TcpServer.BACKLOG");
     server2.start();
 
     try {
@@ -328,7 +316,7 @@ public class AutoConnectionSourceImplJUnitTest {
       handler.nextLocatorListResponse = new LocatorListResponse(locators, false);
       Thread.sleep(500);
       try {
-        new TcpClient().stop(InetAddress.getLocalHost(), port);
+        issueStopRequest(port);
       } catch (ConnectException ignore) {
         // must not be running
       }
@@ -339,7 +327,7 @@ public class AutoConnectionSourceImplJUnitTest {
       assertEquals(server1, source.findServer(null));
     } finally {
       try {
-        new TcpClient().stop(InetAddress.getLocalHost(), secondPort);
+        issueStopRequest(secondPort);
       } catch (ConnectException ignore) {
         // must not be running
       }
@@ -362,7 +350,7 @@ public class AutoConnectionSourceImplJUnitTest {
       await().until(() -> source.getOnlineLocators().size() == 1);
     } finally {
       try {
-        new TcpClient().stop(InetAddress.getLocalHost(), port);
+        issueStopRequest(port);
       } catch (ConnectException ignore) {
         // must not be running
       }
@@ -373,7 +361,7 @@ public class AutoConnectionSourceImplJUnitTest {
   @Test
   public void testSysPropLocatorUpdateInterval() {
     long updateLocatorInterval = 543;
-    System.setProperty(DistributionConfig.GEMFIRE_PREFIX + "LOCATOR_UPDATE_INTERVAL",
+    System.setProperty(GeodeGlossary.GEMFIRE_PREFIX + "LOCATOR_UPDATE_INTERVAL",
         String.valueOf(updateLocatorInterval));
     source.start(pool);
     assertEquals(updateLocatorInterval, source.getLocatorUpdateInterval());
@@ -389,20 +377,29 @@ public class AutoConnectionSourceImplJUnitTest {
   @Test
   public void testLocatorUpdateIntervalZero() {
     long updateLocatorInterval = 0;
-    System.setProperty(DistributionConfig.GEMFIRE_PREFIX + "LOCATOR_UPDATE_INTERVAL",
+    System.setProperty(GeodeGlossary.GEMFIRE_PREFIX + "LOCATOR_UPDATE_INTERVAL",
         String.valueOf(updateLocatorInterval));
     source.start(pool);
     assertEquals(updateLocatorInterval, source.getLocatorUpdateInterval());
   }
 
   private void startFakeLocator() throws IOException, InterruptedException {
-    server = new TcpServerFactory().makeTcpServer(port, InetAddress.getLocalHost(), null, null,
-        handler, new FakeHelper(), "Tcp Server", null);
+
+    server = new TcpServer(port, InetAddress.getLocalHost(), handler,
+        "Tcp Server", new ProtocolCheckerImpl(null, new ClientProtocolServiceLoader()),
+        DistributionStats::getStatTime,
+        Executors::newCachedThreadPool,
+        SocketCreatorFactory
+            .getSocketCreatorForComponent(SecurableCommunicationChannel.LOCATOR),
+        InternalDataSerializer.getDSFIDSerializer().getObjectSerializer(),
+        InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer(),
+        GeodeGlossary.GEMFIRE_PREFIX + "TcpServer.READ_TIMEOUT",
+        GeodeGlossary.GEMFIRE_PREFIX + "TcpServer.BACKLOG");
     server.start();
     Thread.sleep(500);
   }
 
-  protected static class FakeHandler implements RestartableTcpHandler {
+  protected static class FakeHandler implements TcpHandler {
     volatile ClientConnectionResponse nextConnectionResponse;
     volatile LocatorListResponse nextLocatorListResponse;
 
@@ -427,21 +424,6 @@ public class AutoConnectionSourceImplJUnitTest {
 
     @Override
     public void endResponse(Object request, long startTime) {}
-
-    @Override
-    public void restarting(DistributedSystem ds, GemFireCache cache,
-        InternalConfigurationPersistenceService sharedConfig) {}
-
-  }
-
-  public static class FakeHelper implements PoolStatHelper {
-
-    @Override
-    public void endJob() {}
-
-    @Override
-    public void startJob() {}
-
   }
 
   public class FakePool implements InternalPool {
@@ -453,6 +435,16 @@ public class AutoConnectionSourceImplJUnitTest {
     @Override
     public boolean getKeepAlive() {
       return false;
+    }
+
+    @Override
+    public int getPrimaryPort() {
+      return 0;
+    }
+
+    @Override
+    public int getConnectionCount() {
+      return 0;
     }
 
     @Override
@@ -500,6 +492,11 @@ public class AutoConnectionSourceImplJUnitTest {
 
     @Override
     public int getFreeConnectionTimeout() {
+      return 0;
+    }
+
+    @Override
+    public int getServerConnectionTimeout() {
       return 0;
     }
 
@@ -690,6 +687,11 @@ public class AutoConnectionSourceImplJUnitTest {
     @Override
     public int getSubscriptionTimeoutMultiplier() {
       return 0;
+    }
+
+    @Override
+    public SocketFactory getSocketFactory() {
+      return null;
     }
 
     @Override

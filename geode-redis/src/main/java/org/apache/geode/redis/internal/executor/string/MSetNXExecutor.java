@@ -24,6 +24,7 @@ import org.apache.geode.redis.internal.Coder;
 import org.apache.geode.redis.internal.Command;
 import org.apache.geode.redis.internal.ExecutionHandlerContext;
 import org.apache.geode.redis.internal.RedisConstants.ArityDef;
+import org.apache.geode.redis.internal.RedisDataType;
 import org.apache.geode.redis.internal.RedisDataTypeMismatchException;
 
 public class MSetNXExecutor extends StringExecutor {
@@ -36,7 +37,8 @@ public class MSetNXExecutor extends StringExecutor {
   public void executeCommand(Command command, ExecutionHandlerContext context) {
     List<byte[]> commandElems = command.getProcessedCommand();
 
-    Region<ByteArrayWrapper, ByteArrayWrapper> r = context.getRegionProvider().getStringsRegion();
+    Region<ByteArrayWrapper, ByteArrayWrapper> region =
+        context.getRegionProvider().getStringsRegion();
 
     if (commandElems.size() < 3 || commandElems.size() % 2 == 0) {
       command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(), ArityDef.MSETNX));
@@ -50,14 +52,14 @@ public class MSetNXExecutor extends StringExecutor {
       byte[] keyArray = commandElems.get(i);
       ByteArrayWrapper key = new ByteArrayWrapper(keyArray);
       try {
-        checkDataType(key, context);
+        checkDataType(key, RedisDataType.REDIS_STRING, context);
       } catch (RedisDataTypeMismatchException e) {
         hasEntry = true;
         break;
       }
       byte[] value = commandElems.get(i + 1);
       map.put(key, new ByteArrayWrapper(value));
-      if (r.containsKey(key)) {
+      if (region.containsKey(key)) {
         hasEntry = true;
         break;
       }
@@ -73,7 +75,7 @@ public class MSetNXExecutor extends StringExecutor {
           break;
         }
       }
-      r.putAll(map);
+      region.putAll(map);
     }
     if (successful) {
       command.setResponse(Coder.getIntegerResponse(context.getByteBufAllocator(), SET));

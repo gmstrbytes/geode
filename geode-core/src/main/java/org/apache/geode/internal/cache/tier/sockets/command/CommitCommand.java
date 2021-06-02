@@ -134,8 +134,8 @@ public class CommitCommand extends BaseCommand {
               "Waiting up to {}ms for departure of {} before throwing TransactionInDoubtException.",
               timeToWait, target);
           try {
-            serverConnection.getCache().getDistributionManager().getMembershipManager()
-                .waitForDeparture(target, timeToWait);
+            serverConnection.getCache().getDistributionManager().getDistribution()
+                .waitForDeparture((InternalDistributedMember) target, timeToWait);
           } catch (TimeoutException e) {
             // status will be logged below
           } catch (InterruptedException e) {

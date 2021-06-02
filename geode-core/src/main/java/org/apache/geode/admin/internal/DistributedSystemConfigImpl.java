@@ -14,6 +14,8 @@
  */
 package org.apache.geode.admin.internal;
 
+import static org.apache.geode.admin.internal.InetAddressUtils.toHostString;
+import static org.apache.geode.admin.internal.InetAddressUtilsWithLogging.validateHost;
 import static org.apache.geode.distributed.ConfigurationProperties.BIND_ADDRESS;
 import static org.apache.geode.distributed.ConfigurationProperties.CLUSTER_SSL_CIPHERS;
 import static org.apache.geode.distributed.ConfigurationProperties.CLUSTER_SSL_ENABLED;
@@ -26,8 +28,6 @@ import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_ADDRESS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
 import static org.apache.geode.distributed.ConfigurationProperties.TCP_PORT;
-import static org.apache.geode.internal.net.InetAddressUtils.toHostString;
-import static org.apache.geode.internal.net.InetAddressUtilsWithLogging.validateHost;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -57,6 +57,7 @@ import org.apache.geode.internal.statistics.StatisticsConfig;
 import org.apache.geode.logging.internal.log4j.LogLevel;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.logging.internal.spi.LogConfig;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * An implementation of the configuration object for an <code>AdminDistributedSystem</code>. After a
@@ -726,7 +727,7 @@ public class DistributedSystemConfigImpl implements DistributedSystemConfig {
   }
 
   private static final boolean ALLOW_ALL_REMOTE_COMMANDS =
-      Boolean.getBoolean(DistributionConfig.GEMFIRE_PREFIX + "admin.ALLOW_ALL_REMOTE_COMMANDS");
+      Boolean.getBoolean(GeodeGlossary.GEMFIRE_PREFIX + "admin.ALLOW_ALL_REMOTE_COMMANDS");
   private static final String[] LEGAL_REMOTE_COMMANDS = {"rsh", "ssh"};
   private static final String ILLEGAL_REMOTE_COMMAND_RSH_OR_SSH =
       "Allowed remote commands include \"rsh {HOST} {CMD}\" or \"ssh {HOST} {CMD}\" with valid rsh or ssh switches. Invalid: ";

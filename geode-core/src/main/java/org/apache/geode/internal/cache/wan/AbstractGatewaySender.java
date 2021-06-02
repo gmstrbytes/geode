@@ -32,15 +32,14 @@ import org.apache.geode.CancelCriterion;
 import org.apache.geode.CancelException;
 import org.apache.geode.InternalGemFireError;
 import org.apache.geode.annotations.Immutable;
+import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.annotations.internal.MutableForTesting;
-import org.apache.geode.cache.AttributesFactory;
 import org.apache.geode.cache.CacheException;
 import org.apache.geode.cache.DataPolicy;
 import org.apache.geode.cache.Region;
-import org.apache.geode.cache.RegionAttributes;
 import org.apache.geode.cache.RegionDestroyedException;
 import org.apache.geode.cache.RegionExistsException;
-import org.apache.geode.cache.Scope;
+import org.apache.geode.cache.RegionShortcut;
 import org.apache.geode.cache.asyncqueue.AsyncEventListener;
 import org.apache.geode.cache.client.internal.LocatorDiscoveryCallback;
 import org.apache.geode.cache.client.internal.PoolImpl;
@@ -63,7 +62,7 @@ import org.apache.geode.internal.cache.EnumListenerEvent;
 import org.apache.geode.internal.cache.HasCachePerfStats;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.InternalRegion;
-import org.apache.geode.internal.cache.InternalRegionArguments;
+import org.apache.geode.internal.cache.InternalRegionFactory;
 import org.apache.geode.internal.cache.LocalRegion;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.RegionQueue;
@@ -792,7 +791,7 @@ public abstract class AbstractGatewaySender implements InternalGatewaySender, Di
     synchronized (this.eventProcessor.getRunningStateLock()) {
       while (this.eventProcessor.getException() == null && this.eventProcessor.isStopped()) {
         try {
-          this.eventProcessor.getRunningStateLock().wait();
+          this.eventProcessor.getRunningStateLock().wait(1000);
         } catch (InterruptedException e) {
           Thread.currentThread().interrupt();
         }
@@ -937,20 +936,6 @@ public abstract class AbstractGatewaySender implements InternalGatewaySender, Di
     boolean freeClonedEvent = true;
     try {
 
-      // If this gateway is not running, return
-      if (!isRunning()) {
-        if (this.isPrimary()) {
-          tmpDroppedEvents.add(clonedEvent);
-          if (isDebugEnabled) {
-            logger.debug("add to tmpDroppedEvents for evnet {}", clonedEvent);
-          }
-        }
-        if (isDebugEnabled) {
-          logger.debug("Returning back without putting into the gateway sender queue:" + event);
-        }
-        return;
-      }
-
       final GatewaySenderStats stats = getStatistics();
       stats.incEventsReceived();
 
@@ -1003,7 +988,8 @@ public abstract class AbstractGatewaySender implements InternalGatewaySender, Di
           // skip the below check of remoteDSId.
           // Fix for #46517
           AbstractGatewaySenderEventProcessor ep = getEventProcessor();
-          if (ep != null && !(ep.getDispatcher() instanceof GatewaySenderEventCallbackDispatcher)) {
+          // if manual-start is true, ep is null
+          if (ep == null || !(ep.getDispatcher() instanceof GatewaySenderEventCallbackDispatcher)) {
             if (seca.getOriginatingDSId() == this.getRemoteDSId()) {
               if (isDebugEnabled) {
                 logger.debug(
@@ -1027,6 +1013,20 @@ public abstract class AbstractGatewaySender implements InternalGatewaySender, Di
         GatewaySenderEventCallbackArgument geCallbackArg =
             new GatewaySenderEventCallbackArgument(callbackArg, this.getMyDSId(), allRemoteDSIds);
         clonedEvent.setCallbackArgument(geCallbackArg);
+      }
+
+      // If this gateway is not running, return
+      if (!isRunning()) {
+        if (this.isPrimary()) {
+          tmpDroppedEvents.add(clonedEvent);
+          if (isDebugEnabled) {
+            logger.debug("add to tmpDroppedEvents for evnet {}", clonedEvent);
+          }
+        }
+        if (isDebugEnabled) {
+          logger.debug("Returning back without putting into the gateway sender queue:" + event);
+        }
+        return;
       }
 
       if (!this.getLifeCycleLock().readLock().tryLock()) {
@@ -1100,6 +1100,11 @@ public abstract class AbstractGatewaySender implements InternalGatewaySender, Di
         clonedEvent.release(); // fix for bug 48035
       }
     }
+  }
+
+  @VisibleForTesting
+  int getTmpDroppedEventSize() {
+    return tmpDroppedEvents.size();
   }
 
   /**
@@ -1287,17 +1292,13 @@ public abstract class AbstractGatewaySender implements InternalGatewaySender, Di
     return this.eventIdIndexMetaDataRegion;
   }
 
-  @SuppressWarnings({"rawtypes", "unchecked", "deprecation"})
   private static synchronized Region<String, Integer> initializeEventIdIndexMetaDataRegion(
       AbstractGatewaySender sender) {
     final InternalCache cache = sender.getCache();
     Region<String, Integer> region = cache.getRegion(META_DATA_REGION_NAME);
     if (region == null) {
-      // Create region attributes (must be done this way to use InternalRegionArguments)
-      AttributesFactory factory = new AttributesFactory();
-      factory.setScope(Scope.DISTRIBUTED_ACK);
-      factory.setDataPolicy(DataPolicy.REPLICATE);
-      RegionAttributes ra = factory.create();
+      InternalRegionFactory<String, Integer> factory =
+          cache.createInternalRegionFactory(RegionShortcut.REPLICATE);
 
       // Create a stats holder for the meta data stats
       final HasCachePerfStats statsHolder = new HasCachePerfStats() {
@@ -1307,14 +1308,10 @@ public abstract class AbstractGatewaySender implements InternalGatewaySender, Di
               "RegionStats-" + META_DATA_REGION_NAME, sender.statisticsClock);
         }
       };
-
-      // Create internal region arguments
-      InternalRegionArguments ira = new InternalRegionArguments().setIsUsedForMetaRegion(true)
-          .setCachePerfStatsHolder(statsHolder);
-
-      // Create the region
+      factory.setIsUsedForMetaRegion(true);
+      factory.setCachePerfStatsHolder(statsHolder);
       try {
-        region = cache.createVMRegion(META_DATA_REGION_NAME, ra, ira);
+        region = factory.create(META_DATA_REGION_NAME);
       } catch (RegionExistsException e) {
         region = cache.getRegion(META_DATA_REGION_NAME);
       } catch (Exception e) {
@@ -1468,13 +1465,16 @@ public abstract class AbstractGatewaySender implements InternalGatewaySender, Di
     GatewayQueueEvent event = null;
     for (RegionQueue queue : getQueues()) {
       Region region = queue.getRegion();
+      if (region == null) {
+        continue;
+      }
       for (Iterator i = region.values().iterator(); i.hasNext();) {
         GatewaySenderEventImpl gsei = (GatewaySenderEventImpl) i.next();
         if (gsei.getKey().equals(key) && gsei.getVersionTimeStamp() == timestamp) {
           event = gsei;
           logger.info("{}: Providing synchronization event for key={}; timestamp={}: {}",
               this, key, timestamp, event);
-          this.statistics.incSynchronizationEventsProvided();
+          getStatistics().incSynchronizationEventsProvided();
           break;
         }
       }

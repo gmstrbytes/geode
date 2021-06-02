@@ -58,6 +58,7 @@ import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.ReplySender;
 import org.apache.geode.distributed.internal.SerialDistributionMessage;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
+import org.apache.geode.distributed.internal.membership.api.CacheOperationMessageMarker;
 import org.apache.geode.internal.Assert;
 import org.apache.geode.internal.CopyOnWriteHashSet;
 import org.apache.geode.internal.InternalDataSerializer;
@@ -345,7 +346,7 @@ public abstract class DistributedCacheOperation {
 
     try {
       // Recipients with CacheOp
-      Set<InternalDistributedMember> recipients = getRecipients();
+      Set<InternalDistributedMember> recipients = new HashSet<>(getRecipients());
       Map<InternalDistributedMember, PersistentMemberID> persistentIds = null;
       if (region.getDataPolicy().withPersistence()) {
         persistentIds = region.getDistributionAdvisor().adviseInitializedPersistentMembers();
@@ -901,7 +902,8 @@ public abstract class DistributedCacheOperation {
   }
 
   public abstract static class CacheOperationMessage extends SerialDistributionMessage
-      implements MessageWithReply, DirectReplyMessage, OldValueImporter {
+      implements MessageWithReply, DirectReplyMessage, OldValueImporter,
+      CacheOperationMessageMarker {
 
     protected static final short POSSIBLE_DUPLICATE_MASK = POS_DUP;
     protected static final short OLD_VALUE_MASK = DistributionMessage.UNRESERVED_FLAGS_START;

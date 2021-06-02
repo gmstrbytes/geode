@@ -45,7 +45,6 @@ import org.apache.geode.cache.query.internal.index.IndexUtils;
 import org.apache.geode.cache.util.TimestampedEntryEvent;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
@@ -85,6 +84,7 @@ import org.apache.geode.internal.util.ArrayUtils;
 import org.apache.geode.internal.util.BlobHelper;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.pdx.internal.PeerTypeRegistration;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * Implementation of an entry event
@@ -1585,7 +1585,7 @@ public class EntryEventImpl implements InternalEntryEvent, InternalCacheEvent,
    * being NOT_AVAILABLE.
    */
   private static final boolean EVENT_OLD_VALUE =
-      !Boolean.getBoolean(DistributionConfig.GEMFIRE_PREFIX + "disable-event-old-value");
+      !Boolean.getBoolean(GeodeGlossary.GEMFIRE_PREFIX + "disable-event-old-value");
 
   protected boolean areOldValuesEnabled() {
     return EVENT_OLD_VALUE;
@@ -1675,7 +1675,7 @@ public class EntryEventImpl implements InternalEntryEvent, InternalCacheEvent,
     this.re = re;
   }
 
-  RegionEntry getRegionEntry() {
+  public RegionEntry getRegionEntry() {
     return this.re;
   }
 
@@ -2929,6 +2929,7 @@ public class EntryEventImpl implements InternalEntryEvent, InternalCacheEvent,
    * Make sure that this event will never own an off-heap value. Once this is called on an event it
    * does not need to have release called.
    */
+  @Override
   public void disallowOffHeapValues() {
     if (isOffHeapReference(this.newValue) || isOffHeapReference(this.oldValue)) {
       throw new IllegalStateException("This event already has off-heap values");

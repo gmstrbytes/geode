@@ -16,54 +16,46 @@ package org.apache.geode.redis.internal.executor.hash;
 
 import java.util.List;
 
-import org.apache.geode.cache.Region;
 import org.apache.geode.redis.internal.ByteArrayWrapper;
 import org.apache.geode.redis.internal.Coder;
 import org.apache.geode.redis.internal.Command;
 import org.apache.geode.redis.internal.ExecutionHandlerContext;
 import org.apache.geode.redis.internal.Extendable;
 import org.apache.geode.redis.internal.RedisConstants.ArityDef;
-import org.apache.geode.redis.internal.RedisDataType;
 
+/**
+ * <pre>
+ * Implements the HSET command to sets field in the hash stored at key to value.
+ * A new entry in the hash is created if key does not exist.
+ * Any existing in the hash with the given key is overwritten.
+ *
+ * Examples:
+ *
+ * redis> HSET myhash field1 "Hello"
+ * (integer) 1
+ * redis> HGET myhash field1
+ *
+ *
+ * </pre>
+ */
 public class HSetExecutor extends HashExecutor implements Extendable {
-
-  private final int EXISTING_FIELD = 0;
-
-  private final int NEW_FIELD = 1;
-
-  private final int VALUE_INDEX = 3;
 
   @Override
   public void executeCommand(Command command, ExecutionHandlerContext context) {
-    List<byte[]> commandElems = command.getProcessedCommand();
+    List<ByteArrayWrapper> commandElems = command.getProcessedCommandWrappers();
 
-    if (commandElems.size() < 4) {
+    if (commandElems.size() < 4 || commandElems.size() % 2 == 1) {
       command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(), getArgsError()));
       return;
     }
 
     ByteArrayWrapper key = command.getKey();
 
-    Region<ByteArrayWrapper, ByteArrayWrapper> keyRegion =
-        getOrCreateRegion(context, key, RedisDataType.REDIS_HASH);
+    RedisHash hash = new GeodeRedisHashSynchronized(key, context);
 
-    byte[] byteField = commandElems.get(FIELD_INDEX);
-    ByteArrayWrapper field = new ByteArrayWrapper(byteField);
+    int fieldsAdded = hash.hset(commandElems.subList(2, commandElems.size()), onlySetOnAbsent());
 
-    byte[] value = commandElems.get(VALUE_INDEX);
-
-    Object oldValue;
-
-    if (onlySetOnAbsent())
-      oldValue = keyRegion.putIfAbsent(field, new ByteArrayWrapper(value));
-    else
-      oldValue = keyRegion.put(field, new ByteArrayWrapper(value));
-
-    if (oldValue == null)
-      command.setResponse(Coder.getIntegerResponse(context.getByteBufAllocator(), NEW_FIELD));
-    else
-      command.setResponse(Coder.getIntegerResponse(context.getByteBufAllocator(), EXISTING_FIELD));
-
+    command.setResponse(Coder.getIntegerResponse(context.getByteBufAllocator(), fieldsAdded));
   }
 
   protected boolean onlySetOnAbsent() {

@@ -38,7 +38,7 @@ public abstract class PopExecutor extends ListExecutor implements Extendable {
     ByteArrayWrapper key = command.getKey();
 
     checkDataType(key, RedisDataType.REDIS_LIST, context);
-    Region keyRegion = getRegion(context, key);
+    Region<Object, Object> keyRegion = getRegion(context, key);
 
     if (keyRegion == null || keyRegion.size() == LIST_EMPTY_SIZE) {
       command.setResponse(Coder.getNilResponse(context.getByteBufAllocator()));
@@ -50,7 +50,7 @@ public abstract class PopExecutor extends ListExecutor implements Extendable {
     Integer index = 0;
     int originalIndex = index;
     int incr = popType() == ListDirection.LEFT ? 1 : -1;
-    ByteArrayWrapper valueWrapper = null;
+    ByteArrayWrapper valueWrapper;
 
     /**
      *
@@ -59,12 +59,13 @@ public abstract class PopExecutor extends ListExecutor implements Extendable {
      *
      */
 
-    boolean indexChanged = false;
+    boolean indexChanged;
     do {
       index = (Integer) keyRegion.get(indexKey);
       Integer opp = (Integer) keyRegion.get(oppositeKey);
-      if (index.equals(opp))
+      if (index.equals(opp)) {
         break;
+      }
       indexChanged = keyRegion.replace(indexKey, index, index + incr);
     } while (!indexChanged);
 
@@ -80,8 +81,9 @@ public abstract class PopExecutor extends ListExecutor implements Extendable {
     int i = 0;
     do {
       valueWrapper = (ByteArrayWrapper) keyRegion.get(index);
-      if (valueWrapper != null)
+      if (valueWrapper != null) {
         removed = keyRegion.remove(index, valueWrapper);
+      }
 
       /**
        *
@@ -89,8 +91,9 @@ public abstract class PopExecutor extends ListExecutor implements Extendable {
        *
        */
 
-      if (removed)
+      if (removed) {
         break;
+      }
 
       /**
        *
@@ -117,10 +120,11 @@ public abstract class PopExecutor extends ListExecutor implements Extendable {
       index += incr;
       Integer metaIndex = (Integer) keyRegion.get(indexKey);
       if (i < 1 && (popType() == ListDirection.LEFT && metaIndex < originalIndex
-          || popType() == ListDirection.RIGHT && metaIndex > originalIndex))
+          || popType() == ListDirection.RIGHT && metaIndex > originalIndex)) {
         index = metaIndex;
+      }
       i++;
-    } while (!removed && keyRegion.size() != LIST_EMPTY_SIZE);
+    } while (keyRegion.size() != LIST_EMPTY_SIZE);
     respondBulkStrings(command, context, valueWrapper);
   }
 

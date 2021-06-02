@@ -75,18 +75,21 @@ import org.apache.geode.annotations.Immutable;
 import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.cache.persistence.PersistentID;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionConfigImpl;
 import org.apache.geode.distributed.internal.HighPriorityAckedMessage;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
+import org.apache.geode.distributed.internal.tcpserver.HostAndPort;
 import org.apache.geode.distributed.internal.tcpserver.TcpClient;
+import org.apache.geode.distributed.internal.tcpserver.TcpSocketFactory;
 import org.apache.geode.internal.admin.remote.TailLogResponse;
 import org.apache.geode.internal.cache.DiskStoreImpl;
 import org.apache.geode.internal.cache.backup.BackupOperation;
 import org.apache.geode.internal.logging.DateFormatter;
 import org.apache.geode.internal.logging.MergeLogFiles;
 import org.apache.geode.internal.net.SocketCreator;
+import org.apache.geode.internal.net.SocketCreatorFactory;
+import org.apache.geode.internal.security.SecurableCommunicationChannel;
 import org.apache.geode.internal.statistics.StatArchiveReader;
 import org.apache.geode.internal.statistics.StatArchiveReader.ResourceInst;
 import org.apache.geode.internal.statistics.StatArchiveReader.StatValue;
@@ -94,6 +97,7 @@ import org.apache.geode.internal.util.JavaCommandBuilder;
 import org.apache.geode.internal.util.PluckStacks;
 import org.apache.geode.internal.util.PluckStacks.ThreadStack;
 import org.apache.geode.management.BackupStatus;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * Provides static methods for various system administation tasks.
@@ -191,10 +195,10 @@ public class SystemAdmin {
       throw new GemFireIOException("Unable to delete " + logFile.getAbsolutePath());
     }
     boolean treatAsPure = true;
-    /**
+    /*
      * A counter used by PureJava to determine when its waited too long to start the locator
      * process. countDown * 250 = how many seconds to wait before giving up.
-     **/
+     */
     int countDown = 60;
     // NYI: wait around until we can attach
     while (!ManagerInfo.isLocatorStarted(directory)) {
@@ -259,8 +263,10 @@ public class SystemAdmin {
     if (Thread.interrupted())
       throw new InterruptedException();
     InetAddress addr = null; // fix for bug 30810
-    if (addressOption == null)
+    if (addressOption == null) {
       addressOption = "";
+    }
+    addressOption = addressOption.trim();
     if (!addressOption.equals("")) {
       // make sure its a valid ip address
       try {
@@ -287,12 +293,17 @@ public class SystemAdmin {
       if (portOption == null || portOption.trim().length() == 0) {
         port = info.getManagerPort();
       }
-      if (addressOption.trim().length() == 0) {
+      if (addr == null) {
         addr = info.getManagerAddress();
       }
 
       try {
-        new TcpClient().stop(addr, port);
+        new TcpClient(SocketCreatorFactory
+            .getSocketCreatorForComponent(SecurableCommunicationChannel.LOCATOR),
+            InternalDataSerializer.getDSFIDSerializer().getObjectSerializer(),
+            InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer(),
+            TcpSocketFactory.DEFAULT)
+                .stop(new HostAndPort(addr.getHostName(), port));
       } catch (java.net.ConnectException ce) {
         System.out.println(
             "Unable to connect to Locator process. Possible causes are that an incorrect bind address/port combination was specified to the stop-locator command or the process is unresponsive.");
@@ -1142,112 +1153,110 @@ public class SystemAdmin {
           "The -persample and -nofilter options are mutually exclusive.");
     }
     StatSpec[] specs = createSpecs(cmdLineSpecs);
-    if (archiveOption != null) {
-      if (directory != null) {
-        throw new IllegalArgumentException(
-            "The -archive= and -dir= options are mutually exclusive.");
+    if (directory != null) {
+      throw new IllegalArgumentException(
+          "The -archive= and -dir= options are mutually exclusive.");
+    }
+    StatArchiveReader reader = null;
+    boolean interrupted = false;
+    try {
+      reader = new StatArchiveReader((File[]) archiveNames.toArray(new File[0]),
+          specs, !monitor);
+      // Runtime.getRuntime().gc(); System.out.println("DEBUG: heap size=" +
+      // (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()));
+      if (specs.length == 0) {
+        if (details) {
+          StatArchiveReader.StatArchiveFile[] archives = reader.getArchives();
+          for (int i = 0; i < archives.length; i++) {
+            System.out.println(archives[i].getArchiveInfo().toString());
+          }
+        }
       }
-      StatArchiveReader reader = null;
-      boolean interrupted = false;
-      try {
-        reader = new StatArchiveReader((File[]) archiveNames.toArray(new File[0]),
-            specs, !monitor);
-        // Runtime.getRuntime().gc(); System.out.println("DEBUG: heap size=" +
-        // (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()));
+      do {
         if (specs.length == 0) {
-          if (details) {
-            StatArchiveReader.StatArchiveFile[] archives = reader.getArchives();
-            for (int i = 0; i < archives.length; i++) {
-              System.out.println(archives[i].getArchiveInfo().toString());
+          Iterator it = reader.getResourceInstList().iterator();
+          while (it.hasNext()) {
+            ResourceInst inst = (ResourceInst) it.next();
+            StatValue values[] = inst.getStatValues();
+            boolean firstTime = true;
+            for (int i = 0; i < values.length; i++) {
+              if (values[i] != null && values[i].hasValueChanged()) {
+                if (firstTime) {
+                  firstTime = false;
+                  System.out.println(inst.toString());
+                }
+                printStatValue(values[i], startTime, endTime, nofilter, persec, persample,
+                    prunezeros, details);
+              }
+            }
+          }
+        } else {
+          Map<CombinedResources, List<StatValue>> allSpecsMap =
+              new HashMap<CombinedResources, List<StatValue>>();
+          for (int i = 0; i < specs.length; i++) {
+            StatValue[] values = reader.matchSpec(specs[i]);
+            if (values.length == 0) {
+              if (!quiet) {
+                System.err.println(String.format("[warning] No stats matched %s.",
+                    specs[i].cmdLineSpec));
+              }
+            } else {
+              Map<CombinedResources, List<StatValue>> specMap =
+                  new HashMap<CombinedResources, List<StatValue>>();
+              for (StatValue v : values) {
+                CombinedResources key = new CombinedResources(v);
+                List<StatArchiveReader.StatValue> list = specMap.get(key);
+                if (list != null) {
+                  list.add(v);
+                } else {
+                  specMap.put(key, new ArrayList<StatValue>(Collections.singletonList(v)));
+                }
+              }
+              if (!quiet) {
+                System.out.println(
+                    String.format("[info] Found %s instances matching %s:",
+                        new Object[] {Integer.valueOf(specMap.size()), specs[i].cmdLineSpec}));
+              }
+              for (Map.Entry<CombinedResources, List<StatValue>> me : specMap.entrySet()) {
+                List<StatArchiveReader.StatValue> list = allSpecsMap.get(me.getKey());
+                if (list != null) {
+                  list.addAll(me.getValue());
+                } else {
+                  allSpecsMap.put(me.getKey(), me.getValue());
+                }
+              }
+            }
+          }
+          for (Map.Entry<CombinedResources, List<StatValue>> me : allSpecsMap.entrySet()) {
+            System.out.println(me.getKey());
+            for (StatValue v : me.getValue()) {
+              printStatValue(v, startTime, endTime, nofilter, persec, persample, prunezeros,
+                  details);
             }
           }
         }
-        do {
-          if (specs.length == 0) {
-            Iterator it = reader.getResourceInstList().iterator();
-            while (it.hasNext()) {
-              ResourceInst inst = (ResourceInst) it.next();
-              StatValue values[] = inst.getStatValues();
-              boolean firstTime = true;
-              for (int i = 0; i < values.length; i++) {
-                if (values[i] != null && values[i].hasValueChanged()) {
-                  if (firstTime) {
-                    firstTime = false;
-                    System.out.println(inst.toString());
-                  }
-                  printStatValue(values[i], startTime, endTime, nofilter, persec, persample,
-                      prunezeros, details);
-                }
-              }
+        if (monitor) {
+          while (!reader.update()) {
+            try {
+              Thread.sleep(1000);
+            } catch (InterruptedException ignore) {
+              interrupted = true;
             }
-          } else {
-            Map<CombinedResources, List<StatValue>> allSpecsMap =
-                new HashMap<CombinedResources, List<StatValue>>();
-            for (int i = 0; i < specs.length; i++) {
-              StatValue[] values = reader.matchSpec(specs[i]);
-              if (values.length == 0) {
-                if (!quiet) {
-                  System.err.println(String.format("[warning] No stats matched %s.",
-                      specs[i].cmdLineSpec));
-                }
-              } else {
-                Map<CombinedResources, List<StatValue>> specMap =
-                    new HashMap<CombinedResources, List<StatValue>>();
-                for (StatValue v : values) {
-                  CombinedResources key = new CombinedResources(v);
-                  List<StatArchiveReader.StatValue> list = specMap.get(key);
-                  if (list != null) {
-                    list.add(v);
-                  } else {
-                    specMap.put(key, new ArrayList<StatValue>(Collections.singletonList(v)));
-                  }
-                }
-                if (!quiet) {
-                  System.out.println(
-                      String.format("[info] Found %s instances matching %s:",
-                          new Object[] {Integer.valueOf(specMap.size()), specs[i].cmdLineSpec}));
-                }
-                for (Map.Entry<CombinedResources, List<StatValue>> me : specMap.entrySet()) {
-                  List<StatArchiveReader.StatValue> list = allSpecsMap.get(me.getKey());
-                  if (list != null) {
-                    list.addAll(me.getValue());
-                  } else {
-                    allSpecsMap.put(me.getKey(), me.getValue());
-                  }
-                }
-              }
-            }
-            for (Map.Entry<CombinedResources, List<StatValue>> me : allSpecsMap.entrySet()) {
-              System.out.println(me.getKey());
-              for (StatValue v : me.getValue()) {
-                printStatValue(v, startTime, endTime, nofilter, persec, persample, prunezeros,
-                    details);
-              }
-            }
-          }
-          if (monitor) {
-            while (!reader.update()) {
-              try {
-                Thread.sleep(1000);
-              } catch (InterruptedException ignore) {
-                interrupted = true;
-              }
-            }
-          }
-        } while (monitor && !interrupted);
-      } catch (IOException ex) {
-        throw new GemFireIOException(
-            String.format("Failed reading %s", archiveOption), ex);
-      } finally {
-        if (reader != null) {
-          try {
-            reader.close();
-          } catch (IOException ignore) {
           }
         }
-        if (interrupted) {
-          Thread.currentThread().interrupt();
+      } while (monitor && !interrupted);
+    } catch (IOException ex) {
+      throw new GemFireIOException(
+          String.format("Failed reading %s", archiveOption), ex);
+    } finally {
+      if (reader != null) {
+        try {
+          reader.close();
+        } catch (IOException ignore) {
         }
+      }
+      if (interrupted) {
+        Thread.currentThread().interrupt();
       }
     }
   }
@@ -1585,7 +1594,7 @@ public class SystemAdmin {
     helpMap.put("-hostname-for-clients=",
         "Used to specify a host name or IP address to give to clients so they can connect to a locator.");
     helpMap.put("-properties=",
-        "Used to specify the " + DistributionConfig.GEMFIRE_PREFIX
+        "Used to specify the " + GeodeGlossary.GEMFIRE_PREFIX
             + "properties file to be used in configuring the locator's DistributedSystem.");
     helpMap.put("-archive=",
         "The argument is the statistic archive file the 'stats' command should read.");
@@ -1602,10 +1611,10 @@ public class SystemAdmin {
             + DateFormatter.FORMAT_STRING + ".");
     helpMap.put("-dir=",
         "The argument is the system directory the command should operate on.  If the argument is empty then a default system directory will be search for.\n"
-            + "However the search will not include the " + DistributionConfig.GEMFIRE_PREFIX
+            + "However the search will not include the " + GeodeGlossary.GEMFIRE_PREFIX
             + "properties file.  By default if a command needs a system directory, and one is not specified, then a search is done.\n"
-            + "If a " + DistributionConfig.GEMFIRE_PREFIX + "properties file can be located then "
-            + DistributionConfig.GEMFIRE_PREFIX
+            + "If a " + GeodeGlossary.GEMFIRE_PREFIX + "properties file can be located then "
+            + GeodeGlossary.GEMFIRE_PREFIX
             + "systemDirectory property from that file is used.\n"
             + "Otherwise if the GEMFIRE environment variable is set to a directory that contains a subdirectory named defaultSystem then that directory is used.\n"
             + "The property file is searched for in the following locations:\n"

@@ -39,7 +39,8 @@ import org.apache.geode.cache.util.RegionMembershipListenerAdapter;
 import org.apache.geode.distributed.ConfigurationProperties;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.internal.DistributionAdvisor.Profile;
-import org.apache.geode.distributed.internal.membership.gms.MembershipManagerHelper;
+import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
+import org.apache.geode.distributed.internal.membership.api.MembershipManagerHelper;
 import org.apache.geode.internal.cache.CacheDistributionAdvisor.CacheProfile;
 import org.apache.geode.internal.cache.DistributedRegion;
 import org.apache.geode.test.awaitility.GeodeAwaitility;
@@ -62,7 +63,7 @@ public class RegionMembershipListenerDUnitTest extends JUnit4CacheTestCase {
   private transient MyRML mySRListener;
   private transient Region r; // root region
   private transient Region sr; // subregion
-  protected transient DistributedMember otherId;
+  protected transient InternalDistributedMember otherId;
 
   public RegionMembershipListenerDUnitTest() {
     super();

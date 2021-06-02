@@ -371,7 +371,7 @@ TBA
 <dd>
 <em>Public:</em> false
 <p>
-<em>Integer:</em> (default is 16)
+<em>Integer:</em> (default is 16 or 4 * number of processors, whichever is larger)
 <p>
 Maximum function execution threads.
 <p>
@@ -383,7 +383,7 @@ See <code>org.apache.geode.distributed.internal.DistributionManager#MAX_FE_THREA
 <dd>
 <em>Public:</em> false
 <p>
-<em>Integer</em> (default is 1)
+<em>Integer</em> (default is 200 or 32 * number of processors, whichever is larger)
 <p>
 See <code>org.apache.geode.distributed.internal.DistributionManager#MAX_PR_THREADS</code>.
 <p>
@@ -411,7 +411,7 @@ TBA
 <dd>
 <em>Public:</em> false
 <p>
-<em>Integer</em> (default is 100)
+<em>Integer</em> (default is 1000)
 <p>
 See <code>org.apache.geode.distributed.internal.DistributionManager#MAX_THREADS</code>.
 <p>
@@ -905,7 +905,7 @@ TBA
 </dd>
 
 <!-- -------------------------------------------------------  -->
-<dt><strong>org.apache.geode.internal.OSProcess.trace</strong></dt>
+<dt><strong>org.apache.geode.logging.internal.OSProcess.trace</strong></dt>
 <dd>
 <em>Public:</em> false
 <p>
@@ -2657,23 +2657,6 @@ TBA
 </dd>
 
 <!-- -------------------------------------------------------  -->
-<dt><strong>p2p.defaultConcurrencyLevel</strong></dt>
-<dd>
-<em>Public:</em> false
-<p>
-<em>Integer</em> (default is the number of processors on current machine,
-but no less than 2)
-<p>
-See <code>org.apache.geode.distributed.internal.direct.DirectChannel#DEFAULT_CONCURRENCY_LEVEL</code>.
-<p>
-<pre>
-   Return how many concurrent operations should be allowed by default.
-</pre>
-<p>
-TBA
-</dd>
-
-<!-- -------------------------------------------------------  -->
 <dt><strong>p2p.defaultLogLevel</strong></dt>
 <dd>
 <em>Public:</em> false
@@ -2787,23 +2770,6 @@ TBA
 </dd>
 
 <!-- -------------------------------------------------------  -->
-<dt><strong>p2p.maxConnectionSenders</strong></dt>
-<dd>
-<em>Public:</em> false
-<p>
-<em>Integer</em> (default is p2p.defaultConcurrencyLevel)
-<p>
-See <code>org.apache.geode.internal.tcp.Connection#MAX_SENDERS</code>.
-<p>
-<pre>
-  The maximum number of concurrent senders sending a message to a single
-  recipient.
-</pre>
-<p>
-TBA
-</dd>
-
-<!-- -------------------------------------------------------  -->
 <dt><strong>p2p.maxGroupSenders</strong></dt>
 <dd>
 <em>Public:</em> false
@@ -2821,16 +2787,19 @@ TBA
 </dd>
 
 <!-- -------------------------------------------------------  -->
-<dt><strong>p2p.nodirectBuffers</strong></dt>
+<dt><strong>gemfire.BufferPool.useHeapBuffers</strong></dt>
 <dd>
 <em>Public:</em> false
 <p>
 <em>Boolean</em> (default is false)
 <p>
-See <code>org.apache.geode.internal.tcp.TCPConduit#useDirectBuffers</code>.
+See <code>org.apache.geode.internal.net.BufferPool#useDirectBuffers</code>.
 <p>
 <pre>
-  use direct ByteBuffers instead of heap ByteBuffers for NIO operations
+  use java "heap" ByteBuffers instead of direct ByteBuffers for NIO operations.  Recommended if TLSv1
+    is being used or if you find you are running out of direct-memory and do not want to
+    increase the amount of direct-memory available to the JVM.  Use of heap buffers can
+    reduce performance in some cases.
 </pre>
 <p>
 TBA

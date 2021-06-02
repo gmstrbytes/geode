@@ -47,8 +47,8 @@ if [ -e "${GEODE_PULL_REQUEST_ID_FILE}" ]; then
 else
   CONCOURSE_VERSION=$(cat ${GEODE_BUILD_VERSION_FILE})
   echo "Concourse VERSION is ${CONCOURSE_VERSION}"
-  # Rebuild version, zero-padded
-  FULL_PRODUCT_VERSION=$(get-full-version ${CONCOURSE_VERSION})
+  FULL_PRODUCT_VERSION=${CONCOURSE_VERSION}
+  BUILD_ID=$(get-geode-build-id ${CONCOURSE_VERSION})
 fi
 
 DEFAULT_GRADLE_TASK_OPTIONS="--parallel --console=plain --no-daemon"
@@ -58,7 +58,8 @@ SSH_OPTIONS="-i ${SSHKEY_FILE} -o ConnectionAttempts=60 -o StrictHostKeyChecking
 
 INSTANCE_IP_ADDRESS="$(cat instance-data/instance-ip-address)"
 
-SET_JAVA_HOME="export JAVA_HOME=/usr/lib/jvm/java-${JAVA_BUILD_VERSION}-openjdk-amd64"
+# SET_JAVA_HOME="export JAVA_HOME=/usr/lib/jvm/java-${JAVA_BUILD_VERSION}-openjdk-amd64"
+SET_JAVA_HOME="export JAVA_HOME=/usr/lib/jvm/bellsoft-java${JAVA_BUILD_VERSION}-amd64"
 
 GRADLE_COMMAND="./gradlew \
     ${DEFAULT_GRADLE_TASK_OPTIONS} \

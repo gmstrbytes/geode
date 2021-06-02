@@ -101,13 +101,19 @@ repository:
   public: ${REPOSITORY_PUBLIC}
 YML
 
-  python3 ../render.py jinja.template.yml --variable-file ../shared/jinja.variables.yml repository.yml --environment ../shared/ --output ${SCRIPTDIR}/generated-pipeline.yml --debug || exit 1
+  cat > pipelineProperties.yml <<YML
+pipelineProperties:
+  public: ${PUBLIC}
+YML
 
+  python3 ../render.py jinja.template.yml --variable-file ../shared/jinja.variables.yml repository.yml pipelineProperties.yml --environment ../shared/ --output ${SCRIPTDIR}/generated-pipeline.yml --debug || exit 1
+
+  set -e
   if [[ ${UPSTREAM_FORK} != "apache" ]]; then
     fly -t ${FLY_TARGET} status || \
     fly -t ${FLY_TARGET} login \
-      --team-name ${CONCOURSE_TEAM} \
-      --concourse-url=${CONCOURSE_URL}
+           --team-name ${CONCOURSE_TEAM} \
+           --concourse-url=${CONCOURSE_URL}
   fi
 
   fly -t ${FLY_TARGET} sync
@@ -130,6 +136,7 @@ YML
     --var semver-prerelease-token="${SEMVER_PRERELEASE_TOKEN}" \
     --var upstream-fork=${UPSTREAM_FORK} \
     --yaml-var public-pipelines=${PUBLIC}
+    set +e
 
 popd 2>&1 > /dev/null
 
@@ -249,15 +256,14 @@ set +x
 if [[ "${GEODE_FORK}" != "${UPSTREAM_FORK}" ]]; then
   echo "Disabling unnecessary jobs for forks."
   pauseJobs ${META_PIPELINE} set-reaper-pipeline
-  pauseNewJobs ${META_PIPELINE} set-metrics-pipeline
 elif [[ "$GEODE_FORK" == "${UPSTREAM_FORK}" ]] && [[ "$GEODE_BRANCH" == "develop" ]]; then
   echo "Disabling optional jobs for develop"
-  pauseNewJobs ${META_PIPELINE} set-pr-pipeline set-metrics-pipeline set-examples-pipeline
+  pauseNewJobs ${META_PIPELINE} set-pr-pipeline set-examples-pipeline
 else
-  echo "Disabling unnecessary jobs for release branches."
+  echo "Disabling unnecessary jobs for support branches."
   echo "*** DO NOT RE-ENABLE THESE META-JOBS ***"
   pauseJobs ${META_PIPELINE} set-images-pipeline set-reaper-pipeline
-  pauseNewJobs ${META_PIPELINE} set-pr-pipeline set-metrics-pipeline set-examples-pipeline
+  pauseNewJobs ${META_PIPELINE} set-pr-pipeline set-examples-pipeline
 fi
 
 unpausePipeline ${META_PIPELINE}
@@ -270,12 +276,17 @@ driveToGreen $META_PIPELINE set-pipeline
 unpausePipeline ${PIPELINE_PREFIX}main
 
 if [[ "$GEODE_FORK" == "${UPSTREAM_FORK}" ]]; then
-  exposePipelines ${PIPELINE_PREFIX}main ${PIPELINE_PREFIX}images
-  enableFeature metrics
-  enableFeature examples
+  if [[ "${PUBLIC}" == "true" ]]; then
+    exposePipelines ${PIPELINE_PREFIX}main ${PIPELINE_PREFIX}images
+    enableFeature examples
+  fi
   if [[ "$GEODE_BRANCH" == "develop" ]]; then
     enableFeature pr
   fi
 fi
 
-echo "Successfully deployed ${CONCOURSE_URL}/teams/main/pipelines/${PIPELINE_PREFIX}main"
+echo "Successfully deployed ${CONCOURSE_URL}/teams/${CONCOURSE_TEAM}/pipelines/${PIPELINE_PREFIX}main"
+
+rm -f ${SCRIPTDIR}/generated-pipeline.yml
+rm -f ${SCRIPTDIR}/pipelineProperties.yml
+rm -f ${SCRIPTDIR}/repository.yml

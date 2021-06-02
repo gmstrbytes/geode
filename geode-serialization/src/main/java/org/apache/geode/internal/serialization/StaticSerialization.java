@@ -24,6 +24,10 @@ import java.util.Map;
 
 import org.apache.geode.annotations.internal.MakeNotStatic;
 
+/**
+ * StaticSerialization provides a collection of serialization/deserialization methods that
+ * can be used in your toData/fromData methods in a DataSerializableFixedID implementation.
+ */
 public class StaticSerialization {
   // array is null
   public static final byte NULL_ARRAY = -1;
@@ -50,6 +54,11 @@ public class StaticSerialization {
   // Variable Length long encoded as long in next 8 bytes
   public static final byte LONG_VL = 127;
   public static final int MAX_BYTE_VL = 125;
+
+  public static final String PRE_GEODE_100_TCPSERVER_PACKAGE =
+      "com.gemstone.org.jgroups.stack.tcpserver";
+  public static final String POST_GEODE_100_TCPSERVER_PACKAGE =
+      "org.apache.geode.distributed.internal.tcpserver";
 
   @MakeNotStatic("not tied to the cache lifecycle")
   private static final ThreadLocalByteArrayCache threadLocalByteArrayCache =
@@ -140,6 +149,7 @@ public class StaticSerialization {
       int utfLen = len; // added for bug 40932
       for (int i = 0; i < len; i++) {
         char c = value.charAt(i);
+        // noinspection StatementWithEmptyBody
         if ((c <= 0x007F) && (c >= 0x0001)) {
           // nothing needed
         } else if (c > 0x07FF) {
@@ -234,7 +244,9 @@ public class StaticSerialization {
     }
     byte[] buf = getThreadLocalByteArray(len);
     dataInput.readFully(buf, 0, len);
-    return new String(buf, 0, 0, len); // intentionally using deprecated constructor
+    @SuppressWarnings("deprecation") // intentionally using deprecated constructor
+    final String string = new String(buf, 0, 0, len);
+    return string;
   }
 
   /**
@@ -257,8 +269,8 @@ public class StaticSerialization {
     }
 
     try {
-      InetAddress addr = InetAddress.getByAddress(address);
-      return addr;
+      // note: this does not throw UnknownHostException at this time
+      return InetAddress.getByAddress(address);
     } catch (UnknownHostException ex) {
       throw new IOException("While reading an InetAddress", ex);
     }
@@ -293,8 +305,8 @@ public class StaticSerialization {
     } else {
       HashMap<K, V> map = new HashMap<>(size);
       for (int i = 0; i < size; i++) {
-        K key = (K) context.getDeserializer().readObject(in);
-        V value = (V) context.getDeserializer().readObject(in);
+        K key = context.getDeserializer().readObject(in);
+        V value = context.getDeserializer().readObject(in);
         map.put(key, value);
       }
 
@@ -373,5 +385,181 @@ public class StaticSerialization {
    */
   public static byte[] getThreadLocalByteArray(int minimumLength) {
     return threadLocalByteArrayCache.get(minimumLength);
+  }
+
+  public static void writeClass(final Class<?> c, final DataOutput out) throws IOException {
+    if (c == null || c.isPrimitive()) {
+      writePrimitiveClass(c, out);
+    } else {
+      // non-primitive classes have a second CLASS byte
+      // if readObject/writeObject is called:
+      // the first CLASS byte indicates it's a Class, the second
+      // one indicates it's a non-primitive Class
+      out.writeByte(DSCODE.CLASS.toByte());
+      String cname = c.getName();
+      cname = processOutgoingClassName(cname);
+      writeString(cname, out);
+    }
+  }
+
+  public static Class<?> readClass(DataInput in) throws IOException, ClassNotFoundException {
+    byte typeCode = in.readByte();
+    if (typeCode == DSCODE.CLASS.toByte()) {
+      String className = readString(in);
+      className = processIncomingClassName(className);
+      return Class.forName(className);
+    } else {
+      return StaticSerialization.decodePrimitiveClass(typeCode);
+    }
+  }
+
+  /**
+   * Map from new package to old package.
+   *
+   * @return the same name String (identity) if the package name does not need to change
+   */
+  public static String processOutgoingClassName(String name) {
+    // TCPServer classes are used before a cache exists and support for old clients has been
+    // initialized
+    if (name.startsWith(POST_GEODE_100_TCPSERVER_PACKAGE)) {
+      return PRE_GEODE_100_TCPSERVER_PACKAGE
+          + name.substring(POST_GEODE_100_TCPSERVER_PACKAGE.length());
+    }
+    return name;
+  }
+
+  /**
+   * Map from old package to new package.
+   *
+   * @return the same name String (identity) if the package name does not need to change
+   */
+  public static String processIncomingClassName(String name) {
+    // TCPServer classes are used before a cache exists and support for old clients has been
+    // initialized
+    if (name.startsWith(StaticSerialization.PRE_GEODE_100_TCPSERVER_PACKAGE)) {
+      return StaticSerialization.POST_GEODE_100_TCPSERVER_PACKAGE
+          + name.substring(StaticSerialization.PRE_GEODE_100_TCPSERVER_PACKAGE.length());
+    }
+    return name;
+  }
+
+  /**
+   * Writes the type code for a primitive type Class to {@code DataOutput}.
+   */
+  public static void writePrimitiveClass(Class<?> c, DataOutput out) throws IOException {
+    if (c == Boolean.TYPE) {
+      out.writeByte(DSCODE.BOOLEAN_TYPE.toByte());
+    } else if (c == Character.TYPE) {
+      out.writeByte(DSCODE.CHARACTER_TYPE.toByte());
+    } else if (c == Byte.TYPE) {
+      out.writeByte(DSCODE.BYTE_TYPE.toByte());
+    } else if (c == Short.TYPE) {
+      out.writeByte(DSCODE.SHORT_TYPE.toByte());
+    } else if (c == Integer.TYPE) {
+      out.writeByte(DSCODE.INTEGER_TYPE.toByte());
+    } else if (c == Long.TYPE) {
+      out.writeByte(DSCODE.LONG_TYPE.toByte());
+    } else if (c == Float.TYPE) {
+      out.writeByte(DSCODE.FLOAT_TYPE.toByte());
+    } else if (c == Double.TYPE) {
+      out.writeByte(DSCODE.DOUBLE_TYPE.toByte());
+    } else if (c == Void.TYPE) {
+      out.writeByte(DSCODE.VOID_TYPE.toByte());
+    } else if (c == null) {
+      out.writeByte(DSCODE.NULL.toByte());
+    } else {
+      throw new IllegalArgumentException(
+          String.format("unknown primitive type: %s",
+              c.getName()));
+    }
+  }
+
+  public static Class<?> decodePrimitiveClass(byte typeCode) throws IOException {
+    DSCODE dscode = DscodeHelper.toDSCODE(typeCode);
+    switch (dscode) {
+      case BOOLEAN_TYPE:
+        return Boolean.TYPE;
+      case CHARACTER_TYPE:
+        return Character.TYPE;
+      case BYTE_TYPE:
+        return Byte.TYPE;
+      case SHORT_TYPE:
+        return Short.TYPE;
+      case INTEGER_TYPE:
+        return Integer.TYPE;
+      case LONG_TYPE:
+        return Long.TYPE;
+      case FLOAT_TYPE:
+        return Float.TYPE;
+      case DOUBLE_TYPE:
+        return Double.TYPE;
+      case VOID_TYPE:
+        return Void.TYPE;
+      case NULL:
+        return null;
+      default:
+        throw new IllegalArgumentException(
+            String.format("unexpected typeCode: %s", typeCode));
+    }
+  }
+
+  /**
+   * Get the {@link Version} of the peer or disk store that created this
+   * {@link DataInput}. Returns
+   * null if the version is same as this member's.
+   */
+  public static Version getVersionForDataStreamOrNull(DataInput in) {
+    // check if this is a versioned data input
+    if (in instanceof VersionedDataStream) {
+      return ((VersionedDataStream) in).getVersion();
+    } else {
+      // assume latest version
+      return null;
+    }
+  }
+
+  /**
+   * Get the {@link Version} of the peer or disk store that created this
+   * {@link DataInput}.
+   */
+  public static Version getVersionForDataStream(DataInput in) {
+    // check if this is a versioned data input
+    if (in instanceof VersionedDataStream) {
+      final Version v = ((VersionedDataStream) in).getVersion();
+      return v != null ? v : Version.CURRENT;
+    } else {
+      // assume latest version
+      return Version.CURRENT;
+    }
+  }
+
+  /**
+   * Get the {@link Version} of the peer or disk store that created this
+   * {@link DataOutput}.
+   */
+  public static Version getVersionForDataStream(DataOutput out) {
+    // check if this is a versioned data output
+    if (out instanceof VersionedDataStream) {
+      final Version v = ((VersionedDataStream) out).getVersion();
+      return v != null ? v : Version.CURRENT;
+    } else {
+      // assume latest version
+      return Version.CURRENT;
+    }
+  }
+
+  /**
+   * Get the {@link Version} of the peer or disk store that created this
+   * {@link DataOutput}. Returns
+   * null if the version is same as this member's.
+   */
+  public static Version getVersionForDataStreamOrNull(DataOutput out) {
+    // check if this is a versioned data output
+    if (out instanceof VersionedDataStream) {
+      return ((VersionedDataStream) out).getVersion();
+    } else {
+      // assume latest version
+      return null;
+    }
   }
 }

@@ -294,9 +294,9 @@ public abstract class ServerConnection implements Runnable {
 
       if (isDebugEnabled) {
         logger.debug(
-            "{}: Accepted client connection from {}[client host name={}; client host address={}; client port={}]",
-            getName(), communicationModeStr, socket.getInetAddress().getCanonicalHostName(),
-            socket.getInetAddress().getHostAddress(), socket.getPort());
+            "{}: Accepted client connection from {}[client host={}; client port={}]",
+            getName(), communicationModeStr, socket.getInetAddress(),
+            socket.getPort());
       }
       handshakeTimeout = hsTimeout;
     } catch (Exception e) {
@@ -1446,15 +1446,6 @@ public abstract class ServerConnection implements Runnable {
       commBuffer = null;
       releaseCommBuffer(byteBuffer);
     }
-  }
-
-  /**
-   * Just ensure that this class gets loaded.
-   *
-   * @see SystemFailure#loadEmergencyClasses()
-   */
-  public static void loadEmergencyClasses() {
-    // nothing needed, just make sure this class gets loaded.
   }
 
   /**

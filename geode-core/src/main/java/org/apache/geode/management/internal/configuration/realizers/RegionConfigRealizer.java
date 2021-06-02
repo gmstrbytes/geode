@@ -38,11 +38,11 @@ import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.PartitionAttributesImpl;
 import org.apache.geode.management.api.RealizationResult;
 import org.apache.geode.management.configuration.Region;
-import org.apache.geode.management.internal.cli.CliUtil;
-import org.apache.geode.management.internal.cli.i18n.CliStrings;
-import org.apache.geode.management.internal.cli.util.RegionPath;
 import org.apache.geode.management.internal.configuration.converters.RegionConverter;
 import org.apache.geode.management.internal.configuration.domain.DeclarableTypeInstantiator;
+import org.apache.geode.management.internal.i18n.CliStrings;
+import org.apache.geode.management.internal.util.ManagementUtils;
+import org.apache.geode.management.internal.util.RegionPath;
 import org.apache.geode.management.runtime.RuntimeRegionInfo;
 
 public class RegionConfigRealizer
@@ -119,13 +119,13 @@ public class RegionConfigRealizer
     final String valueConstraint = regionAttributes.getValueConstraint();
     if (keyConstraint != null && !keyConstraint.isEmpty()) {
       Class<Object> keyConstraintClass =
-          CliUtil.forName(keyConstraint, CliStrings.CREATE_REGION__KEYCONSTRAINT);
+          ManagementUtils.forName(keyConstraint, CliStrings.CREATE_REGION__KEYCONSTRAINT);
       ((RegionFactory<Object, Object>) factory).setKeyConstraint(keyConstraintClass);
     }
 
     if (valueConstraint != null && !valueConstraint.isEmpty()) {
       Class<Object> valueConstraintClass =
-          CliUtil.forName(valueConstraint, CliStrings.CREATE_REGION__VALUECONSTRAINT);
+          ManagementUtils.forName(valueConstraint, CliStrings.CREATE_REGION__VALUECONSTRAINT);
       ((RegionFactory<Object, Object>) factory).setValueConstraint(valueConstraintClass);
     }
 
@@ -308,6 +308,22 @@ public class RegionConfigRealizer
     return info;
   }
 
+  /**
+   * the default implementation will have the extra work of getting the runtime info which is
+   * unnecessary. It will also have some concurrency issue if the region is being destroyed.
+   */
+  @Override
+  public boolean exists(Region config, InternalCache cache) {
+    org.apache.geode.cache.Region<Object, Object> region = cache.getRegion("/" + config.getName());
+    if (region == null) {
+      return false;
+    }
+
+    if (region.isDestroyed()) {
+      return false;
+    }
+    return true;
+  }
 
   @Override
   public RealizationResult update(Region config, InternalCache cache) {
@@ -325,7 +341,7 @@ public class RegionConfigRealizer
     try {
       region.destroyRegion();
     } catch (RegionDestroyedException dex) {
-      // Probably happened as a distirbuted op but it still reflects our current desired action
+      // Probably happened as a distributed op but it still reflects our current desired action
       // which is why it can be ignored here.
       return new RealizationResult().setMessage("Region does not exist.");
     }

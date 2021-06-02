@@ -16,6 +16,7 @@ package org.apache.geode.internal.cache.tier.sockets;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.MINUTES;
+import static org.apache.geode.internal.cache.tier.sockets.CacheServerTestUtil.getCache;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.notNullValue;
@@ -38,6 +39,7 @@ import org.apache.geode.test.dunit.NetworkUtils;
 import org.apache.geode.test.dunit.SerializableRunnableIF;
 import org.apache.geode.test.dunit.VM;
 import org.apache.geode.test.junit.categories.ClientSubscriptionTest;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 
 /**
@@ -71,9 +73,7 @@ public class DurableClientTestCase extends DurableClientTestBase {
   @Test
   public void testSpecialDurableProperty() throws InterruptedException {
     final Properties jp = new Properties();
-    jp.setProperty(DistributionConfig.GEMFIRE_PREFIX + "SPECIAL_DURABLE", "true");
-
-
+    jp.setProperty(GeodeGlossary.GEMFIRE_PREFIX + "SPECIAL_DURABLE", "true");
 
     try {
 
@@ -107,8 +107,6 @@ public class DurableClientTestCase extends DurableClientTestBase {
 
         // Verify that it is durable and its properties are correct
         assertThat(proxy.isDurable()).isTrue();
-        System.out.println("BRUCE: durableClientId is " + durableClientId);
-        System.out.println("BRUCE: proxy durable id is " + proxy.getDurableId());
         assertThat(durableClientId).isNotEqualTo(proxy.getDurableId());
 
         /*
@@ -312,6 +310,13 @@ public class DurableClientTestCase extends DurableClientTestBase {
     // Verify the durable client received the updates
     this.checkListenerEvents(1, 1, -1, this.durableClientVM);
 
+    server1VM.invoke("wait for client acknowledgement", () -> {
+      CacheClientProxy proxy = getClientProxy();
+      await().untilAsserted(
+          () -> assertThat(proxy._messageDispatcher._messageQueue.stats.getEventsRemoved())
+              .isGreaterThan(0));
+    });
+
     // Stop the durable client
     this.disconnectDurableClient(true);
 
@@ -325,12 +330,10 @@ public class DurableClientTestCase extends DurableClientTestBase {
     this.server1VM.invoke(new CacheSerializableRunnable("Verify durable client") {
       @Override
       public void run2() throws CacheException {
-        // Find the proxy
         CacheClientProxy proxy = getClientProxy();
         assertThat(proxy).isNotNull();
-
         // Verify the queue size
-        assertThat(1).isEqualTo(proxy.getQueueSize());
+        assertThat(proxy.getQueueSize()).isEqualTo(1);
       }
     });
 
@@ -514,16 +517,14 @@ public class DurableClientTestCase extends DurableClientTestBase {
     // Verify the durable client received the updates before failover
     this.checkListenerEvents(2, 1, -1, this.durableClientVM);
 
-    this.durableClientVM.invoke(new CacheSerializableRunnable("Get") {
-      @Override
-      public void run2() throws CacheException {
-
-        Region<Object, Object> region = CacheServerTestUtil.getCache().getRegion(regionName);
+    this.durableClientVM.invoke("Get", () -> {
+      await().untilAsserted(() -> {
+        Region<Object, Object> region = getCache().getRegion(regionName);
         assertThat(region).isNotNull();
 
         assertThat(region.getEntry("0")).isNull();
         assertThat(region.getEntry("2")).isNotNull();
-      }
+      });
     });
 
     // Stop server 1
@@ -640,15 +641,13 @@ public class DurableClientTestCase extends DurableClientTestBase {
       this.checkListenerEvents(2, 1, -1, this.durableClientVM);
     }
 
-    this.durableClientVM.invoke(new CacheSerializableRunnable("Get") {
-      @Override
-      public void run2() throws CacheException {
-        Region<Object, Object> region = CacheServerTestUtil.getCache().getRegion(regionName);
+    this.durableClientVM.invoke("Get", () -> {
+      await().untilAsserted(() -> {
+        Region<Object, Object> region = getCache().getRegion(regionName);
         assertThat(region).isNotNull();
-
         // Register interest in all keys
         assertThat(region.getEntry("0")).isNull();
-      }
+      });
     });
 
     publishEntries(4, 1);

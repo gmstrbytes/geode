@@ -16,7 +16,6 @@ package org.apache.geode.internal.cache;
 
 import static org.apache.geode.internal.cache.LocalRegion.InitializationLevel.ANY_INIT;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -30,7 +29,6 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.CancelException;
 import org.apache.geode.annotations.Immutable;
-import org.apache.geode.cache.AttributesFactory;
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.CacheWriterException;
 import org.apache.geode.cache.DataPolicy;
@@ -43,14 +41,12 @@ import org.apache.geode.cache.FixedPartitionResolver;
 import org.apache.geode.cache.Operation;
 import org.apache.geode.cache.PartitionResolver;
 import org.apache.geode.cache.Region;
-import org.apache.geode.cache.RegionAttributes;
 import org.apache.geode.cache.RegionExistsException;
-import org.apache.geode.cache.Scope;
+import org.apache.geode.cache.RegionShortcut;
 import org.apache.geode.cache.partition.PartitionNotAvailableException;
 import org.apache.geode.cache.util.CacheListenerAdapter;
 import org.apache.geode.cache.util.CacheWriterAdapter;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.MembershipListener;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
@@ -60,6 +56,7 @@ import org.apache.geode.internal.cache.partitioned.Bucket;
 import org.apache.geode.internal.cache.partitioned.PRLocallyDestroyedException;
 import org.apache.geode.internal.cache.partitioned.RegionAdvisor;
 import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 public class PartitionedRegionHelper {
   private static final Logger logger = LogService.getLogger();
@@ -85,7 +82,7 @@ public class PartitionedRegionHelper {
    * meta-data and this property controls the delay before giving up trying to acquire a global lock
    */
   static final String VM_OWNERSHIP_WAIT_TIME_PROPERTY =
-      DistributionConfig.GEMFIRE_PREFIX + "VM_OWNERSHIP_WAIT_TIME";
+      GeodeGlossary.GEMFIRE_PREFIX + "VM_OWNERSHIP_WAIT_TIME";
 
   /** Wait forever for ownership */
   static final long VM_OWNERSHIP_WAIT_TIME_DEFAULT = Long.MAX_VALUE;
@@ -210,11 +207,9 @@ public class PartitionedRegionHelper {
         logger.debug("Creating root Partitioned Admin Region {}",
             PartitionedRegionHelper.PR_ROOT_REGION_NAME);
       }
-      AttributesFactory factory = new AttributesFactory();
-      factory.setScope(Scope.DISTRIBUTED_ACK);
-      factory.setDataPolicy(DataPolicy.REPLICATE);
+      InternalRegionFactory factory = cache.createInternalRegionFactory(RegionShortcut.REPLICATE);
       factory.addCacheListener(new FixedPartitionAttributesListener());
-      if (Boolean.getBoolean(DistributionConfig.GEMFIRE_PREFIX + "PRDebug")) {
+      if (Boolean.getBoolean(GeodeGlossary.GEMFIRE_PREFIX + "PRDebug")) {
         factory.addCacheListener(new CacheListenerAdapter() {
           @Override
           public void afterCreate(EntryEvent event) {
@@ -263,7 +258,6 @@ public class PartitionedRegionHelper {
         });
       }
 
-      RegionAttributes ra = factory.create();
       // Create anonymous stats holder for Partitioned Region meta data
       final HasCachePerfStats prMetaStatsHolder = new HasCachePerfStats() {
         @Override
@@ -273,18 +267,16 @@ public class PartitionedRegionHelper {
         }
       };
 
+      factory.setIsUsedForPartitionedRegionAdmin(true);
+      factory.setInternalRegion(true);
+      factory.setCachePerfStatsHolder(prMetaStatsHolder);
+
       try {
-        root = (DistributedRegion) cache.createVMRegion(PR_ROOT_REGION_NAME, ra,
-            new InternalRegionArguments().setIsUsedForPartitionedRegionAdmin(true)
-                .setInternalRegion(true).setCachePerfStatsHolder(prMetaStatsHolder));
+        root = (DistributedRegion) factory.create(PR_ROOT_REGION_NAME);
         root.getDistributionAdvisor().addMembershipListener(new MemberFailureListener(cache));
       } catch (RegionExistsException ignore) {
         // we avoid this before hand, but yet we have to catch it
         root = (DistributedRegion) cache.getRegion(PR_ROOT_REGION_NAME, true);
-      } catch (IOException ieo) {
-        Assert.assertTrue(false, "IOException creating Partitioned Region root: " + ieo);
-      } catch (ClassNotFoundException cne) {
-        Assert.assertTrue(false, "ClassNotFoundExcpetion creating Partitioned Region root: " + cne);
       }
     }
     Assert.assertTrue(root != null,
@@ -582,7 +574,7 @@ public class PartitionedRegionHelper {
         resolveKey = resolver.getRoutingObject(event);
         if (resolveKey == null) {
           throw new IllegalStateException(
-              "The RoutingObject returned by PartitionResolver is null.");
+              "The RoutingObject returned by PartitionResolver is null. Resolver: " + resolver);
         }
       }
       // Finally, calculate the hash.
@@ -710,7 +702,7 @@ public class PartitionedRegionHelper {
     } finally {
       LocalRegion.setThreadInitLevelRequirement(oldLevel);
     }
-    if (region == null || !(region instanceof PartitionedRegion)) {
+    if (!(region instanceof PartitionedRegion)) {
       return null;
     }
 
@@ -835,7 +827,7 @@ public class PartitionedRegionHelper {
    */
   public static void logForDataLoss(PartitionedRegion partitionedRegion, int bucketId,
       String callingMethod) {
-    if (!Boolean.getBoolean(DistributionConfig.GEMFIRE_PREFIX + "PRDebug")) {
+    if (!Boolean.getBoolean(GeodeGlossary.GEMFIRE_PREFIX + "PRDebug")) {
       return;
     }
     Region root = PartitionedRegionHelper.getPRRoot(partitionedRegion.getCache());

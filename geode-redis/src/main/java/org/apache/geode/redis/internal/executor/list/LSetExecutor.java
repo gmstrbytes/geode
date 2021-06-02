@@ -29,12 +29,12 @@ import org.apache.geode.redis.internal.executor.ListQuery;
 
 public class LSetExecutor extends ListExecutor {
 
-  private final String ERROR_NOT_NUMERIC = "The index provided is not numeric";
+  private static final String ERROR_NOT_NUMERIC = "The index provided is not numeric";
 
-  private final String ERROR_INDEX =
+  private static final String ERROR_INDEX =
       "The index provided is not within range of this list or the key does not exist";
 
-  private final String SUCCESS = "OK";
+  private static final String SUCCESS = "OK";
 
   @Override
   public void executeCommand(Command command, ExecutionHandlerContext context) {
@@ -51,9 +51,8 @@ public class LSetExecutor extends ListExecutor {
 
     int index;
 
-
     checkDataType(key, RedisDataType.REDIS_LIST, context);
-    Region<Integer, ByteArrayWrapper> keyRegion = getRegion(context, key);
+    Region<Object, Object> keyRegion = getRegion(context, key);
 
     if (keyRegion == null) {
       command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(), ERROR_INDEX));
@@ -68,8 +67,9 @@ public class LSetExecutor extends ListExecutor {
     }
 
     int listSize = keyRegion.size() - LIST_EMPTY_SIZE;
-    if (index < 0)
+    if (index < 0) {
       index += listSize;
+    }
     if (index < 0 || index > listSize) {
       command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(), ERROR_INDEX));
       return;
@@ -85,8 +85,9 @@ public class LSetExecutor extends ListExecutor {
       command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(), ERROR_INDEX));
       return;
     }
-    if (index == listSize)
+    if (index == listSize) {
       indexKey++;
+    }
     keyRegion.put(indexKey, new ByteArrayWrapper(value));
     command.setResponse(Coder.getSimpleStringResponse(context.getByteBufAllocator(), SUCCESS));
   }
@@ -95,11 +96,12 @@ public class LSetExecutor extends ListExecutor {
       throws Exception {
     Query query = getQuery(key, ListQuery.LSET, context);
 
-    Object[] params = {Integer.valueOf(index + 1)};
+    Object[] params = {index + 1};
 
+    @SuppressWarnings("unchecked")
     SelectResults<Integer> results = (SelectResults<Integer>) query.execute(params);
     int size = results.size();
-    if (results == null || size == 0) {
+    if (size == 0) {
       return null;
     }
 

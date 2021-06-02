@@ -45,7 +45,7 @@ DEFAULT_GRADLE_TASK_OPTIONS="${PARALLEL_GRADLE} --console=plain --no-daemon"
 GRADLE_SKIP_TASK_OPTIONS="-x javadoc -x spotlessCheck -x rat"
 
 SSHKEY_FILE="instance-data/sshkey"
-SSH_OPTIONS="-i ${SSHKEY_FILE} -o ConnectionAttempts=60 -o StrictHostKeyChecking=no -o ServerAliveInterval=60"
+SSH_OPTIONS="-i ${SSHKEY_FILE} -o ConnectionAttempts=60 -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -o ServerAliveCountMax=5"
 
 INSTANCE_IP_ADDRESS="$(cat instance-data/instance-ip-address)"
 
@@ -66,13 +66,17 @@ fi
 
 case $ARTIFACT_SLUG in
   windows*)
+    echo "Making environment adjustments for windows."
     JAVA_BUILD_PATH=C:/java${JAVA_BUILD_VERSION}
     JAVA_TEST_PATH=C:/java${JAVA_TEST_VERSION}
+    GRADLE_SKIP_TASK_OPTIONS="${GRADLE_SKIP_TASK_OPTIONS} -x docker"
     SEP=";"
     ;;
   *)
-    JAVA_BUILD_PATH=/usr/lib/jvm/java-${JAVA_BUILD_VERSION}-openjdk-amd64
-    JAVA_TEST_PATH=/usr/lib/jvm/java-${JAVA_TEST_VERSION}-openjdk-amd64
+    # JAVA_BUILD_PATH=/usr/lib/jvm/java-${JAVA_BUILD_VERSION}-openjdk-amd64
+    # JAVA_TEST_PATH=/usr/lib/jvm/java-${JAVA_TEST_VERSION}-openjdk-amd64
+    JAVA_BUILD_PATH=/usr/lib/jvm/bellsoft-java${JAVA_BUILD_VERSION}-amd64
+    JAVA_TEST_PATH=/usr/lib/jvm/bellsoft-java${JAVA_TEST_VERSION}-amd64
     SEP="&&"
     ;;
 esac

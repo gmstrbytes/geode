@@ -29,6 +29,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
@@ -50,12 +51,18 @@ import org.apache.geode.tools.pulse.internal.data.Repository;
 public class MemberGatewayHubService implements PulseService {
 
   private final ObjectMapper mapper = new ObjectMapper();
+  private final Repository repository;
+
+  @Autowired
+  public MemberGatewayHubService(Repository repository) {
+    this.repository = repository;
+  }
 
   @Override
   public ObjectNode execute(final HttpServletRequest request) throws Exception {
 
     // get cluster object
-    Cluster cluster = Repository.get().getCluster();
+    Cluster cluster = repository.getCluster();
 
     // json object to be sent as response
     ObjectNode responseJSON = mapper.createObjectNode();
@@ -70,7 +77,7 @@ public class MemberGatewayHubService implements PulseService {
       // get gateway receiver
       Cluster.GatewayReceiver gatewayReceiver = clusterMember.getGatewayReceiver();
 
-      Boolean isGateway = false;
+      boolean isGateway = false;
 
       if (gatewayReceiver != null) {
         responseJSON.put("isGatewayReceiver", true);
@@ -107,7 +114,7 @@ public class MemberGatewayHubService implements PulseService {
         gatewaySendersJsonList.add(gatewaySenderJSON);
       }
       // senders response
-      responseJSON.put("gatewaySenders", gatewaySendersJsonList);
+      responseJSON.set("gatewaySenders", gatewaySendersJsonList);
 
       // async event queues
       Cluster.AsyncEventQueue[] asyncEventQueues = clusterMember.getMemberAsyncEventQueueList();
@@ -127,12 +134,11 @@ public class MemberGatewayHubService implements PulseService {
 
         asyncEventQueueJsonList.add(asyncEventQueueJSON);
       }
-      responseJSON.put("asyncEventQueues", asyncEventQueueJsonList);
+      responseJSON.set("asyncEventQueues", asyncEventQueueJsonList);
 
       Map<String, Cluster.Region> clusterRegions = cluster.getClusterRegions();
 
-      List<Cluster.Region> clusterRegionsList = new ArrayList<Cluster.Region>();
-      clusterRegionsList.addAll(clusterRegions.values());
+      List<Cluster.Region> clusterRegionsList = new ArrayList<>(clusterRegions.values());
 
       ArrayNode regionsList = mapper.createArrayNode();
 
@@ -143,7 +149,7 @@ public class MemberGatewayHubService implements PulseService {
           regionsList.add(regionJSON);
         }
       }
-      responseJSON.put("regionsInvolved", regionsList);
+      responseJSON.set("regionsInvolved", regionsList);
     }
 
     // Send json response

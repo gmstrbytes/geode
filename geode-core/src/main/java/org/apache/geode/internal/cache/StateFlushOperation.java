@@ -30,6 +30,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.geode.CancelException;
 import org.apache.geode.DataSerializer;
 import org.apache.geode.SystemFailure;
+import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.RegionDestroyedException;
 import org.apache.geode.distributed.DistributedMember;
@@ -123,7 +124,7 @@ public class StateFlushOperation {
       gr.setRecipient(target);
       ReplyProcessor21 processor = new ReplyProcessor21(dm, target);
       gr.processorId = processor.getProcessorId();
-      gr.channelState = dm.getMembershipManager().getMessageState(target, false);
+      gr.channelState = dm.getDistribution().getMessageState(target, false);
       if (logger.isTraceEnabled(LogMarker.STATE_FLUSH_OP_VERBOSE)
           && ((gr.channelState != null) && (gr.channelState.size() > 0))) {
         logger.trace(LogMarker.STATE_FLUSH_OP_VERBOSE, "channel states: {}",
@@ -410,7 +411,7 @@ public class StateFlushOperation {
                   r.getMulticastEnabled() && r.getSystem().getConfig().getMcastPort() != 0;
               if (initialized) {
                 Map channelStates =
-                    dm.getMembershipManager().getMessageState(relayRecipient, useMulticast);
+                    dm.getDistribution().getMessageState(relayRecipient, useMulticast);
                 if (gr.channelState != null) {
                   gr.channelState.putAll(channelStates);
                 } else {
@@ -487,7 +488,7 @@ public class StateFlushOperation {
     public void fromData(DataInput din,
         DeserializationContext context) throws IOException, ClassNotFoundException {
       super.fromData(din, context);
-      relayRecipient = (DistributedMember) DataSerializer.readObject(din);
+      relayRecipient = DataSerializer.readObject(din);
       processorId = din.readInt();
       processorType = din.readInt();
       allRegions = din.readBoolean();
@@ -577,7 +578,7 @@ public class StateFlushOperation {
                 dm.getCancelCriterion().checkCancelInProgress(null);
                 boolean interrupted = Thread.interrupted();
                 try {
-                  dm.getMembershipManager().waitForMessageState(getSender(), channelState);
+                  dm.getDistribution().waitForMessageState(getSender(), channelState);
                   break;
                 } catch (InterruptedException ignore) {
                   interrupted = true;
@@ -721,7 +722,7 @@ public class StateFlushOperation {
         sb.append(" from ");
         sb.append(super.getSender());
       }
-      if (getRecipients().length > 0) {
+      if (!getRecipients().isEmpty()) {
         String recip = getRecipientsDescription();
         sb.append(" to ");
         sb.append(recip);
@@ -750,7 +751,7 @@ public class StateFlushOperation {
     int originalCount;
 
     /** whether the target member has left the distributed system */
-    boolean targetMemberHasLeft;
+    volatile boolean targetMemberHasLeft;
 
     public StateFlushReplyProcessor(DistributionManager manager, Set initMembers,
         DistributedMember target) {
@@ -772,6 +773,9 @@ public class StateFlushOperation {
     @Override
     public void memberDeparted(DistributionManager distributionManager,
         final InternalDistributedMember id, final boolean crashed) {
+      if (id.equals(targetMember)) {
+        targetMemberHasLeft = true;
+      }
       super.memberDeparted(distributionManager, id, crashed);
     }
 
@@ -781,6 +785,11 @@ public class StateFlushOperation {
       if (!activeMembers.contains(this.targetMember)) {
         targetMemberHasLeft = true;
       }
+    }
+
+    @VisibleForTesting
+    public boolean getTargetMemberHasLeft() {
+      return targetMemberHasLeft;
     }
 
     @Override

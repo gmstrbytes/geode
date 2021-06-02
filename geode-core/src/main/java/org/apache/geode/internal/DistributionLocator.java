@@ -14,9 +14,9 @@
  */
 package org.apache.geode.internal;
 
+
 import java.io.File;
 import java.io.IOException;
-import java.net.ConnectException;
 import java.net.InetAddress;
 import java.util.Properties;
 
@@ -24,12 +24,11 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.SystemFailure;
 import org.apache.geode.annotations.internal.MakeNotStatic;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.InternalLocator;
-import org.apache.geode.distributed.internal.tcpserver.TcpClient;
 import org.apache.geode.logging.internal.executors.LoggingThread;
 import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * This class is used to work with a managed VM that hosts a
@@ -42,7 +41,7 @@ public class DistributionLocator {
   private static final Logger logger = LogService.getLogger();
 
   public static final String TEST_OVERRIDE_DEFAULT_PORT_PROPERTY =
-      DistributionConfig.GEMFIRE_PREFIX + "test.DistributionLocator.OVERRIDE_DEFAULT_PORT";
+      GeodeGlossary.GEMFIRE_PREFIX + "test.DistributionLocator.OVERRIDE_DEFAULT_PORT";
 
   /** Default file name for locator log: <code>"locator.log"</code> */
   public static final String DEFAULT_LOG_FILE = "locator.log";
@@ -64,15 +63,6 @@ public class DistributionLocator {
       }
     }
   }
-
-  public static void stop(InetAddress addr, int port) {
-    try {
-      new TcpClient().stop(addr, port);
-    } catch (ConnectException ignore) {
-      // must not be running
-    }
-  }
-
 
   @MakeNotStatic
   private static boolean shutdown = false;

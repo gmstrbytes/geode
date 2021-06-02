@@ -26,9 +26,8 @@ public class GetExecutor extends StringExecutor {
 
   @Override
   public void executeCommand(Command command, ExecutionHandlerContext context) {
-    Region<ByteArrayWrapper, ByteArrayWrapper> r = context.getRegionProvider().getStringsRegion();
 
-    if (command.getProcessedCommand().size() < 2) {
+    if (command.getProcessedCommand().size() != 2) {
       command
           .setResponse(Coder.getErrorResponse(context.getByteBufAllocator(), ArityDef.GETEXECUTOR));
       return;
@@ -36,7 +35,10 @@ public class GetExecutor extends StringExecutor {
 
     ByteArrayWrapper key = command.getKey();
     checkDataType(key, RedisDataType.REDIS_STRING, context);
-    ByteArrayWrapper wrapper = r.get(key);
+
+    Region<ByteArrayWrapper, ByteArrayWrapper> region =
+        context.getRegionProvider().getStringsRegion();
+    ByteArrayWrapper wrapper = region.get(key);
 
     respondBulkStrings(command, context, wrapper);
   }

@@ -27,10 +27,11 @@ public class FlushAllExecutor extends AbstractExecutor {
 
   @Override
   public void executeCommand(Command command, ExecutionHandlerContext context) {
-    if (context.hasTransaction())
+    if (context.hasTransaction()) {
       throw new UnsupportedOperationInTransactionException();
+    }
 
-    for (Entry<String, RedisDataType> e : context.getRegionProvider().metaEntrySet()) {
+    for (Entry<String, RedisDataType> e : context.getKeyRegistrar().keyInfos()) {
       try {
         String skey = e.getKey();
         RedisDataType type = e.getValue();

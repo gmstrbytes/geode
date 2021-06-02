@@ -87,7 +87,6 @@ import org.apache.geode.cache.partition.PartitionRegionHelper;
 import org.apache.geode.cache.partition.PartitionRegionInfo;
 import org.apache.geode.cache.util.CacheListenerAdapter;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionMessageObserver;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.cache.BucketRegion;
@@ -111,6 +110,7 @@ import org.apache.geode.test.dunit.WaitCriterion;
 import org.apache.geode.test.dunit.cache.CacheTestCase;
 import org.apache.geode.test.dunit.rules.DistributedRestoreSystemProperties;
 import org.apache.geode.test.junit.rules.ExecutorServiceRule;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * TODO test colocated regions where buckets aren't created for all subregions
@@ -122,7 +122,7 @@ import org.apache.geode.test.junit.rules.ExecutorServiceRule;
 @SuppressWarnings("serial")
 public class RebalanceOperationDistributedTest extends CacheTestCase {
 
-  private static final long TIMEOUT_SECONDS = GeodeAwaitility.getTimeout().getValue();
+  private static final long TIMEOUT_SECONDS = GeodeAwaitility.getTimeout().getSeconds();
 
   @Rule
   public DistributedRestoreSystemProperties restoreSystemProperties =
@@ -747,7 +747,7 @@ public class RebalanceOperationDistributedTest extends CacheTestCase {
       throws SecurityException {
     if (simulate) {
       invokeInEveryVM(
-          () -> System.setProperty(DistributionConfig.GEMFIRE_PREFIX + "LOG_REBALANCE", "true"));
+          () -> System.setProperty(GeodeGlossary.GEMFIRE_PREFIX + "LOG_REBALANCE", "true"));
     }
 
     VM vm0 = getVM(0);
@@ -1055,6 +1055,7 @@ public class RebalanceOperationDistributedTest extends CacheTestCase {
       assertThat(details.getPrimaryTransfersCompleted()).isEqualTo(0);
       assertThat(details.getBucketTransferBytes()).isGreaterThan(0);
       assertThat(details.getBucketTransfersCompleted()).isEqualTo(3);
+      assertThat(details.getNumberOfMembersExecutedOn()).isEqualTo(2);
 
       Set<PartitionMemberInfo> afterDetails = details.getPartitionMemberDetailsAfter();
       assertThat(afterDetails).hasSize(2);
@@ -2557,7 +2558,7 @@ public class RebalanceOperationDistributedTest extends CacheTestCase {
   }
 
   private void setRedundancyZone(String zone) {
-    System.setProperty(DistributionConfig.GEMFIRE_PREFIX + "resource.manager.threads", "2");
+    System.setProperty(GeodeGlossary.GEMFIRE_PREFIX + "resource.manager.threads", "2");
 
     Properties props = new Properties();
     props.setProperty(REDUNDANCY_ZONE, zone);

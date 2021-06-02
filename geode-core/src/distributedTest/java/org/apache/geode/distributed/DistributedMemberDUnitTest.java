@@ -14,6 +14,7 @@
  */
 package org.apache.geode.distributed;
 
+import static org.apache.geode.distributed.ConfigurationProperties.ENABLE_NETWORK_PARTITION_DETECTION;
 import static org.apache.geode.distributed.ConfigurationProperties.GROUPS;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
@@ -43,13 +44,14 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 
 import org.apache.geode.IncompatibleSystemException;
+import org.apache.geode.distributed.internal.Distribution;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.HighPriorityAckedMessage;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.distributed.internal.membership.adapter.GMSMembershipManager;
-import org.apache.geode.distributed.internal.membership.gms.MembershipManagerHelper;
+import org.apache.geode.distributed.internal.membership.api.MembershipManagerHelper;
+import org.apache.geode.distributed.internal.membership.gms.GMSMembership;
 import org.apache.geode.internal.HeapDataOutputStream;
 import org.apache.geode.test.dunit.Host;
 import org.apache.geode.test.dunit.SerializableCallable;
@@ -204,6 +206,7 @@ public class DistributedMemberDUnitTest extends JUnit4DistributedTestCase {
           // disconnectFromDS();
           Properties config = new Properties();
           config.setProperty(ROLES, vmRoles[vm]);
+          config.setProperty(ENABLE_NETWORK_PARTITION_DETECTION, "false");
           getSystem(config);
         }
       });
@@ -262,7 +265,7 @@ public class DistributedMemberDUnitTest extends JUnit4DistributedTestCase {
     assertTrue(system == basicGetSystem()); // senders will use basicGetSystem()
     InternalDistributedMember internalDistributedMember = system.getDistributedMember();
 
-    internalDistributedMember.getMemberData().setName(null);
+    internalDistributedMember.setName(null);
     HeapDataOutputStream outputStream = new HeapDataOutputStream(100);
     internalDistributedMember.writeEssentialData(outputStream);
     DataInputStream dataInputStream =
@@ -304,9 +307,9 @@ public class DistributedMemberDUnitTest extends JUnit4DistributedTestCase {
     HighPriorityAckedMessage message = new HighPriorityAckedMessage();
     message.setSender(partialID);
 
-    GMSMembershipManager manager =
-        (GMSMembershipManager) MembershipManagerHelper.getMembership(basicGetSystem());
-    manager.replacePartialIdentifierInMessage(message);
+    Distribution manager =
+        MembershipManagerHelper.getDistribution(basicGetSystem());
+    ((GMSMembership) manager.getMembership()).replacePartialIdentifierInMessage(message);
 
     assertFalse(message.getSender().isPartial());
   }

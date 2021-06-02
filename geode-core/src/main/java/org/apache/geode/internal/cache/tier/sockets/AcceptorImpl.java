@@ -89,6 +89,7 @@ import org.apache.geode.internal.cache.tier.OverflowAttributes;
 import org.apache.geode.internal.cache.tier.sockets.CacheClientNotifier.CacheClientNotifierProvider;
 import org.apache.geode.internal.cache.tier.sockets.ClientHealthMonitor.ClientHealthMonitorProvider;
 import org.apache.geode.internal.cache.wan.GatewayReceiverStats;
+import org.apache.geode.internal.inet.LocalHostUtil;
 import org.apache.geode.internal.logging.CoreLoggingExecutors;
 import org.apache.geode.internal.monitoring.ThreadsMonitoring;
 import org.apache.geode.internal.net.SocketCreator;
@@ -364,7 +365,6 @@ public class AcceptorImpl implements Acceptor, Runnable {
    * @param maxThreads the maximum number of threads allowed in the server pool
    * @param securityService the SecurityService to use for authentication and authorization
    *
-   * @see SocketCreator#createServerSocket(int, int, InetAddress)
    * @see ClientHealthMonitor
    *
    * @since GemFire 5.7
@@ -393,10 +393,21 @@ public class AcceptorImpl implements Acceptor, Runnable {
    * <p>
    * Initializes this acceptor thread to listen for connections on the given port.
    *
-   * @param gatewayReceiver the GatewayReceiver that will use this AcceptorImpl instance
-   * @param gatewayReceiverMetrics the GatewayReceiverMetrics to use for exposing metrics
    * @param port The port on which this acceptor listens for connections. If {@code 0}, a
    *        random port will be chosen.
+   * @param notifyBySubscription the bridges setting whether if it to be notified by subscription
+   * @param maximumMessageCount maximum message count setting in the Cache Client Notifier
+   * @param messageTimeToLive message time to live setting in the Cache Client Notifier
+   * @param connectionListener listener to detect if connect or disconnect events
+   * @param overflowAttributes overflow attributes of Cache Client Notifier
+   * @param tcpNoDelay TCP delay for the outgoing sockets
+   * @param serverConnectionFactory server connection factory for the client
+   * @param timeLimitMillis time limit to wait attemping to bind to a server socket
+   * @param socketCreatorSupplier socket creator for the server connection
+   * @param cacheClientNotifierProvider collection of cache client notifiers
+   * @param clientHealthMonitorProvider collection of clinet health monitors
+   * @param isGatewayReceiver flag to determine if member is gateway receiver
+   * @param statisticsClock maintains the JVM's clock
    * @param bindHostName The ip address or host name this acceptor listens on for connections. If
    *        {@code null} or "" then all local addresses are used
    * @param socketBufferSize The buffer size for server-side sockets
@@ -488,7 +499,7 @@ public class AcceptorImpl implements Acceptor, Runnable {
         tmp_q = new LinkedBlockingQueue<>();
         tmp_commQ = new LinkedBlockingQueue<>();
         tmp_hs = new HashSet<>(512);
-        tmp_timer = new SystemTimer(internalCache.getDistributedSystem(), true);
+        tmp_timer = new SystemTimer(internalCache.getDistributedSystem());
       }
       selector = tmp_s;
       selectorQueue = tmp_q;
@@ -511,7 +522,7 @@ public class AcceptorImpl implements Acceptor, Runnable {
       final long tilt = System.currentTimeMillis() + timeLimitMillis;
 
       if (isSelector()) {
-        if (socketCreator.useSSL()) {
+        if (socketCreator.forCluster().useSSL()) {
           throw new IllegalArgumentException(
               "Selector thread pooling can not be used with client/server SSL. The selector can be disabled by setting max-threads=0.");
         }
@@ -860,26 +871,6 @@ public class AcceptorImpl implements Acceptor, Runnable {
   }
 
   /**
-   * break any potential circularity in {@link #loadEmergencyClasses()}
-   */
-  @MakeNotStatic
-  private static volatile boolean emergencyClassesLoaded;
-
-  /**
-   * Ensure that the CachedRegionHelper and ServerConnection classes get loaded.
-   *
-   * @see SystemFailure#loadEmergencyClasses()
-   */
-  public static void loadEmergencyClasses() {
-    if (emergencyClassesLoaded) {
-      return;
-    }
-    emergencyClassesLoaded = true;
-    CachedRegionHelper.loadEmergencyClasses();
-    ServerConnection.loadEmergencyClasses();
-  }
-
-  /**
    * @see SystemFailure#emergencyClose()
    */
   @Override
@@ -1199,7 +1190,7 @@ public class AcceptorImpl implements Acceptor, Runnable {
   public String getServerName() {
     String name = serverSock.getLocalSocketAddress().toString();
     try {
-      name = SocketCreator.getLocalHost().getCanonicalHostName() + "-" + name;
+      name = LocalHostUtil.getCanonicalLocalHostName() + "-" + name;
     } catch (Exception e) {
     }
     return name;
@@ -1564,7 +1555,7 @@ public class AcceptorImpl implements Acceptor, Runnable {
 
   private CommunicationMode getCommunicationModeForNonSelector(Socket socket) throws IOException {
     socket.setSoTimeout(0);
-    socketCreator.handshakeIfSocketIsSSL(socket, acceptTimeout);
+    socketCreator.forCluster().handshakeIfSocketIsSSL(socket, acceptTimeout);
     byte communicationModeByte = (byte) socket.getInputStream().read();
     if (communicationModeByte == -1) {
       throw new EOFException();
@@ -1786,7 +1777,7 @@ public class AcceptorImpl implements Acceptor, Runnable {
     }
     if (needCanonicalHostName) {
       try {
-        result = SocketCreator.getLocalHost().getCanonicalHostName();
+        result = LocalHostUtil.getCanonicalLocalHostName();
       } catch (UnknownHostException ex) {
         throw new IllegalStateException("getLocalHost failed with " + ex);
       }

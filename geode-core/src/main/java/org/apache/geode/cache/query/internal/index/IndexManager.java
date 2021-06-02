@@ -62,7 +62,6 @@ import org.apache.geode.cache.query.internal.QueryObserver;
 import org.apache.geode.cache.query.internal.QueryObserverHolder;
 import org.apache.geode.cache.query.internal.index.AbstractIndex.InternalIndexStatistics;
 import org.apache.geode.cache.query.internal.parse.OQLLexerTokenTypes;
-import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.internal.Assert;
 import org.apache.geode.internal.cache.BucketRegion;
 import org.apache.geode.internal.cache.CachePerfStats;
@@ -75,6 +74,7 @@ import org.apache.geode.internal.cache.TXManagerImpl;
 import org.apache.geode.internal.cache.TXStateProxy;
 import org.apache.geode.logging.internal.executors.LoggingThread;
 import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.util.internal.GeodeGlossary;
 
 public class IndexManager {
   private static final Logger logger = LogService.getLogger();
@@ -107,10 +107,10 @@ public class IndexManager {
 
   // Threshold for Queue.
   private final int INDEX_MAINTENANCE_BUFFER =
-      Integer.getInteger(DistributionConfig.GEMFIRE_PREFIX + "AsynchIndexMaintenanceThreshold", -1);
+      Integer.getInteger(GeodeGlossary.GEMFIRE_PREFIX + "AsynchIndexMaintenanceThreshold", -1);
 
   public static final boolean JOIN_OPTIMIZATION =
-      !Boolean.getBoolean(DistributionConfig.GEMFIRE_PREFIX + "index.DisableJoinOptimization");
+      !Boolean.getBoolean(GeodeGlossary.GEMFIRE_PREFIX + "index.DisableJoinOptimization");
 
   @MutableForTesting
   public static boolean INPLACE_OBJECT_MODIFICATION_FOR_TEST = false;
@@ -121,8 +121,6 @@ public class IndexManager {
   @MutableForTesting
   public static boolean IS_TEST_EXPANSION = false;
 
-
-
   /**
    * System property to maintain the ReverseMap to take care in-place modification of the objects by
    * the application. In case of in-place modification the EntryEvent will not have the old-value,
@@ -130,13 +128,13 @@ public class IndexManager {
    * results.
    */
   public static final boolean INPLACE_OBJECT_MODIFICATION = Boolean.valueOf(System.getProperty(
-      DistributionConfig.GEMFIRE_PREFIX + "index.INPLACE_OBJECT_MODIFICATION", "false"));
+      GeodeGlossary.GEMFIRE_PREFIX + "index.INPLACE_OBJECT_MODIFICATION", "false"));
 
   /**
    * System property to turn-off the compact-index support.
    */
   public static final boolean RANGEINDEX_ONLY = Boolean.valueOf(
-      System.getProperty(DistributionConfig.GEMFIRE_PREFIX + "index.RANGEINDEX_ONLY", "false"));
+      System.getProperty(GeodeGlossary.GEMFIRE_PREFIX + "index.RANGEINDEX_ONLY", "false"));
 
   @MutableForTesting
   public static boolean TEST_RANGEINDEX_ONLY = false;
@@ -1129,7 +1127,7 @@ public class IndexManager {
               }
               start = ((AbstractIndex) index).updateIndexUpdateStats();
 
-              index.removeIndexMapping(entry, opCode);
+              removeIndexMapping(entry, index, opCode);
 
               ((AbstractIndex) index).updateIndexUpdateStats(start);
             }
@@ -1149,14 +1147,27 @@ public class IndexManager {
     }
   }
 
-  private void addIndexMapping(RegionEntry entry, IndexProtocol index) throws IMQException {
+  void addIndexMapping(RegionEntry entry, IndexProtocol index) {
     try {
       index.addIndexMapping(entry);
     } catch (Exception exception) {
       index.markValid(false);
       setPRIndexAsInvalid((AbstractIndex) index);
-      logger.warn("Put operation for the entry corrupted the index : "
-          + ((AbstractIndex) index).indexName + " with the exception : \n " + exception);
+      logger.warn(String.format(
+          "Updating the Index %s failed. The index is corrupted and marked as invalid.",
+          ((AbstractIndex) index).indexName), exception);
+    }
+  }
+
+  void removeIndexMapping(RegionEntry entry, IndexProtocol index, int opCode) {
+    try {
+      index.removeIndexMapping(entry, opCode);
+    } catch (Exception exception) {
+      index.markValid(false);
+      setPRIndexAsInvalid((AbstractIndex) index);
+      logger.warn(String.format(
+          "Updating the Index %s failed. The index is corrupted and marked as invalid.",
+          ((AbstractIndex) index).indexName), exception);
     }
   }
 
@@ -1555,8 +1566,7 @@ public class IndexManager {
 
     @Override
     public boolean equals(Object other) {
-      // TODO: equals should check the class of its parameter
-      if (other == null) {
+      if (!(other instanceof IndexTask)) {
         return false;
       }
       IndexTask otherIndexTask = (IndexTask) other;

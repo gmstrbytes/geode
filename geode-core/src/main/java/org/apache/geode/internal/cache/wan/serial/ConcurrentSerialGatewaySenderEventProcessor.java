@@ -293,7 +293,7 @@ public class ConcurrentSerialGatewaySenderEventProcessor
           boolean b = f.get();
           if (logger.isDebugEnabled()) {
             logger.debug("ConcurrentSerialGatewaySenderEventProcessor: {} stopped dispatching: {}",
-                (b ? "Successfully" : "Unsuccesfully"), this);
+                (b ? "Successfully" : "Unsuccessfully"), this);
           }
         } catch (ExecutionException e) {
           // we don't expect any exception but if caught then eat it and log
@@ -383,7 +383,6 @@ public class ConcurrentSerialGatewaySenderEventProcessor
 
   @Override
   protected void registerEventDroppedInPrimaryQueue(EntryEventImpl droppedEvent) {
-    this.getSender().setModifiedEventId(droppedEvent);
     // modified event again for concurrent SGSEP
     int index = Math.abs(getHashCode(((EntryEventImpl) droppedEvent)) % this.processors.size());
     setModifiedEventId(droppedEvent, index);

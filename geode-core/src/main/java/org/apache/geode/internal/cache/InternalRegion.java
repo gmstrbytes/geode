@@ -16,6 +16,7 @@ package org.apache.geode.internal.cache;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -383,6 +384,11 @@ public interface InternalRegion extends Region, HasCachePerfStats, RegionEntryCo
   boolean virtualPut(EntryEventImpl event, boolean ifNew, boolean ifOld, Object expectedOldValue,
       boolean requireOldValue, long lastModified, boolean overwriteDestroyed);
 
+  boolean virtualPut(EntryEventImpl event, boolean ifNew, boolean ifOld, Object expectedOldValue,
+      boolean requireOldValue, long lastModified, boolean overwriteDestroyed,
+      boolean invokeCallbacks,
+      boolean throwsConcurrentModification);
+
   long postPutAllSend(DistributedPutAllOperation putallOp, VersionedObjectList successfulPuts);
 
   void postPutAllFireEvents(DistributedPutAllOperation putallOp,
@@ -439,4 +445,18 @@ public interface InternalRegion extends Region, HasCachePerfStats, RegionEntryCo
   Set<String> getVisibleAsyncEventQueueIds();
 
   CachePerfStats getRegionPerfStats();
+
+  VersionedObjectList basicRemoveAll(Collection<Object> keys,
+      DistributedRemoveAllOperation removeAllOp, List<VersionTag> retryVersions);
+
+  VersionTag getVersionTag(Object key);
+
+  /**
+   * This method determines whether this region should synchronize with peer replicated regions when
+   * the given member has crashed.
+   *
+   * @param id the crashed member
+   * @return true if synchronization should be attempted
+   */
+  boolean shouldSyncForCrashedMember(InternalDistributedMember id);
 }

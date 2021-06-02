@@ -14,25 +14,25 @@
  */
 package org.apache.geode.management.internal.cli.commands;
 
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.CACHE_XML_NOT_FOUND_MESSAGE;
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.CREATE_REGION;
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.CREATE_REGION__REGION;
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.CREATE_REGION__REGIONSHORTCUT;
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.GEODE_0_PROPERTIES_1_NOT_FOUND_MESSAGE;
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.GROUP;
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.START_SERVER;
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.START_SERVER__CACHE_XML_FILE;
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.START_SERVER__DIR;
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.START_SERVER__FORCE;
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.START_SERVER__HOSTNAME__FOR__CLIENTS;
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.START_SERVER__LOCATORS;
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.START_SERVER__MAXHEAP;
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.START_SERVER__NAME;
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.START_SERVER__OFF_HEAP_MEMORY_SIZE;
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.START_SERVER__PROPERTIES;
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.START_SERVER__SECURITY_PROPERTIES;
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.START_SERVER__SERVER_PORT;
-import static org.apache.geode.management.internal.cli.i18n.CliStrings.START_SERVER__USERNAME;
+import static org.apache.geode.management.internal.i18n.CliStrings.CACHE_XML_NOT_FOUND_MESSAGE;
+import static org.apache.geode.management.internal.i18n.CliStrings.CREATE_REGION;
+import static org.apache.geode.management.internal.i18n.CliStrings.CREATE_REGION__REGION;
+import static org.apache.geode.management.internal.i18n.CliStrings.CREATE_REGION__REGIONSHORTCUT;
+import static org.apache.geode.management.internal.i18n.CliStrings.GEODE_0_PROPERTIES_1_NOT_FOUND_MESSAGE;
+import static org.apache.geode.management.internal.i18n.CliStrings.GROUP;
+import static org.apache.geode.management.internal.i18n.CliStrings.START_SERVER;
+import static org.apache.geode.management.internal.i18n.CliStrings.START_SERVER__CACHE_XML_FILE;
+import static org.apache.geode.management.internal.i18n.CliStrings.START_SERVER__DIR;
+import static org.apache.geode.management.internal.i18n.CliStrings.START_SERVER__FORCE;
+import static org.apache.geode.management.internal.i18n.CliStrings.START_SERVER__HOSTNAME__FOR__CLIENTS;
+import static org.apache.geode.management.internal.i18n.CliStrings.START_SERVER__LOCATORS;
+import static org.apache.geode.management.internal.i18n.CliStrings.START_SERVER__MAXHEAP;
+import static org.apache.geode.management.internal.i18n.CliStrings.START_SERVER__NAME;
+import static org.apache.geode.management.internal.i18n.CliStrings.START_SERVER__OFF_HEAP_MEMORY_SIZE;
+import static org.apache.geode.management.internal.i18n.CliStrings.START_SERVER__PROPERTIES;
+import static org.apache.geode.management.internal.i18n.CliStrings.START_SERVER__SECURITY_PROPERTIES;
+import static org.apache.geode.management.internal.i18n.CliStrings.START_SERVER__SERVER_PORT;
+import static org.apache.geode.management.internal.i18n.CliStrings.START_SERVER__USERNAME;
 import static org.apache.geode.test.compiler.ClassBuilder.writeJarFromClasses;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.isA;
@@ -65,11 +65,11 @@ import org.apache.geode.distributed.internal.ServerLocator;
 import org.apache.geode.internal.AvailablePortHelper;
 import org.apache.geode.internal.process.ProcessType;
 import org.apache.geode.internal.process.ProcessUtils;
-import org.apache.geode.management.internal.cli.i18n.CliStrings;
 import org.apache.geode.management.internal.cli.util.CommandStringBuilder;
+import org.apache.geode.management.internal.i18n.CliStrings;
 import org.apache.geode.test.dunit.rules.ClusterStartupRule;
+import org.apache.geode.test.dunit.rules.DistributedErrorCollector;
 import org.apache.geode.test.dunit.rules.MemberVM;
-import org.apache.geode.test.dunit.rules.SharedErrorCollector;
 import org.apache.geode.test.junit.rules.GfshCommandRule;
 import org.apache.geode.test.junit.rules.RequiresGeodeHome;
 import org.apache.geode.test.junit.rules.serializable.SerializableTemporaryFolder;
@@ -94,7 +94,7 @@ public class StartServerCommandDUnitTest implements Serializable {
   public static GfshCommandRule gfsh = new GfshCommandRule();
 
   @Rule
-  public SharedErrorCollector errorCollector = new SharedErrorCollector();
+  public DistributedErrorCollector errorCollector = new DistributedErrorCollector();
 
   @Rule
   public SerializableTemporaryFolder temporaryFolder = new SerializableTemporaryFolder();

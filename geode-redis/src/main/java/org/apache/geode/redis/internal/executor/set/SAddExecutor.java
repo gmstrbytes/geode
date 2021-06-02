@@ -14,11 +14,9 @@
  */
 package org.apache.geode.redis.internal.executor.set;
 
-import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
-import org.apache.geode.cache.Region;
 import org.apache.geode.redis.internal.ByteArrayWrapper;
 import org.apache.geode.redis.internal.Coder;
 import org.apache.geode.redis.internal.Command;
@@ -28,33 +26,26 @@ import org.apache.geode.redis.internal.RedisDataType;
 
 public class SAddExecutor extends SetExecutor {
 
+
   @Override
   public void executeCommand(Command command, ExecutionHandlerContext context) {
-    List<byte[]> commandElems = command.getProcessedCommand();
+    List<ByteArrayWrapper> commandElements = command.getProcessedCommandWrappers();
 
-    if (commandElems.size() < 3) {
+    if (commandElements.size() < 3) {
       command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(), ArityDef.SADD));
       return;
     }
 
+    // Save key
+    context.getKeyRegistrar().register(command.getKey(), RedisDataType.REDIS_SET);
+
     ByteArrayWrapper key = command.getKey();
-    @SuppressWarnings("unchecked")
-    Region<ByteArrayWrapper, Boolean> keyRegion = (Region<ByteArrayWrapper, Boolean>) context
-        .getRegionProvider().getOrCreateRegion(key, RedisDataType.REDIS_SET, context);
+    RedisSet geodeRedisSet =
+        new GeodeRedisSetWithFunctions(key, context.getRegionProvider().getSetRegion());
+    ArrayList<ByteArrayWrapper> membersToAdd =
+        new ArrayList<>(commandElements.subList(2, commandElements.size()));
 
-    if (commandElems.size() >= 4) {
-      Map<ByteArrayWrapper, Boolean> entries = new HashMap<ByteArrayWrapper, Boolean>();
-      for (int i = 2; i < commandElems.size(); i++)
-        entries.put(new ByteArrayWrapper(commandElems.get(i)), true);
-
-      keyRegion.putAll(entries);
-      command.setResponse(Coder.getIntegerResponse(context.getByteBufAllocator(), entries.size()));
-    } else {
-      Object v = keyRegion.put(new ByteArrayWrapper(commandElems.get(2)), true);
-      command
-          .setResponse(Coder.getIntegerResponse(context.getByteBufAllocator(), v == null ? 1 : 0));
-    }
-
+    long entriesAdded = geodeRedisSet.sadd(membersToAdd);
+    command.setResponse(Coder.getIntegerResponse(context.getByteBufAllocator(), entriesAdded));
   }
-
 }

@@ -12,15 +12,15 @@
  * or implied. See the License for the specific language governing permissions and limitations under
  * the License.
  */
+
 package org.apache.geode.internal.ra.spi;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import javax.resource.NotSupportedException;
 import javax.resource.ResourceException;
@@ -35,13 +35,14 @@ import javax.transaction.xa.XAResource;
 
 import org.apache.geode.LogWriter;
 import org.apache.geode.cache.CacheFactory;
+import org.apache.geode.internal.CopyOnWriteHashSet;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.TXManagerImpl;
 import org.apache.geode.internal.ra.GFConnectionImpl;
 
 public class JCAManagedConnection implements ManagedConnection {
 
-  private final List<ConnectionEventListener> listeners;
+  private final List<ConnectionEventListener> listeners = new CopyOnWriteArrayList<>();;
 
   private volatile TXManagerImpl transactionManager;
 
@@ -53,15 +54,12 @@ public class JCAManagedConnection implements ManagedConnection {
 
   private final JCAManagedConnectionFactory connectionFactory;
 
-  private final Set<GFConnectionImpl> connections;
+  private final Set<GFConnectionImpl> connections = new CopyOnWriteHashSet<>();
 
-  private volatile JCALocalTransaction localTransaction;
+  private volatile JCALocalTransaction localTransaction = new JCALocalTransaction();
 
   JCAManagedConnection(JCAManagedConnectionFactory connectionFactory) {
     this.connectionFactory = connectionFactory;
-    this.listeners = Collections.synchronizedList(new ArrayList<>());
-    this.localTransaction = new JCALocalTransaction();
-    this.connections = Collections.synchronizedSet(new HashSet<>());
   }
 
   @Override
@@ -81,16 +79,9 @@ public class JCAManagedConnection implements ManagedConnection {
 
   @Override
   public void cleanup() throws ResourceException {
-    synchronized (this.connections) {
-      Iterator<GFConnectionImpl> iterator = this.connections.iterator();
-      while (iterator.hasNext()) {
-        GFConnectionImpl connection = iterator.next();
-        connection.invalidate();
-        iterator.remove();
-      }
-    }
+    invalidateAndRemoveConnections();
     if (this.localTransaction == null || this.localTransaction.transactionInProgress()) {
-      if (this.initialized && !this.cache.isClosed()) {
+      if (this.initialized && !isCacheClosed()) {
         this.localTransaction = new JCALocalTransaction(this.cache, this.transactionManager);
       } else {
         this.localTransaction = new JCALocalTransaction();
@@ -98,16 +89,33 @@ public class JCAManagedConnection implements ManagedConnection {
     }
   }
 
+  /**
+   * Invalidate and remove the {@link GFConnectionImpl} from the connections collection.
+   * The approach to use removeAll instead of Iterator.remove is purely a performance optimization
+   * to avoid creating all the intermediary collections that will be created when using the single
+   * remove operation.
+   */
+  private void invalidateAndRemoveConnections() {
+    synchronized (this.connections) {
+      List<GFConnectionImpl> connectionsToRemove = new ArrayList<>();
+      for (GFConnectionImpl connection : this.connections) {
+        connection.invalidate();
+        connectionsToRemove.add(connection);
+      }
+      connections.removeAll(connectionsToRemove);
+    }
+  }
+
+  private boolean isCacheClosed() {
+    if (this.cache != null) {
+      return this.cache.isClosed();
+    }
+    return true;
+  }
+
   @Override
   public void destroy() throws ResourceException {
-    synchronized (this.connections) {
-      Iterator<GFConnectionImpl> iterator = this.connections.iterator();
-      while (iterator.hasNext()) {
-        GFConnectionImpl connection = iterator.next();
-        connection.invalidate();
-        iterator.remove();
-      }
-    }
+    invalidateAndRemoveConnections();
     this.transactionManager = null;
     this.cache = null;
     this.localTransaction = null;
@@ -116,7 +124,7 @@ public class JCAManagedConnection implements ManagedConnection {
 
   @Override
   public Object getConnection(Subject arg0, ConnectionRequestInfo arg1) throws ResourceException {
-    if (!this.initialized || this.cache.isClosed()) {
+    if (!this.initialized || isCacheClosed()) {
       init();
     }
     LogWriter logger = this.cache.getLogger();
@@ -131,6 +139,9 @@ public class JCAManagedConnection implements ManagedConnection {
 
   private void init() {
     this.cache = (InternalCache) CacheFactory.getAnyInstance();
+    if (this.cache == null) {
+      throw new RuntimeException("Cache could not be found in JCAManagedConnection");
+    }
     LogWriter logger = this.cache.getLogger();
     if (logger.fineEnabled()) {
       logger.fine("JCAManagedConnection:init. Inside init");
@@ -151,7 +162,7 @@ public class JCAManagedConnection implements ManagedConnection {
 
   @Override
   public ManagedConnectionMetaData getMetaData() throws ResourceException {
-    if (this.initialized && !this.cache.isClosed()) {
+    if (this.initialized && !isCacheClosed()) {
       LogWriter logger = this.cache.getLogger();
       if (logger.fineEnabled()) {
         logger.fine("JCAManagedConnection:getMetaData");
@@ -181,11 +192,10 @@ public class JCAManagedConnection implements ManagedConnection {
     this.localTransaction = null;
 
     synchronized (this.connections) {
-      Iterator<GFConnectionImpl> iterator = this.connections.iterator();
-      while (iterator.hasNext()) {
-        GFConnectionImpl connection = iterator.next();
+      List<GFConnectionImpl> connectionsToRemove = new LinkedList<>(connections);
+      for (GFConnectionImpl connection : connections) {
         connection.invalidate();
-
+        connectionsToRemove.add(connection);
         synchronized (this.listeners) {
           ConnectionEvent event =
               new ConnectionEvent(this, ConnectionEvent.CONNECTION_ERROR_OCCURRED, e);
@@ -194,9 +204,8 @@ public class JCAManagedConnection implements ManagedConnection {
             listener.connectionErrorOccurred(event);
           }
         }
-
-        iterator.remove();
       }
+      connections.removeAll(connectionsToRemove);
     }
   }
 
@@ -205,17 +214,16 @@ public class JCAManagedConnection implements ManagedConnection {
     this.connections.remove(connection);
 
     synchronized (this.listeners) {
-      Iterator<ConnectionEventListener> iterator = this.listeners.iterator();
       ConnectionEvent event = new ConnectionEvent(this, ConnectionEvent.CONNECTION_CLOSED);
       event.setConnectionHandle(connection);
-      while (iterator.hasNext()) {
-        iterator.next().connectionClosed(event);
+      for (ConnectionEventListener listener : this.listeners) {
+        listener.connectionClosed(event);
       }
     }
 
     if (this.connections.isEmpty()) {
       // safe to dissociate this managed connection so that it can go to pool
-      if (this.initialized && !this.cache.isClosed()) {
+      if (this.initialized && !isCacheClosed()) {
         this.localTransaction = new JCALocalTransaction(this.cache, this.transactionManager);
       } else {
         this.localTransaction = new JCALocalTransaction();

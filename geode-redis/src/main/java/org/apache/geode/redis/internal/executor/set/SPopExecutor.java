@@ -14,14 +14,19 @@
  */
 package org.apache.geode.redis.internal.executor.set;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
 import org.apache.geode.cache.Region;
+import org.apache.geode.cache.TimeoutException;
+import org.apache.geode.redis.internal.AutoCloseableLock;
 import org.apache.geode.redis.internal.ByteArrayWrapper;
 import org.apache.geode.redis.internal.Coder;
+import org.apache.geode.redis.internal.CoderException;
 import org.apache.geode.redis.internal.Command;
 import org.apache.geode.redis.internal.ExecutionHandlerContext;
+import org.apache.geode.redis.internal.RedisConstants;
 import org.apache.geode.redis.internal.RedisConstants.ArityDef;
 
 public class SPopExecutor extends SetExecutor {
@@ -29,33 +34,85 @@ public class SPopExecutor extends SetExecutor {
   @Override
   public void executeCommand(Command command, ExecutionHandlerContext context) {
     List<byte[]> commandElems = command.getProcessedCommand();
+    int popCount = 1;
 
-    if (commandElems.size() < 2) {
+    if (commandElems.size() < 2 || commandElems.size() > 3) {
       command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(), ArityDef.SPOP));
       return;
     }
 
+    if (commandElems.size() == 3) {
+      try {
+        popCount = Integer.parseInt(new String(commandElems.get(2)));
+      } catch (NumberFormatException nex) {
+        command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(), ArityDef.SPOP));
+        return;
+      }
+    }
+
     ByteArrayWrapper key = command.getKey();
-    @SuppressWarnings("unchecked")
-    Region<ByteArrayWrapper, Boolean> keyRegion =
-        (Region<ByteArrayWrapper, Boolean>) context.getRegionProvider().getRegion(key);
-    if (keyRegion == null || keyRegion.isEmpty()) {
-      command.setResponse(Coder.getNilResponse(context.getByteBufAllocator()));
+
+    ArrayList<ByteArrayWrapper> popped = new ArrayList<>();
+    try (AutoCloseableLock regionLock = withRegionLock(context, key)) {
+      Region<ByteArrayWrapper, DeltaSet> region = getRegion(context);
+      DeltaSet original = region.get(key);
+      if (original == null) {
+        command.setResponse(Coder.getNilResponse(context.getByteBufAllocator()));
+        return;
+      }
+
+      synchronized (original) {
+        int originalSize = original.size();
+        if (originalSize == 0) {
+          command.setResponse(Coder.getNilResponse(context.getByteBufAllocator()));
+          return;
+        }
+
+        if (popCount >= originalSize) {
+          // remove them all
+          popped.addAll(original.members());
+        } else {
+          ByteArrayWrapper[] setMembers =
+              original.members().toArray(new ByteArrayWrapper[originalSize]);
+          Random rand = new Random();
+          while (popped.size() < popCount) {
+            int idx = rand.nextInt(originalSize);
+            ByteArrayWrapper memberToPop = setMembers[idx];
+            if (memberToPop != null) {
+              setMembers[idx] = null;
+              popped.add(memberToPop);
+            }
+          }
+        }
+        // The following srem call can modify popped by removing members
+        // from it that were not removed from the set.
+        // But since the set is synchronized all members in popped will be
+        // removed so popped will contains all the members popped.
+        DeltaSet.srem(region, key, popped, null);
+        // TODO: what should SPOP do with a source that it empties? We probably need to delete it.
+      }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      command.setResponse(
+          Coder.getErrorResponse(context.getByteBufAllocator(), "Thread interrupted."));
+      return;
+    } catch (TimeoutException e) {
+      command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(),
+          "Timeout acquiring lock. Please try again."));
       return;
     }
 
-    Random rand = new Random();
-
-    ByteArrayWrapper[] entries = keyRegion.keySet().toArray(new ByteArrayWrapper[keyRegion.size()]);
-
-    ByteArrayWrapper pop = entries[rand.nextInt(entries.length)];
-
-    keyRegion.remove(pop);
-    if (keyRegion.isEmpty()) {
-      context.getRegionProvider().removeKey(key);
+    try {
+      if (popCount == 1) {
+        command
+            .setResponse(Coder.getBulkStringResponse(context.getByteBufAllocator(), popped.get(0)));
+      } else {
+        command.setResponse(Coder.getArrayResponse(context.getByteBufAllocator(), popped));
+      }
+    } catch (CoderException e) {
+      command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(),
+          RedisConstants.SERVER_ERROR_MESSAGE));
     }
-
-    respondBulkStrings(command, context, pop);
   }
 
 }

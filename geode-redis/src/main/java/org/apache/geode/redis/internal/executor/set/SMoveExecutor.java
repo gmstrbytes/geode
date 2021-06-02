@@ -14,9 +14,13 @@
  */
 package org.apache.geode.redis.internal.executor.set;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import org.apache.geode.cache.Region;
+import org.apache.geode.cache.TimeoutException;
+import org.apache.geode.redis.internal.AutoCloseableLock;
 import org.apache.geode.redis.internal.ByteArrayWrapper;
 import org.apache.geode.redis.internal.Coder;
 import org.apache.geode.redis.internal.Command;
@@ -26,49 +30,83 @@ import org.apache.geode.redis.internal.RedisDataType;
 
 public class SMoveExecutor extends SetExecutor {
 
-  private final int MOVED = 1;
+  private static final int MOVED = 1;
 
-  private final int NOT_MOVED = 0;
+  private static final int NOT_MOVED = 0;
 
   @Override
   public void executeCommand(Command command, ExecutionHandlerContext context) {
     List<byte[]> commandElems = command.getProcessedCommand();
 
-    if (commandElems.size() < 4) {
+    if (commandElems.size() != 4) {
       command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(), ArityDef.SMOVE));
       return;
     }
 
     ByteArrayWrapper source = command.getKey();
     ByteArrayWrapper destination = new ByteArrayWrapper(commandElems.get(2));
-    ByteArrayWrapper mem = new ByteArrayWrapper(commandElems.get(3));
+    ByteArrayWrapper member = new ByteArrayWrapper(commandElems.get(3));
 
     checkDataType(source, RedisDataType.REDIS_SET, context);
     checkDataType(destination, RedisDataType.REDIS_SET, context);
-    @SuppressWarnings("unchecked")
-    Region<ByteArrayWrapper, Boolean> sourceRegion =
-        (Region<ByteArrayWrapper, Boolean>) context.getRegionProvider().getRegion(source);
 
-    if (sourceRegion == null) {
-      command.setResponse(Coder.getIntegerResponse(context.getByteBufAllocator(), NOT_MOVED));
+    Region<ByteArrayWrapper, DeltaSet> region = getRegion(context);
+
+    try (AutoCloseableLock regionLock = withRegionLock(context, source)) {
+      DeltaSet sourceSet = region.get(source);
+
+      if (sourceSet == null) {
+        command.setResponse(Coder.getIntegerResponse(context.getByteBufAllocator(), NOT_MOVED));
+        return;
+      }
+
+      boolean removed =
+          DeltaSet.srem(region, source, new ArrayList<>(Collections.singletonList(member)),
+              null) == 1;
+      // TODO: what should SMOVE do with a source that it empties? We probably need to delete it.
+
+      if (!removed) {
+        command.setResponse(Coder.getIntegerResponse(context.getByteBufAllocator(), NOT_MOVED));
+      } else {
+        try (AutoCloseableLock destinationLock = withRegionLock(context, destination)) {
+          // TODO: this should invoke a function in case the primary for destination is remote
+          DeltaSet.sadd(region, destination, new ArrayList<>(Collections.singletonList(member)));
+          context.getKeyRegistrar().register(destination, RedisDataType.REDIS_SET);
+          context.getKeyRegistrar().register(source, RedisDataType.REDIS_SET);
+
+          command.setResponse(Coder.getIntegerResponse(context.getByteBufAllocator(), MOVED));
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          System.out.println("Interrupt exception!!");
+          command.setResponse(
+              Coder.getErrorResponse(context.getByteBufAllocator(), "Thread interrupted."));
+          return;
+        } catch (TimeoutException e) {
+          System.out.println("Timeout exception!!");
+          command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(),
+              "Timeout acquiring lock. Please try again."));
+          return;
+        } catch (Exception e) {
+          System.out.println("Unexpected exception: " + e);
+          command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(),
+              "Unexpected exception."));
+        }
+      }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      System.out.println("Interrupt exception!!");
+      command.setResponse(
+          Coder.getErrorResponse(context.getByteBufAllocator(), "Thread interrupted."));
       return;
-    }
-
-    Object oldVal = sourceRegion.get(mem);
-    sourceRegion.remove(mem);
-
-    if (oldVal == null) {
-      command.setResponse(Coder.getIntegerResponse(context.getByteBufAllocator(), NOT_MOVED));
+    } catch (TimeoutException e) {
+      System.out.println("Timeout exception!!");
+      command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(),
+          "Timeout acquiring lock. Please try again."));
       return;
+    } catch (Exception e) {
+      System.out.println("Unexpected exception: " + e);
+      command.setResponse(Coder.getErrorResponse(context.getByteBufAllocator(),
+          "Unexpected exception."));
     }
-
-    @SuppressWarnings("unchecked")
-    Region<ByteArrayWrapper, Boolean> destinationRegion =
-        (Region<ByteArrayWrapper, Boolean>) getOrCreateRegion(context, destination,
-            RedisDataType.REDIS_SET);
-    destinationRegion.put(mem, true);
-
-    command.setResponse(Coder.getIntegerResponse(context.getByteBufAllocator(), MOVED));
   }
-
 }
