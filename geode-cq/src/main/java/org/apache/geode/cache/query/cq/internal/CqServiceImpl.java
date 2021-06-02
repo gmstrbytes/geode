@@ -78,7 +78,7 @@ import org.apache.geode.internal.cache.tier.sockets.CacheClientNotifier;
 import org.apache.geode.internal.cache.tier.sockets.CacheClientProxy;
 import org.apache.geode.internal.cache.tier.sockets.ClientProxyMembershipID;
 import org.apache.geode.internal.cache.tier.sockets.Part;
-import org.apache.geode.internal.lang.JavaWorkarounds;
+import org.apache.geode.internal.lang.utils.JavaWorkarounds;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.util.internal.GeodeGlossary;
 
@@ -727,7 +727,7 @@ public class CqServiceImpl implements CqService {
           if (!isRunning()) {
             // Not cache shutdown
             logger
-                .warn("Failed to close CQ %s %s",
+                .warn("Failed to close CQ {} : {}",
                     cqName, e.getMessage());
           }
           if (logger.isDebugEnabled()) {
@@ -1347,15 +1347,16 @@ public class CqServiceImpl implements CqService {
           boolean error = false;
           {
             try {
-              synchronized (cQuery) {
-                // Apply query on new value.
-                if (!cqUnfilteredEventsSet_newValue.isEmpty()) {
-                  executionStartTime = this.stats.startCqQueryExecution();
+              // Apply query on new value.
+              if (!cqUnfilteredEventsSet_newValue.isEmpty()) {
+                executionStartTime = this.stats.startCqQueryExecution();
 
+                synchronized (cQuery) {
                   b_cqResults_newValue =
                       evaluateQuery(cQuery, new Object[] {cqUnfilteredEventsSet_newValue});
-                  this.stats.endCqQueryExecution(executionStartTime);
                 }
+
+                this.stats.endCqQueryExecution(executionStartTime);
               }
 
               // In case of Update, destroy and invalidate.
@@ -1365,8 +1366,9 @@ public class CqServiceImpl implements CqService {
                 // value. Currently the CQ Results are not cached for the
                 // Partitioned Regions. Once this is added remove the check
                 // with PR region.
-                if (cQuery.cqResultKeysInitialized) {
-                  b_cqResults_oldValue = cQuery.isPartOfCqResult(eventKey);
+                if (cQuery.isCqResultsCacheInitialized()) {
+                  b_cqResults_oldValue =
+                      (cQuery.isPartOfCqResult(eventKey) && !cQuery.isKeyDestroyed(eventKey));
                   // For PR if not found in cache, apply the query on old value.
                   // Also apply if the query was not executed during cq execute
                   if ((cQuery.isPR || !CqServiceImpl.EXECUTE_QUERY_DURING_INIT)
@@ -1390,23 +1392,24 @@ public class CqServiceImpl implements CqService {
                     }
                   }
 
-                  synchronized (cQuery) {
-                    // Apply query on old value.
-                    if (!cqUnfilteredEventsSet_oldValue.isEmpty()) {
-                      executionStartTime = this.stats.startCqQueryExecution();
+                  // Apply query on old value.
+                  if (!cqUnfilteredEventsSet_oldValue.isEmpty()) {
+                    executionStartTime = this.stats.startCqQueryExecution();
+
+                    synchronized (cQuery) {
                       b_cqResults_oldValue =
                           evaluateQuery(cQuery, new Object[] {cqUnfilteredEventsSet_oldValue});
-                      this.stats.endCqQueryExecution(executionStartTime);
-                    } else {
-                      if (isDebugEnabled) {
-                        logger.debug(
-                            "old value for event with key {} is null - query execution not performed",
-                            eventKey);
-                      }
+                    }
+
+                    this.stats.endCqQueryExecution(executionStartTime);
+                  } else {
+                    if (isDebugEnabled) {
+                      logger.debug(
+                          "old value for event with key {} is null - query execution not performed",
+                          eventKey);
                     }
                   }
                 } // Query oldValue
-
               }
             } catch (Exception ex) {
               // Any exception in running the query should be caught here and

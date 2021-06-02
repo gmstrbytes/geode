@@ -14,6 +14,7 @@
  */
 package org.apache.geode.cache.query.cq.internal;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doNothing;
@@ -46,7 +47,8 @@ public class ServerCQImplTest {
     when(mockCqService.getCache().getSecurityLoggerI18n())
         .thenReturn(mock(InternalLogWriter.class));
     serverCq = spy(
-        new ServerCQImpl(mockCqService, "cqName", "SELECT * FROM /region", false, "test"));
+        new ServerCQImpl(mockCqService, "cqName", "SELECT * FROM " + SEPARATOR + "region", false,
+            "test"));
   }
 
   @Test
@@ -65,12 +67,12 @@ public class ServerCQImplTest {
     // Initialize cache
     serverCq.addToCqResultKeys("key1");
     serverCq.setCqResultsCacheInitialized();
-    assertThat(serverCq.cqResultKeysInitialized).isTrue();
+    assertThat(serverCq.isCqResultsCacheInitialized()).isTrue();
     assertThat(serverCq.isPartOfCqResult("key1")).isTrue();
 
     // Invalidate and assert results
     serverCq.invalidateCqResultKeys();
-    assertThat(serverCq.cqResultKeysInitialized).isFalse();
+    assertThat(serverCq.isCqResultsCacheInitialized()).isFalse();
     assertThat(serverCq.isPartOfCqResult("key1")).isFalse();
   }
 }

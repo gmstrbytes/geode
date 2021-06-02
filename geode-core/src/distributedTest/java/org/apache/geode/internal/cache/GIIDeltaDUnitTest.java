@@ -60,7 +60,7 @@ import org.apache.geode.internal.cache.entries.DiskEntry;
 import org.apache.geode.internal.cache.persistence.DiskStoreID;
 import org.apache.geode.internal.cache.versions.RegionVersionVector;
 import org.apache.geode.internal.cache.versions.VersionTag;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.test.awaitility.GeodeAwaitility;
 import org.apache.geode.test.dunit.Assert;
 import org.apache.geode.test.dunit.AsyncInvocation;
@@ -497,7 +497,7 @@ public class GIIDeltaDUnitTest extends JUnit4CacheTestCase {
 
     // If fullGII, the key size in gii chunk is 3, i.e. key1,key3,key5. key2 is GCed.
     // If delta GII, the key size should be 1 (key5(T) which is unfinished operation)
-    verifyDeltaSizeFromStats(R, 3, 0);
+    verifyDeltaSizeFromStats(R, 1, 1);
   }
 
   /**
@@ -1452,12 +1452,13 @@ public class GIIDeltaDUnitTest extends JUnit4CacheTestCase {
   /**
    * vm0 and vm1 are peers, each holds a DR. Let P and R have the same RVV and RVVGC: P7,R6, RVVGC
    * is P0,R0. vm1 becomes offline then restarts. Use testHook to pause the GII, then do tombstone
-   * GC triggered by expireBatch (not by forceGC) at R only. The tombstone GC will be executed at R,
-   * but igored at P. The deltaGII should send nothing to R since the RVVs are the same. So after
-   * GII, P and R will have different tombstone number. But P's tombstones should be expired.
+   * GC triggered by expireBatch (not by forceGC) at R only. The tombstone GC will not be executed
+   * at R
+   * because R's region is not initialized. Tombstone GC is ignored at P because GII is on-going.
+   * The deltaGII should send nothing to R since the RVVs are the same.
    */
   @Test
-  public void testExpiredTombstoneSkippedAtProviderOnly() throws Throwable {
+  public void testExpiredTombstoneSkippedGC() throws Throwable {
     prepareForEachTest();
     final DiskStoreID memberP = getMemberID(P);
     final DiskStoreID memberR = getMemberID(R);
@@ -1518,8 +1519,8 @@ public class GIIDeltaDUnitTest extends JUnit4CacheTestCase {
     int count = getDeltaGIICount(P);
     assertEquals(1, count);
 
-    // let tombstone expired at R to trigger tombstoneGC.
-    // Wait for tombstone is GCed at R, but still exists in P
+    // let tombstone expired at P & R to trigger tombstoneGC.
+    // Wait for tombstoneGC is started at P & R, but nothing will be GCed
     changeTombstoneTimout(R, MAX_WAIT);
     changeTombstoneTimout(P, MAX_WAIT);
     pause((int) MAX_WAIT);
@@ -1527,16 +1528,15 @@ public class GIIDeltaDUnitTest extends JUnit4CacheTestCase {
     forceGC(P, 3);
 
     // let GII continue
-    P.invoke(
-        () -> resetGIITestHook(DuringPackingImage, true));
+    P.invoke(() -> resetGIITestHook(DuringPackingImage, true));
     async3.join(MAX_WAIT * 2);
     count = getDeltaGIICount(P);
     assertEquals(0, count);
     verifyDeltaSizeFromStats(R, 1, 1); // deltaGII, key1 in delta
 
-    // tombstone key2, key5 should be GCed at R
-    verifyTombstoneExist(R, "key2", false, false);
-    verifyTombstoneExist(R, "key5", false, false);
+    // tombstone key2, key5 should still exist and expired at R
+    verifyTombstoneExist(R, "key2", true, true);
+    verifyTombstoneExist(R, "key5", true, true);
 
     // tombstone key2, key5 should still exist and expired at P
     verifyTombstoneExist(P, "key2", true, true);
@@ -1544,12 +1544,101 @@ public class GIIDeltaDUnitTest extends JUnit4CacheTestCase {
 
     RegionVersionVector p_rvv = getRVV(P);
     RegionVersionVector r_rvv = getRVV(R);
-    out.println("GGG:p_rvv=" + p_rvv.fullToString() + ":r_rvv=" + r_rvv.fullToString());
+    out.println("p_rvv=" + p_rvv.fullToString() + ":r_rvv=" + r_rvv.fullToString());
+
+    waitForToVerifyRVV(R, memberP, 7, null, 0); // R's rvv=p7, gc=0
+    waitForToVerifyRVV(R, memberR, 6, null, 0); // R's rvv=r6, gc=0
+    waitForToVerifyRVV(P, memberP, 7, null, 0); // P's rvv=p7, gc=0
+    waitForToVerifyRVV(P, memberR, 6, null, 0); // P's rvv=r6, gc=0
+  }
+
+  /**
+   * vm0 and vm1 are peers, each holds a DR. Let P and R have the same RVV and RVVGC: P7,R6, RVVGC
+   * is P0,R0. vm1 becomes offline then restarts. Use testHook to pause the GII, then do tombstone
+   * GC triggered by expireBatch (not by forceGC) at R only. The tombstone GC will be executed at P,
+   * but ignored at R, because P has not started providing GII and R is not initialized yet.
+   * The deltaGII should send nothing to R since the RVVs are the same. So after
+   * GII, P and R will have different tombstone number. But P's tombstones should be expired.
+   */
+  @Test
+  public void testExpiredTombstoneSkippedGCAtRequesterOnly() throws Throwable {
+    prepareForEachTest();
+    final DiskStoreID memberP = getMemberID(P);
+    final DiskStoreID memberR = getMemberID(R);
+
+    assertEquals(0, SLOW_DISTRIBUTION_MS);
+    prepareCommonTestData(6);
+
+    // let r4,r5,r6 to succeed
+    doOnePut(R, 4, "key4");
+    doOneDestroy(R, 5, "key5");
+    doOnePut(R, 6, "key1");
+
+    waitForToVerifyRVV(R, memberP, 6, null, 0); // P's rvv=p6, gc=0
+    waitForToVerifyRVV(R, memberR, 6, null, 0); // P's rvv=r6, gc=0
+    // now the rvv and rvvgc at P and R should be the same
+
+    // save R's rvv in byte array, check if it will be fullGII
+    byte[] R_rvv_bytes = getRVVByteArray(R, REGION_NAME);
+    // shutdown R and restart
+    closeCache(R);
+
+    // let p7 to succeed
+    doOnePut(P, 7, "key1");
+
+    waitForToVerifyRVV(P, memberP, 7, null, 0); // P's rvv=p7, gc=0
+    waitForToVerifyRVV(P, memberR, 6, null, 0); // P's rvv=r6, gc=0
+
+    // add test hook
+    P.invoke(new SerializableRunnable() {
+      @Override
+      public void run() {
+        Mycallback myDuringPackingImage =
+            new Mycallback(GIITestHookType.AfterReceivedRequestImage, REGION_NAME);
+        setGIITestHook(myDuringPackingImage);
+      }
+    });
+
+    checkIfFullGII(P, REGION_NAME, R_rvv_bytes, false);
+
+    // restart R and gii, it will be blocked at test hook
+    AsyncInvocation async3 = createDistributedRegionAsync(R);
+    // 8
+    waitForCallbackStarted(P, GIITestHookType.AfterReceivedRequestImage);
+    int count = getDeltaGIICount(P);
+    assertEquals(0, count);
+
+    // let tombstone expired at both P & R to trigger tombstoneGC.
+    // Wait for tombstone is GCed at P, but still exists in R
+    changeTombstoneTimout(R, MAX_WAIT);
+    changeTombstoneTimout(P, MAX_WAIT);
+    pause((int) MAX_WAIT);
+    forceGC(R, 3);
+    forceGC(P, 3);
+
+    // let GII continue
+    P.invoke(() -> resetGIITestHook(GIITestHookType.AfterReceivedRequestImage, true));
+    async3.join(MAX_WAIT * 2);
+    count = getDeltaGIICount(P);
+    assertEquals(0, count);
+    verifyDeltaSizeFromStats(R, 1, 1); // deltaGII, key1 in delta
+
+    // tombstone key2, key5 should still exist and expired at R
+    verifyTombstoneExist(R, "key2", true, true);
+    verifyTombstoneExist(R, "key5", true, true);
+
+    // tombstone key2, key5 should be GCed at P
+    verifyTombstoneExist(P, "key2", false, true);
+    verifyTombstoneExist(P, "key5", false, true);
+
+    RegionVersionVector p_rvv = getRVV(P);
+    RegionVersionVector r_rvv = getRVV(R);
+    out.println("p_rvv=" + p_rvv.fullToString() + ":r_rvv=" + r_rvv.fullToString());
 
     waitForToVerifyRVV(R, memberP, 7, null, 4); // R's rvv=p7, gc=4
     waitForToVerifyRVV(R, memberR, 6, null, 5); // R's rvv=r6, gc=5
-    waitForToVerifyRVV(P, memberP, 7, null, 0); // P's rvv=p7, gc=0
-    waitForToVerifyRVV(P, memberR, 6, null, 0); // P's rvv=r6, gc=0
+    waitForToVerifyRVV(P, memberP, 7, null, 4); // P's rvv=p7, gc=4
+    waitForToVerifyRVV(P, memberR, 6, null, 5); // P's rvv=r6, gc=5
   }
 
   /**
@@ -2287,11 +2376,11 @@ public class GIIDeltaDUnitTest extends JUnit4CacheTestCase {
         CachePerfStats stats = lr.getRegionPerfStats();
 
         // we saved GII completed count in RegionPerfStats only
-        int size = stats.getGetInitialImageKeysReceived();
+        long size = stats.getGetInitialImageKeysReceived();
         cache.getLogger().info("Delta contains: " + size + " keys");
         assertEquals(expectedKeyNum, size);
 
-        int num = stats.getDeltaGetInitialImagesCompleted();
+        long num = stats.getDeltaGetInitialImagesCompleted();
         cache.getLogger().info("Delta GII completed: " + num + " times");
         assertEquals(expectedDeltaGIINum, num);
       }
@@ -2527,7 +2616,7 @@ public class GIIDeltaDUnitTest extends JUnit4CacheTestCase {
         LocalRegion region = (LocalRegion) cache.getRegion(regionName);
         RegionVersionVector rvv = region.getVersionVector();
         rvv = rvv.getCloneForTransmission();
-        HeapDataOutputStream hdos = new HeapDataOutputStream(Version.CURRENT);
+        HeapDataOutputStream hdos = new HeapDataOutputStream(KnownVersion.CURRENT);
 
         // Using gemfire serialization because
         // RegionVersionVector is not java serializable
@@ -2554,7 +2643,7 @@ public class GIIDeltaDUnitTest extends JUnit4CacheTestCase {
         LocalRegion region = (LocalRegion) cache.getRegion(REGION_NAME);
         RegionVersionVector rvv = region.getDiskRegion().getRegionVersionVector();
         rvv = rvv.getCloneForTransmission();
-        HeapDataOutputStream hdos = new HeapDataOutputStream(Version.CURRENT);
+        HeapDataOutputStream hdos = new HeapDataOutputStream(KnownVersion.CURRENT);
 
         // Using gemfire serialization because
         // RegionVersionVector is not java serializable
@@ -2704,7 +2793,6 @@ public class GIIDeltaDUnitTest extends JUnit4CacheTestCase {
           assertTrue(entry != null && entry.getRegionEntry().isTombstone());
         }
 
-        System.out.println("GGG:new timeout=" + TombstoneService.REPLICATE_TOMBSTONE_TIMEOUT);
         if (entry == null || !entry.getRegionEntry().isTombstone()) {
           return (false == expectExist);
         } else {

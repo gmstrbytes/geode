@@ -96,6 +96,7 @@ import org.apache.geode.distributed.internal.membership.gms.messages.RemoveMembe
 import org.apache.geode.distributed.internal.membership.gms.messages.SuspectMembersMessage;
 import org.apache.geode.distributed.internal.membership.gms.messages.ViewAckMessage;
 import org.apache.geode.distributed.internal.streaming.StreamingOperation.StreamingReplyMessage;
+import org.apache.geode.distributed.internal.tcpserver.HostAndPort;
 import org.apache.geode.internal.admin.ClientMembershipMessage;
 import org.apache.geode.internal.admin.remote.AddHealthListenerRequest;
 import org.apache.geode.internal.admin.remote.AddHealthListenerResponse;
@@ -202,6 +203,7 @@ import org.apache.geode.internal.cache.DistTXPrecommitMessage.DistTxPrecommitRes
 import org.apache.geode.internal.cache.DistTXRollbackMessage;
 import org.apache.geode.internal.cache.DistributedClearOperation.ClearRegionMessage;
 import org.apache.geode.internal.cache.DistributedClearOperation.ClearRegionWithContextMessage;
+import org.apache.geode.internal.cache.DistributedPingMessage;
 import org.apache.geode.internal.cache.DistributedPutAllOperation.EntryVersionsList;
 import org.apache.geode.internal.cache.DistributedPutAllOperation.PutAllMessage;
 import org.apache.geode.internal.cache.DistributedRegionFunctionStreamingMessage;
@@ -268,8 +270,11 @@ import org.apache.geode.internal.cache.backup.PrepareBackupRequest;
 import org.apache.geode.internal.cache.compression.SnappyCompressedCachedDeserializable;
 import org.apache.geode.internal.cache.control.ResourceAdvisor.ResourceManagerProfile;
 import org.apache.geode.internal.cache.control.ResourceAdvisor.ResourceProfileMessage;
+import org.apache.geode.internal.cache.control.SerializableRegionRedundancyStatusImpl;
+import org.apache.geode.internal.cache.control.SerializableRestoreRedundancyResultsImpl;
 import org.apache.geode.internal.cache.ha.HARegionQueue.DispatchedAndCurrentEvents;
 import org.apache.geode.internal.cache.ha.QueueRemovalMessage;
+import org.apache.geode.internal.cache.ha.QueueSynchronizationProcessor;
 import org.apache.geode.internal.cache.locks.TXLockBatch;
 import org.apache.geode.internal.cache.locks.TXLockIdImpl;
 import org.apache.geode.internal.cache.locks.TXLockUpdateParticipantsMessage;
@@ -400,8 +405,8 @@ import org.apache.geode.internal.cache.wan.serial.BatchDestroyOperation;
 import org.apache.geode.internal.serialization.DSFIDSerializer;
 import org.apache.geode.internal.serialization.DataSerializableFixedID;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
-import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.management.internal.JmxManagerAdvisor.JmxManagerProfile;
 import org.apache.geode.management.internal.JmxManagerAdvisor.JmxManagerProfileMessage;
 import org.apache.geode.management.internal.JmxManagerLocatorRequest;
@@ -447,11 +452,15 @@ public class DSFIDFactory implements DataSerializableFixedID {
   }
 
   @Override
-  public Version[] getSerializationVersions() {
+  public KnownVersion[] getSerializationVersions() {
     throw new UnsupportedOperationException();
   }
 
   private void registerDSFIDTypes(DSFIDSerializer serializer) {
+    serializer.registerDSFID(REGION_REDUNDANCY_STATUS,
+        SerializableRegionRedundancyStatusImpl.class);
+    serializer.registerDSFID(RESTORE_REDUNDANCY_RESULTS,
+        SerializableRestoreRedundancyResultsImpl.class);
     serializer.registerDSFID(FINAL_CHECK_PASSED_MESSAGE, FinalCheckPassedMessage.class);
     serializer.registerDSFID(NETWORK_PARTITION_MESSAGE, NetworkPartitionMessage.class);
     serializer.registerDSFID(REMOVE_MEMBER_REQUEST, RemoveMemberMessage.class);
@@ -573,6 +582,10 @@ public class DSFIDFactory implements DataSerializableFixedID {
     serializer.registerDSFID(ADD_CACHESERVER_PROFILE_UPDATE, AddCacheServerProfileMessage.class);
     serializer.registerDSFID(REMOVE_CACHESERVER_PROFILE_UPDATE,
         RemoveCacheServerProfileMessage.class);
+    serializer.registerDSFID(QUEUE_SYNCHRONIZATION_MESSAGE,
+        QueueSynchronizationProcessor.QueueSynchronizationMessage.class);
+    serializer.registerDSFID(QUEUE_SYNCHRONIZATION_REPLY_MESSAGE,
+        QueueSynchronizationProcessor.QueueSynchronizationReplyMessage.class);
     serializer.registerDSFID(SERVER_INTEREST_REGISTRATION_MESSAGE,
         ServerInterestRegistrationMessage.class);
     serializer.registerDSFID(FILTER_PROFILE_UPDATE, FilterProfile.OperationMessage.class);
@@ -972,6 +985,8 @@ public class DSFIDFactory implements DataSerializableFixedID {
     serializer.registerDSFID(GATEWAY_SENDER_QUEUE_ENTRY_SYNCHRONIZATION_ENTRY,
         GatewaySenderQueueEntrySynchronizationOperation.GatewaySenderQueueEntrySynchronizationEntry.class);
     serializer.registerDSFID(ABORT_BACKUP_REQUEST, AbortBackupRequest.class);
+    serializer.registerDSFID(HOST_AND_PORT, HostAndPort.class);
+    serializer.registerDSFID(DISTRIBUTED_PING_MESSAGE, DistributedPingMessage.class);
   }
 
   /**

@@ -38,7 +38,6 @@ import org.apache.geode.internal.logging.log4j.LogMarker;
 import org.apache.geode.internal.monitoring.ThreadsMonitoring;
 import org.apache.geode.internal.monitoring.ThreadsMonitoringImpl;
 import org.apache.geode.internal.monitoring.ThreadsMonitoringImplDummy;
-import org.apache.geode.internal.tcp.Connection;
 import org.apache.geode.internal.tcp.ConnectionTable;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 
@@ -69,8 +68,7 @@ public class ClusterOperationExecutors implements OperationExecutors {
       Integer.getInteger("DistributionManager.MAX_PR_META_DATA_CLEANUP_THREADS", 1);
 
   private static final int MAX_PR_THREADS = Integer.getInteger("DistributionManager.MAX_PR_THREADS",
-      Math.max(Runtime.getRuntime().availableProcessors() * 4, 16));
-
+      Math.max(Runtime.getRuntime().availableProcessors() * 32, 200));
 
   private static final int INCOMING_QUEUE_LIMIT =
       Integer.getInteger("DistributionManager.INCOMING_QUEUE_LIMIT", 80000);
@@ -113,22 +111,20 @@ public class ClusterOperationExecutors implements OperationExecutors {
    *
    * @see ViewAckMessage
    */
-  public static final int VIEW_EXECUTOR = 79;
 
+  private final InternalDistributedSystem system;
 
-  private InternalDistributedSystem system;
-
-  private DistributionStats stats;
+  private final DistributionStats stats;
 
 
   /** Message processing thread pool */
-  private ExecutorService threadPool;
+  private final ExecutorService threadPool;
 
   /**
    * High Priority processing thread pool, used for initializing messages such as UpdateAttributes
    * and CreateRegion messages
    */
-  private ExecutorService highPriorityPool;
+  private final ExecutorService highPriorityPool;
 
   /**
    * Waiting Pool, used for messages that may have to wait on something. Use this separate pool with
@@ -136,9 +132,9 @@ public class ClusterOperationExecutors implements OperationExecutors {
    * Used for threads that will most likely have to wait for a region to be finished initializing
    * before it can proceed
    */
-  private ExecutorService waitingPool;
+  private final ExecutorService waitingPool;
 
-  private ExecutorService prMetaDataCleanupThreadPool;
+  private final ExecutorService prMetaDataCleanupThreadPool;
 
   /**
    * Thread used to decouple {@link org.apache.geode.internal.cache.partitioned.PartitionMessage}s
@@ -154,7 +150,7 @@ public class ClusterOperationExecutors implements OperationExecutors {
   private ExecutorService functionExecutionPool;
 
   /** Message processing executor for serial, ordered, messages. */
-  private ExecutorService serialThread;
+  private final ExecutorService serialThread;
 
   /**
    * If using a throttling queue for the serialThread, we cache the queue here so we can see if
@@ -167,7 +163,7 @@ public class ClusterOperationExecutors implements OperationExecutors {
    *
    * @see org.apache.geode.internal.monitoring.ThreadsMonitoring
    */
-  private ThreadsMonitoring threadMonitor;
+  private final ThreadsMonitoring threadMonitor;
 
   private SerialQueuedExecutorPool serialQueuedExecutorPool;
 
@@ -180,7 +176,8 @@ public class ClusterOperationExecutors implements OperationExecutors {
 
     DistributionConfig config = system.getConfig();
 
-    threadMonitor = config.getThreadMonitorEnabled() ? new ThreadsMonitoringImpl(system)
+    threadMonitor = config.getThreadMonitorEnabled() ? new ThreadsMonitoringImpl(system,
+        config.getThreadMonitorInterval(), config.getThreadMonitorTimeLimit())
         : new ThreadsMonitoringImplDummy();
 
 
@@ -213,24 +210,25 @@ public class ClusterOperationExecutors implements OperationExecutors {
                 stats.getSerialQueueHelper());
         poolQueue = serialQueue;
       }
-      serialThread = CoreLoggingExecutors.newSerialThreadPool("Serial Message Processor",
+      serialThread = CoreLoggingExecutors.newSerialThreadPool(poolQueue, "Serial Message Processor",
           thread -> stats.incSerialThreadStarts(),
           this::doSerialThread, stats.getSerialProcessorHelper(),
-          threadMonitor, poolQueue);
+          threadMonitor);
 
     }
 
     threadPool =
-        CoreLoggingExecutors.newThreadPoolWithFeedStatistics("Pooled Message Processor ",
+        CoreLoggingExecutors.newThreadPoolWithFeedStatistics(MAX_THREADS,
+            INCOMING_QUEUE_LIMIT, stats.getOverflowQueueHelper(), "Pooled Message Processor ",
             thread -> stats.incProcessingThreadStarts(), this::doProcessingThread,
-            MAX_THREADS, stats.getNormalPoolHelper(), threadMonitor,
-            INCOMING_QUEUE_LIMIT, stats.getOverflowQueueHelper());
+            stats.getNormalPoolHelper(),
+            threadMonitor);
 
     highPriorityPool = CoreLoggingExecutors.newThreadPoolWithFeedStatistics(
-        "Pooled High Priority Message Processor ",
-        thread -> stats.incHighPriorityThreadStarts(), this::doHighPriorityThread,
-        MAX_THREADS, stats.getHighPriorityPoolHelper(), threadMonitor,
-        INCOMING_QUEUE_LIMIT, stats.getHighPriorityQueueHelper());
+        MAX_THREADS, INCOMING_QUEUE_LIMIT, stats.getHighPriorityQueueHelper(),
+        "Pooled High Priority Message Processor ", thread -> stats.incHighPriorityThreadStarts(),
+        this::doHighPriorityThread, stats.getHighPriorityPoolHelper(),
+        threadMonitor);
 
     {
       BlockingQueue<Runnable> poolQueue;
@@ -240,47 +238,50 @@ public class ClusterOperationExecutors implements OperationExecutors {
       } else {
         poolQueue = new OverflowQueueWithDMStats<>(stats.getWaitingQueueHelper());
       }
-      waitingPool = CoreLoggingExecutors.newThreadPool("Pooled Waiting Message Processor ",
+      waitingPool = CoreLoggingExecutors.newThreadPool(MAX_WAITING_THREADS, poolQueue,
+          "Pooled Waiting Message Processor ",
           thread -> stats.incWaitingThreadStarts(), this::doWaitingThread,
-          MAX_WAITING_THREADS, stats.getWaitingPoolHelper(), threadMonitor, poolQueue);
+          stats.getWaitingPoolHelper(), threadMonitor);
     }
 
     // should this pool using the waiting pool stats?
     prMetaDataCleanupThreadPool =
         CoreLoggingExecutors.newThreadPoolWithFeedStatistics(
-            "PrMetaData cleanup Message Processor ",
-            thread -> stats.incWaitingThreadStarts(), this::doWaitingThread,
-            MAX_PR_META_DATA_CLEANUP_THREADS, stats.getWaitingPoolHelper(), threadMonitor,
-            0, stats.getWaitingQueueHelper());
+            MAX_PR_META_DATA_CLEANUP_THREADS, 0, stats.getWaitingQueueHelper(),
+            "PrMetaData cleanup Message Processor ", thread -> stats.incWaitingThreadStarts(),
+            this::doWaitingThread, stats.getWaitingPoolHelper(),
+            threadMonitor);
 
     if (MAX_PR_THREADS > 1) {
       partitionedRegionPool =
           CoreLoggingExecutors.newThreadPoolWithFeedStatistics(
+              MAX_PR_THREADS, INCOMING_QUEUE_LIMIT, stats.getPartitionedRegionQueueHelper(),
               "PartitionedRegion Message Processor",
               thread -> stats.incPartitionedRegionThreadStarts(), this::doPartitionRegionThread,
-              MAX_PR_THREADS, stats.getPartitionedRegionPoolHelper(), threadMonitor,
-              INCOMING_QUEUE_LIMIT, stats.getPartitionedRegionQueueHelper());
+              stats.getPartitionedRegionPoolHelper(),
+              threadMonitor);
     } else {
       partitionedRegionThread = CoreLoggingExecutors.newSerialThreadPoolWithFeedStatistics(
+          INCOMING_QUEUE_LIMIT, stats.getPartitionedRegionQueueHelper(),
           "PartitionedRegion Message Processor",
           thread -> stats.incPartitionedRegionThreadStarts(), this::doPartitionRegionThread,
-          stats.getPartitionedRegionPoolHelper(), threadMonitor,
-          INCOMING_QUEUE_LIMIT, stats.getPartitionedRegionQueueHelper());
+          stats.getPartitionedRegionPoolHelper(), threadMonitor);
     }
     if (MAX_FE_THREADS > 1) {
       functionExecutionPool =
           CoreLoggingExecutors.newFunctionThreadPoolWithFeedStatistics(
+              MAX_FE_THREADS, INCOMING_QUEUE_LIMIT, stats.getFunctionExecutionQueueHelper(),
               FUNCTION_EXECUTION_PROCESSOR_THREAD_PREFIX,
               thread -> stats.incFunctionExecutionThreadStarts(), this::doFunctionExecutionThread,
-              MAX_FE_THREADS, stats.getFunctionExecutionPoolHelper(), threadMonitor,
-              INCOMING_QUEUE_LIMIT, stats.getFunctionExecutionQueueHelper());
+              stats.getFunctionExecutionPoolHelper(),
+              threadMonitor);
     } else {
       functionExecutionThread =
           CoreLoggingExecutors.newSerialThreadPoolWithFeedStatistics(
+              INCOMING_QUEUE_LIMIT, stats.getFunctionExecutionQueueHelper(),
               FUNCTION_EXECUTION_PROCESSOR_THREAD_PREFIX,
               thread -> stats.incFunctionExecutionThreadStarts(), this::doFunctionExecutionThread,
-              stats.getFunctionExecutionPoolHelper(), threadMonitor,
-              INCOMING_QUEUE_LIMIT, stats.getFunctionExecutionQueueHelper());
+              stats.getFunctionExecutionPoolHelper(), threadMonitor);
     }
   }
 
@@ -299,7 +300,7 @@ public class ClusterOperationExecutors implements OperationExecutors {
       case WAITING_POOL_EXECUTOR:
         return getWaitingThreadPool();
       case PARTITIONED_REGION_EXECUTOR:
-        return getPartitionedRegionExcecutor();
+        return getPartitionedRegionExecutor();
       case REGION_FUNCTION_EXECUTION_EXECUTOR:
         return getFunctionExecutor();
       default:
@@ -328,7 +329,7 @@ public class ClusterOperationExecutors implements OperationExecutors {
     return prMetaDataCleanupThreadPool;
   }
 
-  private Executor getPartitionedRegionExcecutor() {
+  private Executor getPartitionedRegionExecutor() {
     if (partitionedRegionThread != null) {
       return partitionedRegionThread;
     } else {
@@ -375,7 +376,6 @@ public class ClusterOperationExecutors implements OperationExecutors {
     FunctionExecutionPooledExecutor.setIsFunctionExecutionThread(Boolean.TRUE);
     try {
       ConnectionTable.threadWantsSharedResources();
-      Connection.makeReaderThread();
       runUntilShutdown(command);
     } finally {
       ConnectionTable.releaseThreadsSockets();
@@ -388,7 +388,6 @@ public class ClusterOperationExecutors implements OperationExecutors {
     stats.incNumProcessingThreads(1);
     try {
       ConnectionTable.threadWantsSharedResources();
-      Connection.makeReaderThread();
       runUntilShutdown(command);
     } finally {
       ConnectionTable.releaseThreadsSockets();
@@ -400,7 +399,6 @@ public class ClusterOperationExecutors implements OperationExecutors {
     stats.incHighPriorityThreads(1);
     try {
       ConnectionTable.threadWantsSharedResources();
-      Connection.makeReaderThread();
       runUntilShutdown(command);
     } finally {
       ConnectionTable.releaseThreadsSockets();
@@ -412,7 +410,6 @@ public class ClusterOperationExecutors implements OperationExecutors {
     stats.incWaitingThreads(1);
     try {
       ConnectionTable.threadWantsSharedResources();
-      Connection.makeReaderThread();
       runUntilShutdown(command);
     } finally {
       ConnectionTable.releaseThreadsSockets();
@@ -424,7 +421,6 @@ public class ClusterOperationExecutors implements OperationExecutors {
     stats.incPartitionedRegionThreads(1);
     try {
       ConnectionTable.threadWantsSharedResources();
-      Connection.makeReaderThread();
       runUntilShutdown(command);
     } finally {
       ConnectionTable.releaseThreadsSockets();
@@ -436,7 +432,6 @@ public class ClusterOperationExecutors implements OperationExecutors {
     stats.incNumSerialThreads(1);
     try {
       ConnectionTable.threadWantsSharedResources();
-      Connection.makeReaderThread();
       runUntilShutdown(command);
     } finally {
       ConnectionTable.releaseThreadsSockets();
@@ -683,10 +678,10 @@ public class ClusterOperationExecutors implements OperationExecutors {
     }
 
     /*
-     * Returns an id of the thread in serialQueuedExecutorMap, thats mapped to the given seder.
+     * Returns an id of the thread in serialQueuedExecutorMap, that's mapped to the given sender.
      *
      *
-     * @param createNew boolean flag to indicate whether to create a new id, if id doesnot exists.
+     * @param createNew boolean flag to indicate whether to create a new id, if id does not exist.
      */
     private Integer getQueueId(InternalDistributedMember sender, boolean createNew) {
       // Create a new Id.
@@ -701,7 +696,7 @@ public class ClusterOperationExecutors implements OperationExecutors {
         }
 
         // Create new.
-        // Check if any threads are availabe that is marked for Use.
+        // Check if any threads are available that is marked for Use.
         if (!threadMarkedForUse.isEmpty()) {
           queueId = threadMarkedForUse.remove(0);
         }
@@ -744,7 +739,7 @@ public class ClusterOperationExecutors implements OperationExecutors {
       // UDP readers are throttled in the FC protocol, which queries
       // the queue to see if it should throttle
       if (stats.getInternalSerialQueueBytes() > TOTAL_SERIAL_QUEUE_THROTTLE
-          && !DistributionMessage.isPreciousThread()) {
+          && !DistributionMessage.isMembershipMessengerThread()) {
         do {
           boolean interrupted = Thread.interrupted();
           try {
@@ -809,14 +804,14 @@ public class ClusterOperationExecutors implements OperationExecutors {
 
       serialQueuedMap.put(id, poolQueue);
 
-      return CoreLoggingExecutors.newSerialThreadPool("Pooled Serial Message Processor" + id + "-",
+      return CoreLoggingExecutors.newSerialThreadPool(poolQueue,
+          "Pooled Serial Message Processor" + id + "-",
           thread -> stats.incSerialPooledThreadStarts(), this::doSerialPooledThread,
-          stats.getSerialPooledProcessorHelper(), threadMonitoring, poolQueue);
+          stats.getSerialPooledProcessorHelper(), threadMonitoring);
     }
 
     private void doSerialPooledThread(Runnable command) {
       ConnectionTable.threadWantsSharedResources();
-      Connection.makeReaderThread();
       try {
         command.run();
       } finally {

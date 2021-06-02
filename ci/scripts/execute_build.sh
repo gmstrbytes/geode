@@ -30,6 +30,8 @@ done
 SCRIPTDIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
 source ${SCRIPTDIR}/shared_utilities.sh
 
+is_source_from_pr_testable "geode" "$(get_geode_pr_exclusion_dirs)" || exit 0
+
 if [[ -z "${GRADLE_TASK}" ]]; then
   echo "GRADLE_TASK must be set. exiting..."
   exit 1
@@ -75,14 +77,15 @@ scp ${SSH_OPTIONS} ${SCRIPTDIR}/capture-call-stacks.sh geode@${INSTANCE_IP_ADDRE
 if [[ -n "${PARALLEL_DUNIT}" && "${PARALLEL_DUNIT}" == "true" ]]; then
   PARALLEL_DUNIT="-PparallelDunit -PdunitDockerUser=geode"
   if [ -n "${DUNIT_PARALLEL_FORKS}" ]; then
-    DUNIT_PARALLEL_FORKS="-PdunitParallelForks=${DUNIT_PARALLEL_FORKS}"
+    DUNIT_PARALLEL_FORKS="--max-workers=${DUNIT_PARALLEL_FORKS} -PtestMaxParallelForks=${DUNIT_PARALLEL_FORKS} -PdunitParallelForks=${DUNIT_PARALLEL_FORKS}"
   fi
 else
   PARALLEL_DUNIT=""
   DUNIT_PARALLEL_FORKS=""
 fi
 
-SET_JAVA_HOME="export JAVA_HOME=/usr/lib/jvm/java-${JAVA_BUILD_VERSION}-openjdk-amd64"
+
+SET_JAVA_HOME="export JAVA_HOME=/usr/lib/jvm/bellsoft-java${JAVA_BUILD_VERSION}-amd64"
 
 if [ -v CALL_STACK_TIMEOUT ]; then
   ssh ${SSH_OPTIONS} geode@${INSTANCE_IP_ADDRESS} "${SET_JAVA_HOME} && tmux new-session -d -s callstacks; tmux send-keys  ~/capture-call-stacks.sh\ ${PARALLEL_DUNIT}\ ${CALL_STACK_TIMEOUT} C-m"

@@ -14,8 +14,10 @@
  */
 package org.apache.geode.internal.cache.ha;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.apache.geode.test.dunit.Assert.assertNotNull;
 import static org.apache.geode.test.dunit.Assert.assertNull;
 import static org.apache.geode.test.dunit.Assert.assertTrue;
@@ -50,7 +52,6 @@ import org.apache.geode.cache.util.CacheListenerAdapter;
 import org.apache.geode.cache30.CacheSerializableRunnable;
 import org.apache.geode.cache30.ClientServerTestCase;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.cache.CacheServerImpl;
 import org.apache.geode.internal.cache.EntryEventImpl;
 import org.apache.geode.internal.cache.EventID;
@@ -142,7 +143,7 @@ public class HAEventIdPropagationDUnitTest extends JUnit4DistributedTestCase {
     cache.createRegion(REGION_NAME, attrs);
     server = (CacheServerImpl) cache.addCacheServer();
     assertNotNull(server);
-    int port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    int port = getRandomAvailableTCPPort();
     server.setPort(port);
     server.setNotifyBySubscription(true);
     server.start();
@@ -176,7 +177,7 @@ public class HAEventIdPropagationDUnitTest extends JUnit4DistributedTestCase {
     factory.setCacheListener(clientListener);
     RegionAttributes attrs = factory.create();
     cache.createRegion(REGION_NAME, attrs);
-    Region region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region region = cache.getRegion(SEPARATOR + REGION_NAME);
     assertNotNull(region);
     region.registerInterest("ALL_KEYS", InterestResultPolicy.NONE);
     System.out.println("KKKKKK:[" + pi.getName() + "]");;
@@ -446,7 +447,7 @@ public class HAEventIdPropagationDUnitTest extends JUnit4DistributedTestCase {
    */
   public static Object putKey1Val1() {
     try {
-      Region region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+      Region region = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(region);
 
       region.create("key1", "value1");
@@ -463,7 +464,7 @@ public class HAEventIdPropagationDUnitTest extends JUnit4DistributedTestCase {
    */
   public static Object updateKey1() {
     try {
-      Region region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+      Region region = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(region);
 
       region.put("key1", "value2");
@@ -480,7 +481,7 @@ public class HAEventIdPropagationDUnitTest extends JUnit4DistributedTestCase {
    */
   public static Object[] putAll() {
     try {
-      Region region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+      Region region = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(region);
 
       Map map = new LinkedHashMap();
@@ -515,7 +516,7 @@ public class HAEventIdPropagationDUnitTest extends JUnit4DistributedTestCase {
    */
   public static Object invalidateKey1() {
     try {
-      Region region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+      Region region = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(region);
 
       region.invalidate("key1");
@@ -532,7 +533,7 @@ public class HAEventIdPropagationDUnitTest extends JUnit4DistributedTestCase {
    */
   public static Object destroyKey1() {
     try {
-      Region region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+      Region region = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(region);
 
       region.destroy("key1");
@@ -550,7 +551,7 @@ public class HAEventIdPropagationDUnitTest extends JUnit4DistributedTestCase {
    */
   public static Object removePUTALL_KEY1() {
     try {
-      Region region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+      Region region = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(region);
 
       region.remove(PUTALL_KEY1);
@@ -568,7 +569,7 @@ public class HAEventIdPropagationDUnitTest extends JUnit4DistributedTestCase {
    */
   public static Object clearRg() {
     try {
-      Region region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+      Region region = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(region);
       region.clear();
       return eventId;
@@ -585,11 +586,11 @@ public class HAEventIdPropagationDUnitTest extends JUnit4DistributedTestCase {
    */
   public static Object destroyRegion() {
     try {
-      Region region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+      Region region = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(region);
 
       region.destroyRegion();
-      region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+      region = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNull(region);
       return eventId;
     } catch (Exception e) {

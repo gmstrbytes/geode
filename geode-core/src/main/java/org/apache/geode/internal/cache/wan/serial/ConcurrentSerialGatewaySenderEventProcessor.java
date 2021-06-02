@@ -24,6 +24,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.Logger;
@@ -46,6 +47,7 @@ import org.apache.geode.internal.cache.wan.AbstractGatewaySender;
 import org.apache.geode.internal.cache.wan.AbstractGatewaySenderEventProcessor;
 import org.apache.geode.internal.cache.wan.GatewaySenderEventDispatcher;
 import org.apache.geode.internal.cache.wan.GatewaySenderException;
+import org.apache.geode.internal.cache.wan.InternalGatewayQueueEvent;
 import org.apache.geode.internal.monitoring.ThreadsMonitoring;
 import org.apache.geode.internal.offheap.annotations.Released;
 import org.apache.geode.logging.internal.executors.LoggingExecutors;
@@ -66,11 +68,11 @@ public class ConcurrentSerialGatewaySenderEventProcessor
   private final Set<RegionQueue> queues;
 
   public ConcurrentSerialGatewaySenderEventProcessor(AbstractGatewaySender sender,
-      ThreadsMonitoring tMonitoring) {
+      ThreadsMonitoring tMonitoring, boolean cleanQueues) {
     super("Event Processor for GatewaySender_" + sender.getId(), sender, tMonitoring);
     this.sender = sender;
 
-    initializeMessageQueue(sender.getId());
+    initializeMessageQueue(sender.getId(), cleanQueues);
     queues = new HashSet<RegionQueue>();
     for (SerialGatewaySenderEventProcessor processor : processors) {
       queues.add(processor.getQueue());
@@ -87,10 +89,11 @@ public class ConcurrentSerialGatewaySenderEventProcessor
   }
 
   @Override
-  protected void initializeMessageQueue(String id) {
+  protected void initializeMessageQueue(String id, boolean cleanQueues) {
     for (int i = 0; i < sender.getDispatcherThreads(); i++) {
       processors.add(
-          new SerialGatewaySenderEventProcessor(this.sender, id + "." + i, getThreadMonitorObj()));
+          new SerialGatewaySenderEventProcessor(this.sender, id + "." + i, getThreadMonitorObj(),
+              cleanQueues));
       if (logger.isDebugEnabled()) {
         logger.debug("Created the SerialGatewayEventProcessor_{}->{}", i, processors.get(i));
       }
@@ -108,13 +111,22 @@ public class ConcurrentSerialGatewaySenderEventProcessor
 
   // based on the fix for old wan Bug#46992 .revision is 39437
   @Override
-  public void enqueueEvent(EnumListenerEvent operation, EntryEvent event, Object substituteValue)
+  public boolean enqueueEvent(EnumListenerEvent operation, EntryEvent event, Object substituteValue)
+      throws IOException, CacheException {
+    enqueueEvent(operation, event, substituteValue, false, null);
+    return true;
+
+  }
+
+  @Override
+  public boolean enqueueEvent(EnumListenerEvent operation, EntryEvent event, Object substituteValue,
+      boolean isLastEventInTransaction, Predicate<InternalGatewayQueueEvent> condition)
       throws IOException, CacheException {
     // Get the appropriate index into the gateways
     int index = Math.abs(getHashCode(((EntryEventImpl) event)) % this.processors.size());
     // Distribute the event to the gateway
-    enqueueEvent(operation, event, substituteValue, index);
-
+    return enqueueEvent(operation, event, substituteValue, index, isLastEventInTransaction,
+        condition);
   }
 
   public void setModifiedEventId(EntryEventImpl clonedEvent, int index) {
@@ -146,8 +158,9 @@ public class ConcurrentSerialGatewaySenderEventProcessor
     clonedEvent.setEventId(newEventId);
   }
 
-  public void enqueueEvent(EnumListenerEvent operation, EntryEvent event, Object substituteValue,
-      int index) throws CacheException, IOException {
+  public boolean enqueueEvent(EnumListenerEvent operation, EntryEvent event, Object substituteValue,
+      int index, boolean isLastEventInTransaction, Predicate<InternalGatewayQueueEvent> condition)
+      throws CacheException, IOException {
     // Get the appropriate gateway
     SerialGatewaySenderEventProcessor serialProcessor = this.processors.get(index);
 
@@ -159,24 +172,40 @@ public class ConcurrentSerialGatewaySenderEventProcessor
       EntryEventImpl clonedEvent = new EntryEventImpl((EntryEventImpl) event);
       try {
         setModifiedEventId(clonedEvent, index);
-        serialProcessor.enqueueEvent(operation, clonedEvent, substituteValue);
+        return serialProcessor.enqueueEvent(operation, clonedEvent, substituteValue,
+            isLastEventInTransaction, condition);
       } finally {
         clonedEvent.release();
       }
     } else {
-      serialProcessor.enqueueEvent(operation, event, substituteValue);
+      return serialProcessor.enqueueEvent(operation, event, substituteValue,
+          isLastEventInTransaction, condition);
     }
-
   }
 
   @Override
   public void run() {
-    for (int i = 0; i < this.processors.size(); i++) {
-      if (logger.isDebugEnabled()) {
+    boolean isDebugEnabled = logger.isDebugEnabled();
+    if (this.sender.getEnforceThreadsConnectSameReceiver()) {
+      this.processors.get(0).start();
+      waitForRunningStatus(this.processors.get(0));
+      String receiverUniqueId = this.processors.get(0).getExpectedReceiverUniqueId();
+      if (isDebugEnabled) {
+        logger.debug("First dispatcher is connected to " + receiverUniqueId);
+      }
+      for (int j = 1; j < this.processors.size(); j++) {
+        this.processors.get(j).setExpectedReceiverUniqueId(receiverUniqueId);
+      }
+    }
+
+    for (int i = this.sender.getEnforceThreadsConnectSameReceiver() ? 1 : 0; i < this.processors
+        .size(); i++) {
+      if (isDebugEnabled) {
         logger.debug("Starting the serialProcessor {}", i);
       }
       this.processors.get(i).start();
     }
+
     try {
       waitForRunningStatus();
     } catch (GatewaySenderException e) {
@@ -197,7 +226,7 @@ public class ConcurrentSerialGatewaySenderEventProcessor
       try {
         serialProcessor.join();
       } catch (InterruptedException e) {
-        if (logger.isDebugEnabled()) {
+        if (isDebugEnabled) {
           logger.debug("Got InterruptedException while waiting for child threads to finish.");
           Thread.currentThread().interrupt();
         }
@@ -211,24 +240,28 @@ public class ConcurrentSerialGatewaySenderEventProcessor
     throw new UnsupportedOperationException();
   }
 
-  private void waitForRunningStatus() {
-    for (SerialGatewaySenderEventProcessor serialProcessor : this.processors) {
-      synchronized (serialProcessor.getRunningStateLock()) {
-        while (serialProcessor.getException() == null && serialProcessor.isStopped()) {
-          try {
-            serialProcessor.getRunningStateLock().wait();
-          } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-          }
-        }
-        Exception ex = serialProcessor.getException();
-        if (ex != null) {
-          throw new GatewaySenderException(
-              String.format("Could not start a gateway sender %s because of exception %s",
-                  new Object[] {this.sender.getId(), ex.getMessage()}),
-              ex.getCause());
+  private void waitForRunningStatus(SerialGatewaySenderEventProcessor serialProcessor) {
+    synchronized (serialProcessor.getRunningStateLock()) {
+      while (serialProcessor.getException() == null && serialProcessor.isStopped()) {
+        try {
+          serialProcessor.getRunningStateLock().wait();
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
         }
       }
+      Exception ex = serialProcessor.getException();
+      if (ex != null) {
+        throw new GatewaySenderException(
+            String.format("Could not start a gateway sender %s because of exception %s",
+                new Object[] {this.sender.getId(), ex.getMessage()}),
+            ex.getCause());
+      }
+    }
+  }
+
+  private void waitForRunningStatus() {
+    for (SerialGatewaySenderEventProcessor serialProcessor : this.processors) {
+      waitForRunningStatus(serialProcessor);
     }
   }
 
@@ -284,8 +317,8 @@ public class ConcurrentSerialGatewaySenderEventProcessor
     }
 
     ExecutorService stopperService = LoggingExecutors.newFixedThreadPool(
-        "ConcurrentSerialGatewaySenderEventProcessor Stopper Thread",
-        true, processors.size());
+        processors.size(), "ConcurrentSerialGatewaySenderEventProcessor Stopper Thread",
+        true);
     try {
       List<Future<Boolean>> futures = stopperService.invokeAll(stopperCallables);
       for (Future<Boolean> f : futures) {
@@ -293,7 +326,7 @@ public class ConcurrentSerialGatewaySenderEventProcessor
           boolean b = f.get();
           if (logger.isDebugEnabled()) {
             logger.debug("ConcurrentSerialGatewaySenderEventProcessor: {} stopped dispatching: {}",
-                (b ? "Successfully" : "Unsuccesfully"), this);
+                (b ? "Successfully" : "Unsuccessfully"), this);
           }
         } catch (ExecutionException e) {
           // we don't expect any exception but if caught then eat it and log
@@ -391,10 +424,12 @@ public class ConcurrentSerialGatewaySenderEventProcessor
   }
 
   @Override
-  protected void enqueueEvent(GatewayQueueEvent event) {
+  protected boolean enqueueEvent(GatewayQueueEvent event,
+      Predicate<InternalGatewayQueueEvent> condition) {
     for (SerialGatewaySenderEventProcessor serialProcessor : this.processors) {
-      serialProcessor.enqueueEvent(event);
+      serialProcessor.enqueueEvent(event, condition);
     }
+    return true;
   }
 
   protected ThreadsMonitoring getThreadMonitorObj() {

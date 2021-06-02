@@ -15,6 +15,7 @@
 
 package org.apache.geode.internal.cache;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.internal.cache.LocalRegion.InitializationLevel.ANY_INIT;
 
 import java.io.Serializable;
@@ -146,7 +147,7 @@ public class ColocationHelper {
         }
         if (prConf.getColocatedWith() != null) {
           if (prConf.getColocatedWith().equals(tempToBeColocatedWith.getFullPath())
-              || (Region.SEPARATOR + prConf.getColocatedWith())
+              || (SEPARATOR + prConf.getColocatedWith())
                   .equals(tempToBeColocatedWith.getFullPath())) {
             colocatedRegions.add(prConf);
             tempcolocatedRegions.add(prConf);
@@ -207,6 +208,7 @@ public class ColocationHelper {
       // Look through all of the disk stores for offline colocated child regions
       for (DiskStore diskStore : stores) {
         // Look at all of the partitioned regions.
+
         for (Map.Entry<String, PRPersistentConfig> entry : ((DiskStoreImpl) diskStore).getAllPRs()
             .entrySet()) {
 
@@ -241,7 +243,6 @@ public class ColocationHelper {
     return hasOfflineChildren;
   }
 
-
   private static boolean ignoreUnrecoveredQueue(PartitionedRegion region, String childName) {
     // Hack for #50120 if the childRegion is an async queue, but we
     // no longer define the async queue, ignore it.
@@ -250,6 +251,7 @@ public class ColocationHelper {
     }
 
     String senderId = ParallelGatewaySenderQueue.getSenderId(childName);
+
     if (!region.getAsyncEventQueueIds().contains(senderId)
         && !region.getParallelGatewaySenderIds().contains(senderId) && IGNORE_UNRECOVERED_QUEUE) {
       return true;
@@ -409,7 +411,8 @@ public class ColocationHelper {
         if (prRegion != null) {
           if (prRegion.getColocatedWith() != null) {
             if (prRegion.getColocatedWith().equals(partitionedRegion.getFullPath())
-                || ("/" + prRegion.getColocatedWith()).equals(partitionedRegion.getFullPath())) {
+                || (SEPARATOR + prRegion.getColocatedWith())
+                    .equals(partitionedRegion.getFullPath())) {
               // only regions directly colocatedWith partitionedRegion are
               // added to the list...
               prRegion.waitOnBucketMetadataInitialization();
@@ -470,10 +473,10 @@ public class ColocationHelper {
   }
 
   private static String getRegionIdentifier(String regionName) {
-    if (regionName.startsWith("/")) {
-      return regionName.replace("/", "#");
+    if (regionName.startsWith(SEPARATOR)) {
+      return regionName.replace(SEPARATOR, "#");
     } else {
-      return "#" + regionName.replace("/", "#");
+      return "#" + regionName.replace(SEPARATOR, "#");
     }
   }
 

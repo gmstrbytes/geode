@@ -17,6 +17,7 @@
 
 package org.apache.geode.tools.pulse.internal.data;
 
+import java.io.IOException;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -54,7 +55,8 @@ public class Cluster extends Thread {
   public static final int PAGE_ALERTS_MAX_SIZE = 100;
 
   private static final Logger logger = LogManager.getLogger();
-  private final ResourceBundle resourceBundle = Repository.get().getResourceBundle();
+  private Repository repository;
+  private ResourceBundle resourceBundle;
 
   private String jmxUserName;
   private String serverName;
@@ -96,18 +98,17 @@ public class Cluster extends Thread {
   private volatile boolean connectedFlag;
   private String connectionErrorMsg = "";
 
-  private Set<String> deletedMembers = new HashSet<String>();
+  private Set<String> deletedMembers = new HashSet<>();
 
-  private Map<String, List<Cluster.Member>> physicalToMember =
-      new HashMap<String, List<Cluster.Member>>();
+  private Map<String, List<Cluster.Member>> physicalToMember = new HashMap<>();
 
-  private Map<String, Cluster.Member> membersHMap = new HashMap<String, Cluster.Member>();
+  private Map<String, Cluster.Member> membersHMap = new HashMap<>();
 
-  private Set<String> deletedRegions = new HashSet<String>();
+  private Set<String> deletedRegions = new HashSet<>();
 
-  private Map<String, Cluster.Region> clusterRegionMap =
-      new ConcurrentHashMap<String, Cluster.Region>();
-  private List<Cluster.Alert> alertsList = new ArrayList<Cluster.Alert>();
+  private Map<String, Cluster.Region> clusterRegionMap = new ConcurrentHashMap<>();
+
+  private List<Cluster.Alert> alertsList = new ArrayList<>();
 
   private CircularFifoBuffer totalBytesOnDiskTrend = new CircularFifoBuffer(MAX_SAMPLE_SIZE);
   private CircularFifoBuffer throughoutWritesTrend = new CircularFifoBuffer(MAX_SAMPLE_SIZE);
@@ -119,9 +120,8 @@ public class Cluster extends Thread {
   private CircularFifoBuffer garbageCollectionTrend = new CircularFifoBuffer(MAX_SAMPLE_SIZE);
   private long previousJVMPauseCount = 0L;
 
-  private HashMap<String, Boolean> wanInformation = new HashMap<String, Boolean>();
-  private Map<String, Cluster.Statement> clusterStatementMap =
-      new ConcurrentHashMap<String, Cluster.Statement>();
+  private HashMap<String, Boolean> wanInformation = new HashMap<>();
+  private Map<String, Cluster.Statement> clusterStatementMap = new ConcurrentHashMap<>();
 
   public static final int CLUSTER_STAT_TOTAL_BYTES_ON_DISK = 0;
   public static final int CLUSTER_STAT_THROUGHPUT_WRITES = 1;
@@ -144,51 +144,51 @@ public class Cluster extends Thread {
     Object[] returnArray = null;
     switch (trendId) {
       case CLUSTER_STAT_TOTAL_BYTES_ON_DISK:
-        synchronized (this.totalBytesOnDiskTrend) {
-          returnArray = this.totalBytesOnDiskTrend.toArray();
+        synchronized (totalBytesOnDiskTrend) {
+          returnArray = totalBytesOnDiskTrend.toArray();
         }
 
         break;
 
       case CLUSTER_STAT_THROUGHPUT_READS:
-        synchronized (this.throughoutReadsTrend) {
-          returnArray = this.throughoutReadsTrend.toArray();
+        synchronized (throughoutReadsTrend) {
+          returnArray = throughoutReadsTrend.toArray();
         }
         break;
 
       case CLUSTER_STAT_THROUGHPUT_WRITES:
-        synchronized (this.throughoutWritesTrend) {
-          returnArray = this.throughoutWritesTrend.toArray();
+        synchronized (throughoutWritesTrend) {
+          returnArray = throughoutWritesTrend.toArray();
         }
         break;
 
       case CLUSTER_STAT_WRITES_PER_SECOND:
-        synchronized (this.writePerSecTrend) {
-          returnArray = this.writePerSecTrend.toArray();
+        synchronized (writePerSecTrend) {
+          returnArray = writePerSecTrend.toArray();
         }
         break;
 
       case CLUSTER_STAT_READ_PER_SECOND:
-        synchronized (this.readPerSecTrend) {
-          returnArray = this.readPerSecTrend.toArray();
+        synchronized (readPerSecTrend) {
+          returnArray = readPerSecTrend.toArray();
         }
         break;
 
       case CLUSTER_STAT_QUERIES_PER_SECOND:
-        synchronized (this.queriesPerSecTrend) {
-          returnArray = this.queriesPerSecTrend.toArray();
+        synchronized (queriesPerSecTrend) {
+          returnArray = queriesPerSecTrend.toArray();
         }
         break;
 
       case CLUSTER_STAT_MEMORY_USAGE:
-        synchronized (this.memoryUsageTrend) {
-          returnArray = this.memoryUsageTrend.toArray();
+        synchronized (memoryUsageTrend) {
+          returnArray = memoryUsageTrend.toArray();
         }
         break;
 
       case CLUSTER_STAT_GARBAGE_COLLECTION:
-        synchronized (this.garbageCollectionTrend) {
-          returnArray = this.garbageCollectionTrend.toArray();
+        synchronized (garbageCollectionTrend) {
+          returnArray = garbageCollectionTrend.toArray();
         }
         break;
     }
@@ -239,14 +239,14 @@ public class Cluster extends Thread {
     private String id;
     private long numSqlfireClients = 0;
 
-    private List<String> serverGroups = new ArrayList<String>();
-    private List<String> redundancyZones = new ArrayList<String>();
+    private List<String> serverGroups = new ArrayList<>();
+    private List<String> redundancyZones = new ArrayList<>();
 
     private CircularFifoBuffer cpuUsageSamples = new CircularFifoBuffer(MAX_SAMPLE_SIZE);
     private CircularFifoBuffer heapUsageSamples = new CircularFifoBuffer(MAX_SAMPLE_SIZE);
-    private HashMap<String, Cluster.Region> memberRegions = new HashMap<String, Cluster.Region>();
+    private HashMap<String, Cluster.Region> memberRegions = new HashMap<>();
     private HashMap<String, Cluster.Client> memberClientsHMap =
-        new HashMap<String, Cluster.Client>();
+        new HashMap<>();
     private CircularFifoBuffer totalBytesOnDiskSamples = new CircularFifoBuffer(MAX_SAMPLE_SIZE);
     private CircularFifoBuffer getsPerSecond = new CircularFifoBuffer(MAX_SAMPLE_SIZE);
     private CircularFifoBuffer putsPerSecond = new CircularFifoBuffer(MAX_SAMPLE_SIZE);
@@ -256,9 +256,9 @@ public class Cluster extends Thread {
     private long previousJVMPauseCount = 0L;
 
     private Cluster.GatewayReceiver gatewayReceiver = null;
-    private List<Cluster.GatewaySender> gatewaySenderList = new ArrayList<Cluster.GatewaySender>();
+    private List<Cluster.GatewaySender> gatewaySenderList = new ArrayList<>();
     private List<Cluster.AsyncEventQueue> asyncEventQueueList =
-        new ArrayList<Cluster.AsyncEventQueue>();
+        new ArrayList<>();
     // end: fields defined in MBean
 
     public static final int MEMBER_STAT_GARBAGE_COLLECTION = 0;
@@ -270,7 +270,7 @@ public class Cluster extends Thread {
     public static final int MEMBER_STAT_THROUGHPUT_READS = 6;
 
     public Cluster.Region[] getMemberRegionsList() {
-      Cluster.Region[] memberReg = null;
+      Cluster.Region[] memberReg;
       synchronized (memberRegions) {
         memberReg = new Cluster.Region[memberRegions.size()];
         memberReg = memberRegions.values().toArray(memberReg);
@@ -280,7 +280,7 @@ public class Cluster extends Thread {
     }
 
     public Cluster.Client[] getMemberClients() {
-      Cluster.Client[] memberClients = null;
+      Cluster.Client[] memberClients;
       synchronized (memberClientsHMap) {
         memberClients = new Cluster.Client[memberClientsHMap.size()];
         memberClients = memberClientsHMap.values().toArray(memberClients);
@@ -290,7 +290,7 @@ public class Cluster extends Thread {
     }
 
     public Cluster.GatewaySender[] getMemberGatewaySenders() {
-      Cluster.GatewaySender[] memberGWS = null;
+      Cluster.GatewaySender[] memberGWS;
       synchronized (gatewaySenderList) {
         memberGWS = new Cluster.GatewaySender[gatewaySenderList.size()];
         memberGWS = gatewaySenderList.toArray(memberGWS);
@@ -299,7 +299,7 @@ public class Cluster extends Thread {
     }
 
     public Cluster.AsyncEventQueue[] getMemberAsyncEventQueueList() {
-      Cluster.AsyncEventQueue[] memberAEQ = null;
+      Cluster.AsyncEventQueue[] memberAEQ;
       synchronized (asyncEventQueueList) {
         memberAEQ = new Cluster.AsyncEventQueue[asyncEventQueueList.size()];
         memberAEQ = asyncEventQueueList.toArray(memberAEQ);
@@ -311,45 +311,45 @@ public class Cluster extends Thread {
       Object[] returnArray = null;
       switch (trendId) {
         case MEMBER_STAT_GARBAGE_COLLECTION:
-          synchronized (this.garbageCollectionSamples) {
-            returnArray = this.garbageCollectionSamples.toArray();
+          synchronized (garbageCollectionSamples) {
+            returnArray = garbageCollectionSamples.toArray();
           }
 
           break;
 
         case MEMBER_STAT_HEAP_USAGE_SAMPLE:
-          synchronized (this.heapUsageSamples) {
-            returnArray = this.heapUsageSamples.toArray();
+          synchronized (heapUsageSamples) {
+            returnArray = heapUsageSamples.toArray();
           }
           break;
 
         case MEMBER_STAT_CPU_USAGE_SAMPLE:
-          synchronized (this.cpuUsageSamples) {
-            returnArray = this.cpuUsageSamples.toArray();
+          synchronized (cpuUsageSamples) {
+            returnArray = cpuUsageSamples.toArray();
           }
           break;
 
         case MEMBER_STAT_GETS_PER_SECOND:
-          synchronized (this.getsPerSecond) {
-            returnArray = this.getsPerSecond.toArray();
+          synchronized (getsPerSecond) {
+            returnArray = getsPerSecond.toArray();
           }
           break;
 
         case MEMBER_STAT_PUTS_PER_SECOND:
-          synchronized (this.putsPerSecond) {
-            returnArray = this.putsPerSecond.toArray();
+          synchronized (putsPerSecond) {
+            returnArray = putsPerSecond.toArray();
           }
           break;
 
         case MEMBER_STAT_THROUGHPUT_WRITES:
-          synchronized (this.throughputWritesTrend) {
-            returnArray = this.throughputWritesTrend.toArray();
+          synchronized (throughputWritesTrend) {
+            returnArray = throughputWritesTrend.toArray();
           }
           break;
 
         case MEMBER_STAT_THROUGHPUT_READS:
-          synchronized (this.throughputReadsTrend) {
-            returnArray = this.throughputReadsTrend.toArray();
+          synchronized (throughputReadsTrend) {
+            returnArray = throughputReadsTrend.toArray();
           }
           break;
       }
@@ -366,7 +366,7 @@ public class Cluster extends Thread {
     }
 
     public String getMemberPort() {
-      return this.memberPort;
+      return memberPort;
     }
 
     public void setMemberPort(String memberPort) {
@@ -374,7 +374,7 @@ public class Cluster extends Thread {
     }
 
     public double getThroughputWrites() {
-      return this.throughputWrites;
+      return throughputWrites;
     }
 
     public void setThroughputWrites(double throughputWrites) {
@@ -382,7 +382,7 @@ public class Cluster extends Thread {
     }
 
     public double getThroughputReads() {
-      return this.throughputReads;
+      return throughputReads;
     }
 
     public void setThroughputReads(double throughputReads) {
@@ -390,7 +390,7 @@ public class Cluster extends Thread {
     }
 
     public long getTotalDiskUsage() {
-      return this.totalDiskUsage;
+      return totalDiskUsage;
     }
 
     public void setTotalDiskUsage(long totalDiskUsage) {
@@ -398,15 +398,15 @@ public class Cluster extends Thread {
     }
 
     public String getId() {
-      return this.id;
+      return id;
     }
 
     public String getName() {
-      return this.name;
+      return name;
     }
 
     public double getLoadAverage() {
-      return this.loadAverage;
+      return loadAverage;
     }
 
     public void setLoadAverage(Double loadAverage) {
@@ -414,27 +414,27 @@ public class Cluster extends Thread {
     }
 
     public String getHost() {
-      return this.host;
+      return host;
     }
 
     public String getHostnameForClients() {
       if (StringUtils.isNotBlank(hostnameForClients))
-        return this.hostnameForClients;
+        return hostnameForClients;
       else if (StringUtils.isNotBlank(bindAddress))
-        return this.bindAddress;
+        return bindAddress;
       return null;
     }
 
     public long getUptime() {
-      return this.uptime;
+      return uptime;
     }
 
     public String getQueueBacklog() {
-      return this.queueBacklog;
+      return queueBacklog;
     }
 
     public HashMap<String, Cluster.Region> getMemberRegions() {
-      return this.memberRegions;
+      return memberRegions;
     }
 
     public void setMemberRegions(HashMap<String, Cluster.Region> memberRegions) {
@@ -442,7 +442,7 @@ public class Cluster extends Thread {
     }
 
     public long getCurrentHeapSize() {
-      return this.currentHeapSize;
+      return currentHeapSize;
     }
 
     public void setCurrentHeapSize(long currentHeapSize) {
@@ -450,7 +450,7 @@ public class Cluster extends Thread {
     }
 
     public long getMaxHeapSize() {
-      return this.maxHeapSize;
+      return maxHeapSize;
     }
 
     public void setMaxHeapSize(long maxHeapSize) {
@@ -458,7 +458,7 @@ public class Cluster extends Thread {
     }
 
     public boolean isManager() {
-      return this.manager;
+      return manager;
     }
 
     public void setManager(boolean manager) {
@@ -466,7 +466,7 @@ public class Cluster extends Thread {
     }
 
     public int getAvgHeapUsage() {
-      return this.avgHeapUsage;
+      return avgHeapUsage;
     }
 
     public void setAvgHeapUsage(int avgHeapUsage) {
@@ -478,7 +478,7 @@ public class Cluster extends Thread {
     }
 
     public void setOffHeapFreeSize(long offHeapFreeSize) {
-      this.OffHeapFreeSize = offHeapFreeSize;
+      OffHeapFreeSize = offHeapFreeSize;
     }
 
     public long getOffHeapUsedSize() {
@@ -486,7 +486,7 @@ public class Cluster extends Thread {
     }
 
     public void setOffHeapUsedSize(long offHeapUsedSize) {
-      this.OffHeapUsedSize = offHeapUsedSize;
+      OffHeapUsedSize = offHeapUsedSize;
     }
 
     public void setId(String id) {
@@ -518,7 +518,7 @@ public class Cluster extends Thread {
     }
 
     public int getTotalRegionCount() {
-      return this.totalRegionCount;
+      return totalRegionCount;
     }
 
     public void setTotalRegionCount(int totalRegionCount) {
@@ -526,7 +526,7 @@ public class Cluster extends Thread {
     }
 
     public long getTotalBytesOnDisk() {
-      return this.totalBytesOnDisk;
+      return totalBytesOnDisk;
     }
 
     public void setTotalBytesOnDisk(long totalBytesOnDisk) {
@@ -534,7 +534,7 @@ public class Cluster extends Thread {
     }
 
     public double getCpuUsage() {
-      return this.cpuUsage;
+      return cpuUsage;
     }
 
     public void setCpuUsage(double cpuUsage) {
@@ -542,7 +542,7 @@ public class Cluster extends Thread {
     }
 
     public double getHostCpuUsage() {
-      return this.hostCpuUsage;
+      return hostCpuUsage;
     }
 
     public void setHostCpuUsage(double hostCpuUsage) {
@@ -550,7 +550,7 @@ public class Cluster extends Thread {
     }
 
     public double getGetsRate() {
-      return this.getsRate;
+      return getsRate;
     }
 
     public void setGetsRate(double getsRate) {
@@ -558,7 +558,7 @@ public class Cluster extends Thread {
     }
 
     public double getPutsRate() {
-      return this.putsRate;
+      return putsRate;
     }
 
     public void setPutsRate(double putsRate) {
@@ -566,7 +566,7 @@ public class Cluster extends Thread {
     }
 
     public HashMap<String, Cluster.Client> getMemberClientsHMap() {
-      return this.memberClientsHMap;
+      return memberClientsHMap;
     }
 
     public void setMemberClientsHMap(HashMap<String, Cluster.Client> memberClientsHMap) {
@@ -574,7 +574,7 @@ public class Cluster extends Thread {
     }
 
     public boolean isCache() {
-      return this.isCache;
+      return isCache;
     }
 
     public void setCache(boolean isCache) {
@@ -582,7 +582,7 @@ public class Cluster extends Thread {
     }
 
     public boolean isGateway() {
-      return this.isGateway;
+      return isGateway;
     }
 
     public void setGateway(boolean isGateway) {
@@ -590,7 +590,7 @@ public class Cluster extends Thread {
     }
 
     public int getNumThreads() {
-      return this.numThreads;
+      return numThreads;
     }
 
     public void setNumThreads(int numThreads) {
@@ -598,7 +598,7 @@ public class Cluster extends Thread {
     }
 
     public long getTotalFileDescriptorOpen() {
-      return this.totalFileDescriptorOpen;
+      return totalFileDescriptorOpen;
     }
 
     public void setTotalFileDescriptorOpen(long totalFileDescriptorOpen) {
@@ -606,7 +606,7 @@ public class Cluster extends Thread {
     }
 
     public long getGarbageCollectionCount() {
-      return this.garbageCollectionCount;
+      return garbageCollectionCount;
     }
 
     public void setGarbageCollectionCount(long garbageCollectionCount) {
@@ -614,7 +614,7 @@ public class Cluster extends Thread {
     }
 
     public boolean isLocator() {
-      return this.isLocator;
+      return isLocator;
     }
 
     public void setLocator(boolean isLocator) {
@@ -622,7 +622,7 @@ public class Cluster extends Thread {
     }
 
     public Cluster.GatewayReceiver getGatewayReceiver() {
-      return this.gatewayReceiver;
+      return gatewayReceiver;
     }
 
     public void setGatewayReceiver(Cluster.GatewayReceiver gatewayReceiver) {
@@ -630,7 +630,7 @@ public class Cluster extends Thread {
     }
 
     public List<Cluster.GatewaySender> getGatewaySenderList() {
-      return this.gatewaySenderList;
+      return gatewaySenderList;
     }
 
     public void setGatewaySenderList(List<Cluster.GatewaySender> gatewaySenderList) {
@@ -638,7 +638,7 @@ public class Cluster extends Thread {
     }
 
     public List<Cluster.AsyncEventQueue> getAsyncEventQueueList() {
-      return this.asyncEventQueueList;
+      return asyncEventQueueList;
     }
 
     public void setAsyncEventQueueList(List<Cluster.AsyncEventQueue> asyncEventQueueList) {
@@ -646,7 +646,7 @@ public class Cluster extends Thread {
     }
 
     public boolean isServer() {
-      return this.isServer;
+      return isServer;
     }
 
     public void setServer(boolean isServer) {
@@ -654,7 +654,7 @@ public class Cluster extends Thread {
     }
 
     public List<String> getServerGroups() {
-      return this.serverGroups;
+      return serverGroups;
     }
 
     public void setServerGroups(List<String> serverGroups) {
@@ -662,7 +662,7 @@ public class Cluster extends Thread {
     }
 
     public List<String> getRedundancyZones() {
-      return this.redundancyZones;
+      return redundancyZones;
     }
 
     public void setRedundancyZones(List<String> redundancyZones) {
@@ -670,7 +670,7 @@ public class Cluster extends Thread {
     }
 
     public CircularFifoBuffer getCpuUsageSamples() {
-      return this.cpuUsageSamples;
+      return cpuUsageSamples;
     }
 
     public void setCpuUsageSamples(CircularFifoBuffer cpuUsageSamples) {
@@ -678,7 +678,7 @@ public class Cluster extends Thread {
     }
 
     public CircularFifoBuffer getHeapUsageSamples() {
-      return this.heapUsageSamples;
+      return heapUsageSamples;
     }
 
     public void setHeapUsageSamples(CircularFifoBuffer heapUsageSamples) {
@@ -686,7 +686,7 @@ public class Cluster extends Thread {
     }
 
     public CircularFifoBuffer getTotalBytesOnDiskSamples() {
-      return this.totalBytesOnDiskSamples;
+      return totalBytesOnDiskSamples;
     }
 
     public void setTotalBytesOnDiskSamples(CircularFifoBuffer totalBytesOnDiskSamples) {
@@ -694,7 +694,7 @@ public class Cluster extends Thread {
     }
 
     public CircularFifoBuffer getGetsPerSecond() {
-      return this.getsPerSecond;
+      return getsPerSecond;
     }
 
     public void setGetsPerSecond(CircularFifoBuffer getsPerSecond) {
@@ -702,7 +702,7 @@ public class Cluster extends Thread {
     }
 
     public CircularFifoBuffer getPutsPerSecond() {
-      return this.putsPerSecond;
+      return putsPerSecond;
     }
 
     public void setPutsPerSecond(CircularFifoBuffer putsPerSecond) {
@@ -710,7 +710,7 @@ public class Cluster extends Thread {
     }
 
     public CircularFifoBuffer getThroughputWritesTrend() {
-      return this.throughputWritesTrend;
+      return throughputWritesTrend;
     }
 
     public void setThroughputWritesTrend(CircularFifoBuffer throughputWritesTrend) {
@@ -718,7 +718,7 @@ public class Cluster extends Thread {
     }
 
     public CircularFifoBuffer getThroughputReadsTrend() {
-      return this.throughputReadsTrend;
+      return throughputReadsTrend;
     }
 
     public void setThroughputReadsTrend(CircularFifoBuffer throughputReadsTrend) {
@@ -726,7 +726,7 @@ public class Cluster extends Thread {
     }
 
     public CircularFifoBuffer getGarbageCollectionSamples() {
-      return this.garbageCollectionSamples;
+      return garbageCollectionSamples;
     }
 
     public void setGarbageCollectionSamples(CircularFifoBuffer garbageCollectionSamples) {
@@ -734,7 +734,7 @@ public class Cluster extends Thread {
     }
 
     public long getPreviousJVMPauseCount() {
-      return this.previousJVMPauseCount;
+      return previousJVMPauseCount;
     }
 
     public void setPreviousJVMPauseCount(long previousJVMPauseCount) {
@@ -808,7 +808,7 @@ public class Cluster extends Thread {
         }
       }
       // replace existing memberClientsHMap by memberClientsHMapNew
-      this.setMemberClientsHMap(memberClientsHMapNew);
+      setMemberClientsHMap(memberClientsHMapNew);
 
       // update last update time
       Cluster.LAST_UPDATE_TIME = systemNanoTime;
@@ -844,7 +844,7 @@ public class Cluster extends Thread {
     private long qNRespDeSerTime;
 
     public static String[] getGridColumnNames() {
-      String[] colNames = new String[] {PulseConstants.MBEAN_COLNAME_QUERYDEFINITION,
+      return new String[] {PulseConstants.MBEAN_COLNAME_QUERYDEFINITION,
           PulseConstants.MBEAN_COLNAME_NUMEXECUTION,
           PulseConstants.MBEAN_COLNAME_TOTALEXECUTIONTIME,
           PulseConstants.MBEAN_COLNAME_NUMEXECUTIONSINPROGRESS,
@@ -858,11 +858,10 @@ public class Cluster extends Thread {
           PulseConstants.MBEAN_COLNAME_ROWSMODIFICATIONTIME,
           PulseConstants.MBEAN_COLNAME_QNNUMROWSSEEN, PulseConstants.MBEAN_COLNAME_QNMSGSENDTIME,
           PulseConstants.MBEAN_COLNAME_QNMSGSERTIME, PulseConstants.MBEAN_COLNAME_QNRESPDESERTIME};
-      return colNames;
     }
 
     public static String[] getGridColumnAttributes() {
-      String[] colAttributes = new String[] {PulseConstants.MBEAN_ATTRIBUTE_QUERYDEFINITION,
+      return new String[] {PulseConstants.MBEAN_ATTRIBUTE_QUERYDEFINITION,
           PulseConstants.MBEAN_ATTRIBUTE_NUMEXECUTION,
           PulseConstants.MBEAN_ATTRIBUTE_TOTALEXECUTIONTIME,
           PulseConstants.MBEAN_ATTRIBUTE_NUMEXECUTIONSINPROGRESS,
@@ -880,13 +879,11 @@ public class Cluster extends Thread {
           PulseConstants.MBEAN_ATTRIBUTE_QNNUMROWSSEEN,
           PulseConstants.MBEAN_ATTRIBUTE_QNMSGSENDTIME, PulseConstants.MBEAN_ATTRIBUTE_QNMSGSERTIME,
           PulseConstants.MBEAN_ATTRIBUTE_QNRESPDESERTIME};
-      return colAttributes;
     }
 
     public static int[] getGridColumnWidths() {
-      int[] colWidths = new int[] {300, 150, 160, 180, 150, 200, 150, 130, 130, 160, 140, 180, 170,
+      return new int[] {300, 150, 160, 180, 150, 200, 150, 130, 130, 160, 140, 180, 170,
           160, 130, 190, 170, 170, 170, 200};
-      return colWidths;
     }
 
     /**
@@ -1280,7 +1277,7 @@ public class Cluster extends Thread {
      * @return the local maximum memory
      */
     public int getLocalMaxMemory() {
-      return this.localMaxMemory;
+      return localMaxMemory;
     }
 
     public void setLocalMaxMemory(int localMaxMemory) {
@@ -1348,26 +1345,26 @@ public class Cluster extends Thread {
       Object[] returnArray = null;
       switch (trendId) {
         case REGION_ON_MEMBER_STAT_GETS_PER_SEC_TREND:
-          synchronized (this.getsPerSecTrend) {
-            returnArray = this.getsPerSecTrend.toArray();
+          synchronized (getsPerSecTrend) {
+            returnArray = getsPerSecTrend.toArray();
           }
           break;
 
         case REGION_ON_MEMBER_STAT_PUTS_PER_SEC_TREND:
-          synchronized (this.putsPerSecTrend) {
-            returnArray = this.putsPerSecTrend.toArray();
+          synchronized (putsPerSecTrend) {
+            returnArray = putsPerSecTrend.toArray();
           }
           break;
 
         case REGION_ON_MEMBER_STAT_DISK_READS_PER_SEC_TREND:
-          synchronized (this.diskReadsPerSecTrend) {
-            returnArray = this.diskReadsPerSecTrend.toArray();
+          synchronized (diskReadsPerSecTrend) {
+            returnArray = diskReadsPerSecTrend.toArray();
           }
           break;
 
         case REGION_ON_MEMBER_STAT_DISK_WRITES_PER_SEC_TREND:
-          synchronized (this.diskWritesPerSecTrend) {
-            returnArray = this.diskWritesPerSecTrend.toArray();
+          synchronized (diskWritesPerSecTrend) {
+            returnArray = diskWritesPerSecTrend.toArray();
           }
           break;
       }
@@ -1432,8 +1429,8 @@ public class Cluster extends Thread {
     private boolean enableOffHeapMemory;
     private String compressionCodec = "";
 
-    private List<String> memberName = new ArrayList<String>();
-    private List<RegionOnMember> regionOnMembers = new ArrayList<RegionOnMember>();
+    private List<String> memberName = new ArrayList<>();
+    private List<RegionOnMember> regionOnMembers = new ArrayList<>();
     private CircularFifoBuffer getsPerSecTrend = new CircularFifoBuffer(MAX_SAMPLE_SIZE);
     private CircularFifoBuffer putsPerSecTrend = new CircularFifoBuffer(MAX_SAMPLE_SIZE);
     private CircularFifoBuffer diskReadsPerSecTrend = new CircularFifoBuffer(MAX_SAMPLE_SIZE);
@@ -1451,26 +1448,26 @@ public class Cluster extends Thread {
       Object[] returnArray = null;
       switch (trendId) {
         case REGION_STAT_GETS_PER_SEC_TREND:
-          synchronized (this.getsPerSecTrend) {
-            returnArray = this.getsPerSecTrend.toArray();
+          synchronized (getsPerSecTrend) {
+            returnArray = getsPerSecTrend.toArray();
           }
           break;
 
         case REGION_STAT_PUTS_PER_SEC_TREND:
-          synchronized (this.putsPerSecTrend) {
-            returnArray = this.putsPerSecTrend.toArray();
+          synchronized (putsPerSecTrend) {
+            returnArray = putsPerSecTrend.toArray();
           }
           break;
 
         case REGION_STAT_DISK_READS_PER_SEC_TREND:
-          synchronized (this.diskReadsPerSecTrend) {
-            returnArray = this.diskReadsPerSecTrend.toArray();
+          synchronized (diskReadsPerSecTrend) {
+            returnArray = diskReadsPerSecTrend.toArray();
           }
           break;
 
         case REGION_STAT_DISK_WRITES_PER_SEC_TREND:
-          synchronized (this.diskWritesPerSecTrend) {
-            returnArray = this.diskWritesPerSecTrend.toArray();
+          synchronized (diskWritesPerSecTrend) {
+            returnArray = diskWritesPerSecTrend.toArray();
           }
           break;
       }
@@ -1479,7 +1476,7 @@ public class Cluster extends Thread {
     }
 
     public boolean isDiskSynchronous() {
-      return this.diskSynchronous;
+      return diskSynchronous;
     }
 
     public void setDiskSynchronous(boolean diskSynchronous) {
@@ -1487,7 +1484,7 @@ public class Cluster extends Thread {
     }
 
     public String getDiskStoreName() {
-      return this.diskStoreName;
+      return diskStoreName;
     }
 
     public void setDiskStoreName(String diskStoreName) {
@@ -1495,7 +1492,7 @@ public class Cluster extends Thread {
     }
 
     public String getScope() {
-      return this.scope;
+      return scope;
     }
 
     public void setScope(String scope) {
@@ -1503,7 +1500,7 @@ public class Cluster extends Thread {
     }
 
     public int getEmptyNode() {
-      return this.emptyNode;
+      return emptyNode;
     }
 
     public void setEmptyNode(int emptyNode) {
@@ -1511,7 +1508,7 @@ public class Cluster extends Thread {
     }
 
     public long getDiskUsage() {
-      return this.diskUsage;
+      return diskUsage;
     }
 
     public void setDiskUsage(long diskUsage) {
@@ -1523,7 +1520,7 @@ public class Cluster extends Thread {
     }
 
     public boolean getWanEnabled() {
-      return this.wanEnabled;
+      return wanEnabled;
     }
 
     public void setWanEnabled(boolean wanEnabled) {
@@ -1531,7 +1528,7 @@ public class Cluster extends Thread {
     }
 
     public boolean getPersistentEnabled() {
-      return this.persistentEnabled;
+      return persistentEnabled;
     }
 
     public void setPersistentEnabled(boolean persistentEnabled) {
@@ -1539,7 +1536,7 @@ public class Cluster extends Thread {
     }
 
     public String getName() {
-      return this.name;
+      return name;
     }
 
     public void setName(String name) {
@@ -1547,11 +1544,11 @@ public class Cluster extends Thread {
     }
 
     public long getEntrySize() {
-      return this.entrySize;
+      return entrySize;
     }
 
     public List<String> getMemberName() {
-      return this.memberName;
+      return memberName;
     }
 
     public void setMemberName(List<String> memberName) {
@@ -1559,7 +1556,7 @@ public class Cluster extends Thread {
     }
 
     public String getFullPath() {
-      return this.fullPath;
+      return fullPath;
     }
 
     public void setFullPath(String fullPath) {
@@ -1567,7 +1564,7 @@ public class Cluster extends Thread {
     }
 
     public double getDiskReadsRate() {
-      return this.diskReadsRate;
+      return diskReadsRate;
     }
 
     public void setDiskReadsRate(double diskReadsRate) {
@@ -1575,7 +1572,7 @@ public class Cluster extends Thread {
     }
 
     public double getDiskWritesRate() {
-      return this.diskWritesRate;
+      return diskWritesRate;
     }
 
     public void setDiskWritesRate(double diskWritesRate) {
@@ -1583,7 +1580,7 @@ public class Cluster extends Thread {
     }
 
     public CircularFifoBuffer getDiskReadsPerSecTrend() {
-      return this.diskReadsPerSecTrend;
+      return diskReadsPerSecTrend;
     }
 
     public void setDiskReadsPerSecTrend(CircularFifoBuffer diskReadsPerSecTrend) {
@@ -1591,7 +1588,7 @@ public class Cluster extends Thread {
     }
 
     public CircularFifoBuffer getDiskWritesPerSecTrend() {
-      return this.diskWritesPerSecTrend;
+      return diskWritesPerSecTrend;
     }
 
     public void setDiskWritesPerSecTrend(CircularFifoBuffer diskWritesPerSecTrend) {
@@ -1599,7 +1596,7 @@ public class Cluster extends Thread {
     }
 
     public double getGetsRate() {
-      return this.getsRate;
+      return getsRate;
     }
 
     public void setGetsRate(double getsRate) {
@@ -1607,7 +1604,7 @@ public class Cluster extends Thread {
     }
 
     public double getLruEvictionRate() {
-      return this.lruEvictionRate;
+      return lruEvictionRate;
     }
 
     public void setLruEvictionRate(double lruEvictionRate) {
@@ -1615,7 +1612,7 @@ public class Cluster extends Thread {
     }
 
     public String getRegionType() {
-      return this.regionType;
+      return regionType;
     }
 
     public void setRegionType(String regionType) {
@@ -1623,7 +1620,7 @@ public class Cluster extends Thread {
     }
 
     public long getSystemRegionEntryCount() {
-      return this.systemRegionEntryCount;
+      return systemRegionEntryCount;
     }
 
     public void setSystemRegionEntryCount(long systemRegionEntryCount) {
@@ -1631,7 +1628,7 @@ public class Cluster extends Thread {
     }
 
     public int getMemberCount() {
-      return this.memberCount;
+      return memberCount;
     }
 
     public void setMemberCount(int memberCount) {
@@ -1639,7 +1636,7 @@ public class Cluster extends Thread {
     }
 
     public double getPutsRate() {
-      return this.putsRate;
+      return putsRate;
     }
 
     public void setPutsRate(double putsRate) {
@@ -1647,7 +1644,7 @@ public class Cluster extends Thread {
     }
 
     public CircularFifoBuffer getGetsPerSecTrend() {
-      return this.getsPerSecTrend;
+      return getsPerSecTrend;
     }
 
     public void setGetsPerSecTrend(CircularFifoBuffer getsPerSecTrend) {
@@ -1655,7 +1652,7 @@ public class Cluster extends Thread {
     }
 
     public CircularFifoBuffer getPutsPerSecTrend() {
-      return this.putsPerSecTrend;
+      return putsPerSecTrend;
     }
 
     public void setPutsPerSecTrend(CircularFifoBuffer putsPerSecTrend) {
@@ -1663,7 +1660,7 @@ public class Cluster extends Thread {
     }
 
     public boolean isEnableOffHeapMemory() {
-      return this.enableOffHeapMemory;
+      return enableOffHeapMemory;
     }
 
     public void setEnableOffHeapMemory(boolean enableOffHeapMemory) {
@@ -1671,7 +1668,7 @@ public class Cluster extends Thread {
     }
 
     public String getCompressionCodec() {
-      return this.compressionCodec;
+      return compressionCodec;
     }
 
     public void setCompressionCodec(String compressionCodec) {
@@ -1726,7 +1723,7 @@ public class Cluster extends Thread {
     }
 
     public boolean isAcknowledged() {
-      return this.isAcknowledged;
+      return isAcknowledged;
     }
 
     public void setAcknowledged(boolean isAcknowledged) {
@@ -1734,16 +1731,16 @@ public class Cluster extends Thread {
     }
 
     public Date getTimestamp() {
-      return this.timestamp;
+      return timestamp;
     }
 
     public void setTimestamp(Date timestamp) {
       this.timestamp = timestamp;
-      this.iso8601Ts = formatToISOTimestamp(timestamp);
+      iso8601Ts = formatToISOTimestamp(timestamp);
     }
 
     public int getSeverity() {
-      return this.severity;
+      return severity;
     }
 
     public void setSeverity(int severity) {
@@ -1751,7 +1748,7 @@ public class Cluster extends Thread {
     }
 
     public String getMemberName() {
-      return this.memberName;
+      return memberName;
     }
 
     public void setMemberName(String memberName) {
@@ -1759,7 +1756,7 @@ public class Cluster extends Thread {
     }
 
     public String getDescription() {
-      return this.description;
+      return description;
     }
 
     public void setDescription(String description) {
@@ -1767,7 +1764,7 @@ public class Cluster extends Thread {
     }
 
     public int getId() {
-      return this.id;
+      return id;
     }
 
     public void setId(int id) {
@@ -1817,15 +1814,15 @@ public class Cluster extends Thread {
     private boolean isSubscriptionEnabled = false;
 
     public String getId() {
-      return this.id;
+      return id;
     }
 
     public int getGets() {
-      return this.gets;
+      return gets;
     }
 
     public int getPuts() {
-      return this.puts;
+      return puts;
     }
 
     public int getClientCQCount() {
@@ -1849,7 +1846,7 @@ public class Cluster extends Thread {
     }
 
     public String getName() {
-      return this.name;
+      return name;
     }
 
     public void setName(String name) {
@@ -1857,7 +1854,7 @@ public class Cluster extends Thread {
     }
 
     public String getHost() {
-      return this.host;
+      return host;
     }
 
     public void setHost(String host) {
@@ -1865,7 +1862,7 @@ public class Cluster extends Thread {
     }
 
     public int getQueueSize() {
-      return this.queueSize;
+      return queueSize;
     }
 
     public void setQueueSize(int queueSize) {
@@ -1873,7 +1870,7 @@ public class Cluster extends Thread {
     }
 
     public double getCpuUsage() {
-      return this.cpuUsage;
+      return cpuUsage;
     }
 
     public void setCpuUsage(double cpuUsage) {
@@ -1889,7 +1886,7 @@ public class Cluster extends Thread {
     }
 
     public long getUptime() {
-      return this.uptime;
+      return uptime;
     }
 
     public void setUptime(long uptime) {
@@ -1897,7 +1894,7 @@ public class Cluster extends Thread {
     }
 
     public int getThreads() {
-      return this.threads;
+      return threads;
     }
 
     public void setThreads(int threads) {
@@ -1905,7 +1902,7 @@ public class Cluster extends Thread {
     }
 
     public String getStatus() {
-      return this.status;
+      return status;
     }
 
     public void setStatus(String status) {
@@ -1913,7 +1910,7 @@ public class Cluster extends Thread {
     }
 
     public int getCpus() {
-      return this.cpus;
+      return cpus;
     }
 
     public void setCpus(int cpus) {
@@ -1921,7 +1918,7 @@ public class Cluster extends Thread {
     }
 
     public long getProcessCpuTime() {
-      return this.processCpuTime;
+      return processCpuTime;
     }
 
     public void setProcessCpuTime(long processCpuTime) {
@@ -1954,7 +1951,7 @@ public class Cluster extends Thread {
     private int batchSize;
 
     public int getListeningPort() {
-      return this.listeningPort;
+      return listeningPort;
     }
 
     public void setListeningPort(int listeningPort) {
@@ -1962,7 +1959,7 @@ public class Cluster extends Thread {
     }
 
     public double getLinkThroughput() {
-      return this.linkThroughput;
+      return linkThroughput;
     }
 
     public void setLinkThroughput(double linkThroughput) {
@@ -1970,7 +1967,7 @@ public class Cluster extends Thread {
     }
 
     public long getAvgBatchProcessingTime() {
-      return this.avgBatchProcessingTime;
+      return avgBatchProcessingTime;
     }
 
     public void setAvgBatchProcessingTime(long avgBatchProcessingTime) {
@@ -1978,7 +1975,7 @@ public class Cluster extends Thread {
     }
 
     public String getId() {
-      return this.id;
+      return id;
     }
 
     public void setId(String id) {
@@ -1986,7 +1983,7 @@ public class Cluster extends Thread {
     }
 
     public int getQueueSize() {
-      return this.queueSize;
+      return queueSize;
     }
 
     public void setQueueSize(int queueSize) {
@@ -1994,7 +1991,7 @@ public class Cluster extends Thread {
     }
 
     public Boolean getStatus() {
-      return this.status;
+      return status;
     }
 
     public void setStatus(Boolean status) {
@@ -2002,7 +1999,7 @@ public class Cluster extends Thread {
     }
 
     public int getBatchSize() {
-      return this.batchSize;
+      return batchSize;
     }
 
     public void setBatchSize(int batchSize) {
@@ -2029,7 +2026,7 @@ public class Cluster extends Thread {
     private int eventsExceedingAlertThreshold;
 
     public double getLinkThroughput() {
-      return this.linkThroughput;
+      return linkThroughput;
     }
 
     public void setLinkThroughput(double linkThroughput) {
@@ -2037,7 +2034,7 @@ public class Cluster extends Thread {
     }
 
     public String getId() {
-      return this.id;
+      return id;
     }
 
     public void setId(String id) {
@@ -2045,7 +2042,7 @@ public class Cluster extends Thread {
     }
 
     public int getQueueSize() {
-      return this.queueSize;
+      return queueSize;
     }
 
     public void setQueueSize(int queueSize) {
@@ -2053,7 +2050,7 @@ public class Cluster extends Thread {
     }
 
     public Boolean getStatus() {
-      return this.status;
+      return status;
     }
 
     public void setStatus(Boolean status) {
@@ -2061,7 +2058,7 @@ public class Cluster extends Thread {
     }
 
     public boolean getPrimary() {
-      return this.primary;
+      return primary;
     }
 
     public void setPrimary(boolean primary) {
@@ -2069,7 +2066,7 @@ public class Cluster extends Thread {
     }
 
     public boolean getSenderType() {
-      return this.senderType;
+      return senderType;
     }
 
     public void setSenderType(boolean senderType) {
@@ -2077,7 +2074,7 @@ public class Cluster extends Thread {
     }
 
     public int getBatchSize() {
-      return this.batchSize;
+      return batchSize;
     }
 
     public void setBatchSize(int batchSize) {
@@ -2085,7 +2082,7 @@ public class Cluster extends Thread {
     }
 
     public boolean getPersistenceEnabled() {
-      return this.persistenceEnabled;
+      return persistenceEnabled;
     }
 
     public void setPersistenceEnabled(boolean persistenceEnabled) {
@@ -2138,7 +2135,7 @@ public class Cluster extends Thread {
     private int eventQueueSize;
 
     public String getId() {
-      return this.id;
+      return id;
     }
 
     public void setId(String id) {
@@ -2146,7 +2143,7 @@ public class Cluster extends Thread {
     }
 
     public boolean getPrimary() {
-      return this.primary;
+      return primary;
     }
 
     public void setPrimary(boolean primary) {
@@ -2168,7 +2165,7 @@ public class Cluster extends Thread {
     }
 
     public int getBatchSize() {
-      return this.batchSize;
+      return batchSize;
     }
 
     public void setBatchSize(int batchSize) {
@@ -2246,15 +2243,18 @@ public class Cluster extends Thread {
    * @param port port
    * @param userName pulse user name
    */
-  public Cluster(String host, String port, String userName) {
-    this.serverName = host;
+  public Cluster(String host, String port, String userName, ResourceBundle resourceBundle,
+      Repository repository) {
+    serverName = host;
     this.port = port;
-    this.jmxUserName = userName;
+    jmxUserName = userName;
+    this.resourceBundle = resourceBundle;
+    this.repository = repository;
 
-    this.updater = new JMXDataUpdater(serverName, port, this);
-    this.clusterHasBeenInitialized = new CountDownLatch(1);
+    updater = new JMXDataUpdater(serverName, port, this, resourceBundle, repository);
+    clusterHasBeenInitialized = new CountDownLatch(1);
     if (Boolean.getBoolean(PulseConstants.SYSTEM_PROPERTY_PULSE_EMBEDDED)) {
-      this.setDaemon(true);
+      setDaemon(true);
     }
   }
 
@@ -2268,12 +2268,12 @@ public class Cluster extends Thread {
   @Override
   public void run() {
     try {
-      while (!this.stopUpdates && isConnectedFlag()) {
+      while (!stopUpdates && isConnectedFlag()) {
         try {
-          if (!this.updateData()) {
-            this.stale++;
+          if (!updateData()) {
+            stale++;
           } else {
-            this.stale = 0;
+            stale = 0;
           }
         } catch (Exception e) {
           logger.info("Exception Occurred while updating cluster data : ", e);
@@ -2288,7 +2288,7 @@ public class Cluster extends Thread {
       }
 
       logger.info("{} :: {}:{}", resourceBundle.getString("LOG_MSG_STOP_THREAD_UPDATES"),
-          this.serverName, this.port);
+          serverName, port);
     } finally {
       clusterHasBeenInitialized.countDown();
     }
@@ -2305,15 +2305,15 @@ public class Cluster extends Thread {
     // Connect if required or hold a connection. If unable to connect,
     // return false
     logger.debug("{} :: {}:{}", resourceBundle.getString("LOG_MSG_CLUSTER_DATA_IS_UPDATING"),
-        this.serverName, this.port);
-    return this.updater.updateData();
+        serverName, port);
+    return updater.updateData();
   }
 
   /**
    * for stopping the update thread
    */
   public void stopThread() {
-    this.stopUpdates = true;
+    stopUpdates = true;
 
     try {
       join();
@@ -2323,7 +2323,7 @@ public class Cluster extends Thread {
   }
 
   public Map<String, Cluster.Member> getMembersHMap() {
-    return this.membersHMap;
+    return membersHMap;
   }
 
   public void setMembersHMap(HashMap<String, Cluster.Member> membersHMap) {
@@ -2331,29 +2331,24 @@ public class Cluster extends Thread {
   }
 
   public Map<String, Boolean> getWanInformation() {
-    Map<String, Boolean> wanMap = null;
-    synchronized (this.wanInformation) {
-      wanMap = (Map<String, Boolean>) this.wanInformation.clone();
+    synchronized (wanInformation) {
+      @SuppressWarnings("unchecked")
+      Map<String, Boolean> wanMap = (Map<String, Boolean>) wanInformation.clone();
+      return wanMap;
     }
-
-    return wanMap;
   }
 
   // Returns actual wanInformation object reference
   public Map<String, Boolean> getWanInformationObject() {
-    return this.wanInformation;
-  }
-
-  public void setWanInformation(HashMap<String, Boolean> wanInformation) {
-    this.wanInformation = wanInformation;
+    return wanInformation;
   }
 
   public String getJmxUserName() {
-    return this.jmxUserName;
+    return jmxUserName;
   }
 
   public String getConnectionErrorMsg() {
-    return this.connectionErrorMsg;
+    return connectionErrorMsg;
   }
 
   public void setConnectionErrorMsg(String connectionErrorMsg) {
@@ -2361,11 +2356,11 @@ public class Cluster extends Thread {
   }
 
   public String getServerName() {
-    return this.serverName;
+    return serverName;
   }
 
   public boolean isConnectedFlag() {
-    return this.connectedFlag;
+    return connectedFlag;
   }
 
   public void setConnectedFlag(boolean connectedFlag) {
@@ -2373,15 +2368,15 @@ public class Cluster extends Thread {
   }
 
   public String getPort() {
-    return this.port;
+    return port;
   }
 
   public int getStale() {
-    return this.stale;
+    return stale;
   }
 
   public double getWritePerSec() {
-    return this.writePerSec;
+    return writePerSec;
   }
 
   public void setWritePerSec(double writePerSec) {
@@ -2389,7 +2384,7 @@ public class Cluster extends Thread {
   }
 
   public double getReadPerSec() {
-    return this.readPerSec;
+    return readPerSec;
   }
 
   public void setReadPerSec(double readPerSec) {
@@ -2397,7 +2392,7 @@ public class Cluster extends Thread {
   }
 
   public double getQueriesPerSec() {
-    return this.queriesPerSec;
+    return queriesPerSec;
   }
 
   public void setQueriesPerSec(double queriesPerSec) {
@@ -2405,7 +2400,7 @@ public class Cluster extends Thread {
   }
 
   public double getLoadPerSec() {
-    return this.loadPerSec;
+    return loadPerSec;
   }
 
   public void setLoadPerSec(double loadPerSec) {
@@ -2413,7 +2408,7 @@ public class Cluster extends Thread {
   }
 
   public int getNotificationPageNumber() {
-    return this.notificationPageNumber;
+    return notificationPageNumber;
   }
 
   public void setNotificationPageNumber(int notificationPageNumber) {
@@ -2425,7 +2420,7 @@ public class Cluster extends Thread {
   }
 
   public boolean isStopUpdates() {
-    return this.stopUpdates;
+    return stopUpdates;
   }
 
   public void setStopUpdates(boolean stopUpdates) {
@@ -2433,7 +2428,7 @@ public class Cluster extends Thread {
   }
 
   public long getUsedHeapSize() {
-    return this.usedHeapSize;
+    return usedHeapSize;
   }
 
   public void setUsedHeapSize(long usedHeapSize) {
@@ -2441,7 +2436,7 @@ public class Cluster extends Thread {
   }
 
   public int getServerCount() {
-    return this.serverCount;
+    return serverCount;
   }
 
   public void setServerCount(int serverCount) {
@@ -2465,15 +2460,15 @@ public class Cluster extends Thread {
   }
 
   public int getRunningFunctionCount() {
-    return this.runningFunctionCount;
+    return runningFunctionCount;
   }
 
   public long getRegisteredCQCount() {
-    return this.registeredCQCount;
+    return registeredCQCount;
   }
 
   public int getSubscriptionCount() {
-    return this.subscriptionCount;
+    return subscriptionCount;
   }
 
   public void setSubscriptionCount(int subscriptionCount) {
@@ -2489,11 +2484,11 @@ public class Cluster extends Thread {
   }
 
   public Map<String, Cluster.Region> getClusterRegions() {
-    return this.clusterRegionMap;
+    return clusterRegionMap;
   }
 
   public Cluster.Region getClusterRegion(String regionFullPath) {
-    return this.clusterRegionMap.get(regionFullPath);
+    return clusterRegionMap.get(regionFullPath);
   }
 
   public void setClusterRegions(Map<String, Region> clusterRegionMap) {
@@ -2501,7 +2496,7 @@ public class Cluster extends Thread {
   }
 
   public Map<String, Cluster.Statement> getClusterStatements() {
-    return this.clusterStatementMap;
+    return clusterStatementMap;
   }
 
   public void setClusterStatements(Map<String, Statement> clusterStatementMap) {
@@ -2509,17 +2504,13 @@ public class Cluster extends Thread {
   }
 
   public Alert[] getAlertsList() {
-    Alert[] list = null;
-    synchronized (this.alertsList) {
-      list = new Alert[this.alertsList.size()];
-      list = this.alertsList.toArray(list);
+    Alert[] list;
+    synchronized (alertsList) {
+      list = new Alert[alertsList.size()];
+      list = alertsList.toArray(list);
     }
 
     return list;
-  }
-
-  public void setAlertsList(List<Alert> alertsList) {
-    this.alertsList = alertsList;
   }
 
   public void setServerName(String serverName) {
@@ -2531,7 +2522,7 @@ public class Cluster extends Thread {
   }
 
   public Set<String> getDeletedMembers() {
-    return this.deletedMembers;
+    return deletedMembers;
   }
 
   public void setDeletedMembers(Set<String> deletedMembers) {
@@ -2539,7 +2530,7 @@ public class Cluster extends Thread {
   }
 
   public Set<String> getDeletedRegions() {
-    return this.deletedRegions;
+    return deletedRegions;
   }
 
   public void setDeletedRegions(Set<String> deletedRegions) {
@@ -2547,9 +2538,9 @@ public class Cluster extends Thread {
   }
 
   public Map<String, List<Member>> getPhysicalToMember() {
-    Map<String, List<Member>> ptom = null;
+    Map<String, List<Member>> ptom;
     // synchronized (physicalToMember) {
-    ptom = this.physicalToMember;
+    ptom = physicalToMember;
     // }
     return ptom;
   }
@@ -2561,7 +2552,7 @@ public class Cluster extends Thread {
   }
 
   public int getMemberCount() {
-    return this.memberCount;
+    return memberCount;
   }
 
   public void setMemberCount(int memberCount) {
@@ -2569,7 +2560,7 @@ public class Cluster extends Thread {
   }
 
   public long getClientConnectionCount() {
-    return this.clientConnectionCount;
+    return clientConnectionCount;
   }
 
   public void setClientConnectionCount(long clientConnectionCount) {
@@ -2577,7 +2568,7 @@ public class Cluster extends Thread {
   }
 
   public int getClusterId() {
-    return this.clusterId;
+    return clusterId;
   }
 
   public void setClusterId(int clusterId) {
@@ -2585,7 +2576,7 @@ public class Cluster extends Thread {
   }
 
   public int getLocatorCount() {
-    return this.locatorCount;
+    return locatorCount;
   }
 
   public void setLocatorCount(int locatorCount) {
@@ -2593,7 +2584,7 @@ public class Cluster extends Thread {
   }
 
   public int getTotalRegionCount() {
-    return this.totalRegionCount;
+    return totalRegionCount;
   }
 
   public void setTotalRegionCount(int totalRegionCount) {
@@ -2601,7 +2592,7 @@ public class Cluster extends Thread {
   }
 
   public long getTotalHeapSize() {
-    return this.totalHeapSize;
+    return totalHeapSize;
   }
 
   public void setTotalHeapSize(long totalHeapSize) {
@@ -2609,7 +2600,7 @@ public class Cluster extends Thread {
   }
 
   public long getTotalRegionEntryCount() {
-    return this.totalRegionEntryCount;
+    return totalRegionEntryCount;
   }
 
   public void setTotalRegionEntryCount(long totalRegionEntryCount) {
@@ -2617,7 +2608,7 @@ public class Cluster extends Thread {
   }
 
   public int getCurrentQueryCount() {
-    return this.currentQueryCount;
+    return currentQueryCount;
   }
 
   public void setCurrentQueryCount(int currentQueryCount) {
@@ -2625,7 +2616,7 @@ public class Cluster extends Thread {
   }
 
   public long getTotalBytesOnDisk() {
-    return this.totalBytesOnDisk;
+    return totalBytesOnDisk;
   }
 
   public void setTotalBytesOnDisk(long totalBytesOnDisk) {
@@ -2633,7 +2624,7 @@ public class Cluster extends Thread {
   }
 
   public double getDiskReadsRate() {
-    return this.diskReadsRate;
+    return diskReadsRate;
   }
 
   public void setDiskReadsRate(double diskReadsRate) {
@@ -2641,7 +2632,7 @@ public class Cluster extends Thread {
   }
 
   public double getDiskWritesRate() {
-    return this.diskWritesRate;
+    return diskWritesRate;
   }
 
   public void setDiskWritesRate(double diskWritesRate) {
@@ -2649,7 +2640,7 @@ public class Cluster extends Thread {
   }
 
   public int getAvgDiskStorage() {
-    return this.avgDiskStorage;
+    return avgDiskStorage;
   }
 
   public void setAvgDiskStorage(int avgDiskStorage) {
@@ -2657,7 +2648,7 @@ public class Cluster extends Thread {
   }
 
   public int getAvgDiskWritesRate() {
-    return this.avgDiskWritesRate;
+    return avgDiskWritesRate;
   }
 
   public void setAvgDiskWritesRate(int avgDiskWritesRate) {
@@ -2665,7 +2656,7 @@ public class Cluster extends Thread {
   }
 
   public CircularFifoBuffer getWritePerSecTrend() {
-    return this.writePerSecTrend;
+    return writePerSecTrend;
   }
 
   public void setWritePerSecTrend(CircularFifoBuffer writePerSecTrend) {
@@ -2673,7 +2664,7 @@ public class Cluster extends Thread {
   }
 
   public long getGarbageCollectionCount() {
-    return this.garbageCollectionCount;
+    return garbageCollectionCount;
   }
 
   public void setGarbageCollectionCount(long garbageCollectionCount) {
@@ -2681,7 +2672,7 @@ public class Cluster extends Thread {
   }
 
   public CircularFifoBuffer getTotalBytesOnDiskTrend() {
-    return this.totalBytesOnDiskTrend;
+    return totalBytesOnDiskTrend;
   }
 
   public void setTotalBytesOnDiskTrend(CircularFifoBuffer totalBytesOnDiskTrend) {
@@ -2689,7 +2680,7 @@ public class Cluster extends Thread {
   }
 
   public CircularFifoBuffer getThroughoutWritesTrend() {
-    return this.throughoutWritesTrend;
+    return throughoutWritesTrend;
   }
 
   public void setThroughoutWritesTrend(CircularFifoBuffer throughoutWritesTrend) {
@@ -2697,7 +2688,7 @@ public class Cluster extends Thread {
   }
 
   public CircularFifoBuffer getThroughoutReadsTrend() {
-    return this.throughoutReadsTrend;
+    return throughoutReadsTrend;
   }
 
   public void setThroughoutReadsTrend(CircularFifoBuffer throughoutReadsTrend) {
@@ -2705,7 +2696,7 @@ public class Cluster extends Thread {
   }
 
   public CircularFifoBuffer getReadPerSecTrend() {
-    return this.readPerSecTrend;
+    return readPerSecTrend;
   }
 
   public void setReadPerSecTrend(CircularFifoBuffer readPerSecTrend) {
@@ -2713,7 +2704,7 @@ public class Cluster extends Thread {
   }
 
   public CircularFifoBuffer getQueriesPerSecTrend() {
-    return this.queriesPerSecTrend;
+    return queriesPerSecTrend;
   }
 
   public void setQueriesPerSecTrend(CircularFifoBuffer queriesPerSecTrend) {
@@ -2721,7 +2712,7 @@ public class Cluster extends Thread {
   }
 
   public CircularFifoBuffer getMemoryUsageTrend() {
-    return this.memoryUsageTrend;
+    return memoryUsageTrend;
   }
 
   public void setMemoryUsageTrend(CircularFifoBuffer memoryUsageTrend) {
@@ -2729,15 +2720,15 @@ public class Cluster extends Thread {
   }
 
   public CircularFifoBuffer getGarbageCollectionTrend() {
-    return this.garbageCollectionTrend;
+    return garbageCollectionTrend;
   }
 
   public void setGarbageCollectionTrend(CircularFifoBuffer garbageCollectionSamples) {
-    this.garbageCollectionTrend = garbageCollectionSamples;
+    garbageCollectionTrend = garbageCollectionSamples;
   }
 
   public long getPreviousJVMPauseCount() {
-    return this.previousJVMPauseCount;
+    return previousJVMPauseCount;
   }
 
   public void setPreviousJVMPauseCount(long previousJVMPauseCount) {
@@ -2746,42 +2737,48 @@ public class Cluster extends Thread {
 
   public DataBrowser getDataBrowser() {
     // Initialize dataBrowser if null
-    if (this.dataBrowser == null) {
-      this.dataBrowser = new DataBrowser();
+    if (dataBrowser == null) {
+      dataBrowser = new DataBrowser(resourceBundle, repository);
     }
-    return this.dataBrowser;
-  }
-
-  public void setDataBrowser(DataBrowser dataBrowser) {
-    this.dataBrowser = dataBrowser;
+    return dataBrowser;
   }
 
   public ObjectNode executeQuery(String queryText, String members, int limit) {
     // Execute data browser query
-    return this.updater.executeQuery(queryText, members, limit);
+    return updater.executeQuery(queryText, members, limit);
   }
 
   public ArrayNode getQueryHistoryByUserId(String userId) {
-    return this.getDataBrowser().getQueryHistoryByUserId(userId);
+    return getDataBrowser().getQueryHistoryByUserId(userId);
   }
 
   public boolean addQueryInHistory(String queryText, String userName) {
-    return this.getDataBrowser().addQueryInHistory(queryText, userName);
+    return getDataBrowser().addQueryInHistory(queryText, userName);
   }
 
   public boolean deleteQueryById(String userId, String queryId) {
-    return this.getDataBrowser().deleteQueryById(userId, queryId);
+    return getDataBrowser().deleteQueryById(userId, queryId);
   }
 
-  public void connectToGemFire(String password) {
-    jmxConnector = this.updater.connect(this.getJmxUserName(), password);
+  public void reconnectToGemFire(Object credentials) {
+    if (jmxConnector != null) {
+      try {
+        jmxConnector.close();
+      } catch (IOException e) {
+        logger.info("Could not close old connection on reconnect attempt", e);
+      }
+      jmxConnector = updater.connect(credentials);
+    }
+  }
 
-    // if connected
+  public void connectToGemFire(Object credentials) {
+    jmxConnector = updater.connect(credentials);
+
     if (jmxConnector != null) {
       // Start Thread
-      this.start();
+      start();
       try {
-        this.waitForInitialization(15, TimeUnit.SECONDS);
+        waitForInitialization(15, TimeUnit.SECONDS);
       } catch (InterruptedException e) {
         e.printStackTrace();
       }
@@ -2789,35 +2786,33 @@ public class Cluster extends Thread {
   }
 
   public JMXConnector getJMXConnector() {
-    return this.jmxConnector;
+    return jmxConnector;
   }
 
   public void clearAlerts(int alertType, boolean isClearAll) {
 
-    List<Alert> toDelete = new ArrayList<Alert>();
+    List<Alert> toDelete = new ArrayList<>();
 
     if (alertType == -1) {
-      synchronized (this.alertsList) {
+      synchronized (alertsList) {
         if (isClearAll) {
           // Remove all alerts
-          this.alertsList.clear();
-          this.setNotificationPageNumber(1);
+          alertsList.clear();
+          setNotificationPageNumber(1);
         } else {
           // Remove only acknowledged alerts
-          for (int i = 0; i < this.alertsList.size(); i++) {
-            Cluster.Alert alert = this.alertsList.get(i);
+          for (Alert alert : alertsList) {
             if (alert.isAcknowledged()) {
               toDelete.add(alert);
             }
           }
-          this.alertsList.removeAll(toDelete);
+          alertsList.removeAll(toDelete);
           toDelete.clear();
         }
       }
     } else {
-      synchronized (this.alertsList) {
-        for (int i = 0; i < this.alertsList.size(); i++) {
-          Cluster.Alert alert = this.alertsList.get(i);
+      synchronized (alertsList) {
+        for (Alert alert : alertsList) {
           if (alert.getSeverity() == alertType) {
             if (isClearAll) {
               // Remove all alerts of alertType
@@ -2828,15 +2823,15 @@ public class Cluster extends Thread {
             }
           }
         }
-        this.alertsList.removeAll(toDelete);
+        alertsList.removeAll(toDelete);
         toDelete.clear();
       }
     }
   }
 
   public void acknowledgeAlert(int alertId) {
-    synchronized (this.alertsList) {
-      for (Cluster.Alert alert : this.alertsList) {
+    synchronized (alertsList) {
+      for (Cluster.Alert alert : alertsList) {
         if (alert.getId() == alertId) {
           alert.setAcknowledged(true);
           break;
@@ -2846,10 +2841,10 @@ public class Cluster extends Thread {
   }
 
   public void addAlert(Alert alert) {
-    synchronized (this.alertsList) {
-      this.alertsList.add(alert);
-      if (this.alertsList.size() > Cluster.ALERTS_MAX_SIZE)
-        this.alertsList.remove(0);
+    synchronized (alertsList) {
+      alertsList.add(alert);
+      if (alertsList.size() > Cluster.ALERTS_MAX_SIZE)
+        alertsList.remove(0);
     }
   }
 
@@ -2861,46 +2856,46 @@ public class Cluster extends Thread {
    * @return the Member for a given key
    */
   public Cluster.Member getMember(String memberKey) {
-    Cluster.Member member = null;
+    Cluster.Member member;
 
-    synchronized (this.membersHMap) {
-      member = this.membersHMap.get(memberKey);
+    synchronized (membersHMap) {
+      member = membersHMap.get(memberKey);
     }
 
     return member;
   }
 
   public Cluster.Member[] getMembers() {
-    Cluster.Member[] members = null;
-    synchronized (this.membersHMap) {
-      members = new Cluster.Member[this.membersHMap.size()];
-      members = this.membersHMap.values().toArray(members);
+    Cluster.Member[] members;
+    synchronized (membersHMap) {
+      members = new Cluster.Member[membersHMap.size()];
+      members = membersHMap.values().toArray(members);
     }
     return members;
   }
 
   public Cluster.Statement[] getStatements() {
-    Cluster.Statement[] statements = null;
-    synchronized (this.clusterStatementMap) {
-      statements = new Cluster.Statement[this.clusterStatementMap.size()];
-      statements = this.clusterStatementMap.values().toArray(statements);
+    Cluster.Statement[] statements;
+    synchronized (clusterStatementMap) {
+      statements = new Cluster.Statement[clusterStatementMap.size()];
+      statements = clusterStatementMap.values().toArray(statements);
     }
     return statements;
   }
 
   public void removeClusterRegion(String regionFullPath) {
-    this.clusterRegionMap.remove(regionFullPath);
+    clusterRegionMap.remove(regionFullPath);
   }
 
   public void addClusterRegion(String regionFullPath, Region region) {
-    this.clusterRegionMap.put(regionFullPath, region);
+    clusterRegionMap.put(regionFullPath, region);
   }
 
   public void removeClusterStatement(String name) {
-    this.clusterStatementMap.remove(name);
+    clusterStatementMap.remove(name);
   }
 
   public void addClusterStatement(String name, Statement stmt) {
-    this.clusterStatementMap.put(name, stmt);
+    clusterStatementMap.put(name, stmt);
   }
 }

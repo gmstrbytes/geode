@@ -32,24 +32,25 @@ import org.apache.geode.management.internal.cli.domain.IndexDetails;
  *
  * @see org.apache.geode.cache.Cache
  * @see org.apache.geode.cache.execute.Function
- * @see org.apache.geode.cache.execute.FunctionAdapter
  * @see org.apache.geode.cache.execute.FunctionContext
  * @see org.apache.geode.internal.InternalEntity
  * @see org.apache.geode.management.internal.cli.domain.IndexDetails
  * @since GemFire 7.0
  */
 @SuppressWarnings("unused")
-public class ListIndexFunction implements InternalFunction {
+public class ListIndexFunction implements InternalFunction<Void> {
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.ListIndexFunction";
 
   @Override
   public String getId() {
-    return ListIndexFunction.class.getName();
+    return ID;
   }
 
   @Override
-  public void execute(final FunctionContext context) {
+  public void execute(final FunctionContext<Void> context) {
     try {
-      final Set<IndexDetails> indexDetailsSet = new HashSet<IndexDetails>();
+      final Set<IndexDetails> indexDetailsSet = new HashSet<>();
 
       final Cache cache = context.getCache();
       final DistributedMember member = cache.getDistributedSystem().getDistributedMember();

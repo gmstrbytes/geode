@@ -25,6 +25,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
@@ -39,6 +40,7 @@ import org.apache.geode.cache.RegionAttributes;
 import org.apache.geode.cache.Scope;
 import org.apache.geode.cache.persistence.PersistentReplicatesOfflineException;
 import org.apache.geode.cache.query.internal.cq.CqService;
+import org.apache.geode.cache.query.internal.cq.ServerCQ;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.internal.DirectReplyProcessor;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
@@ -46,6 +48,7 @@ import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.cache.FilterRoutingInfo.FilterInfo;
 import org.apache.geode.internal.cache.ha.ThreadIdentifier;
 import org.apache.geode.internal.cache.partitioned.PutAllPRMessage;
+import org.apache.geode.internal.cache.tier.MessageType;
 import org.apache.geode.internal.cache.tier.sockets.ClientProxyMembershipID;
 import org.apache.geode.internal.cache.tier.sockets.VersionedObjectList;
 import org.apache.geode.internal.cache.tx.RemotePutAllMessage;
@@ -59,9 +62,9 @@ import org.apache.geode.internal.offheap.annotations.Unretained;
 import org.apache.geode.internal.serialization.ByteArrayDataInput;
 import org.apache.geode.internal.serialization.DataSerializableFixedID;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
 import org.apache.geode.internal.serialization.StaticSerialization;
-import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
@@ -335,8 +338,7 @@ public class DistributedPutAllOperation extends AbstractUpdateOperation {
      * Constructor to use when receiving a putall from someone else
      */
     public PutAllEntryData(DataInput in, DeserializationContext context, EventID baseEventID,
-        int idx, Version version,
-        ByteArrayDataInput bytesIn) throws IOException, ClassNotFoundException {
+        int idx) throws IOException, ClassNotFoundException {
       this.key = context.getDeserializer().readObject(in);
       byte flgs = in.readByte();
       if ((flgs & IS_OBJECT) != 0) {
@@ -780,7 +782,7 @@ public class DistributedPutAllOperation extends AbstractUpdateOperation {
     }
 
     @Override
-    public Version[] getSerializationVersions() {
+    public KnownVersion[] getSerializationVersions() {
       return null;
     }
   }
@@ -815,6 +817,23 @@ public class DistributedPutAllOperation extends AbstractUpdateOperation {
     return consolidated;
   }
 
+  @Override
+  void doRemoveDestroyTokensFromCqResultKeys(FilterInfo filterInfo, ServerCQ cq) {
+    for (Map.Entry<Long, Integer> e : filterInfo.getCQs().entrySet()) {
+      Long cqID = e.getKey();
+      // For the CQs satisfying the event with destroy CQEvent, remove
+      // the entry from CQ cache.
+      for (int i = 0; i < this.putAllData.length; i++) {
+        @Unretained
+        EntryEventImpl entryEvent = getEventForPosition(i);
+        if (entryEvent != null && entryEvent.getKey() != null && cq != null
+            && cq.getFilterID() != null && cq.getFilterID().equals(cqID)
+            && e.getValue() != null && e.getValue().equals(MessageType.LOCAL_DESTROY)) {
+          cq.removeFromCqResultKeys(entryEvent.getKey(), true);
+        }
+      }
+    }
+  }
 
   @Override
   protected FilterInfo getLocalFilterRouting(FilterRoutingInfo frInfo) {
@@ -1160,7 +1179,7 @@ public class DistributedPutAllOperation extends AbstractUpdateOperation {
           InternalDistributedMember id = rgn.getMyId();
           ev.setLocalFilterInfo(entry.filterRouting.getFilterInfo(id));
         }
-        /**
+        /*
          * Setting tailKey for the secondary bucket here. Tail key was update by the primary.
          */
         ev.setTailKey(entry.getTailKey());
@@ -1211,10 +1230,10 @@ public class DistributedPutAllOperation extends AbstractUpdateOperation {
       this.putAllDataSize = (int) InternalDataSerializer.readUnsignedVL(in);
       this.putAllData = new PutAllEntryData[this.putAllDataSize];
       if (this.putAllDataSize > 0) {
-        final Version version = StaticSerialization.getVersionForDataStreamOrNull(in);
+        final KnownVersion version = StaticSerialization.getVersionForDataStreamOrNull(in);
         final ByteArrayDataInput bytesIn = new ByteArrayDataInput();
         for (int i = 0; i < this.putAllDataSize; i++) {
-          this.putAllData[i] = new PutAllEntryData(in, context, eventId, i, version, bytesIn);
+          this.putAllData[i] = new PutAllEntryData(in, context, eventId, i);
         }
 
         boolean hasTags = in.readBoolean();

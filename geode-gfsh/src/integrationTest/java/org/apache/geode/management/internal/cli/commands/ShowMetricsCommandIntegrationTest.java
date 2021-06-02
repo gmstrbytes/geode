@@ -15,6 +15,7 @@
 
 package org.apache.geode.management.internal.cli.commands;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.Arrays;
@@ -51,7 +52,7 @@ public class ShowMetricsCommandIntegrationTest {
   public GfshCommandRule gfsh = new GfshCommandRule(server::getJmxPort, PortType.jmxManager);
 
   @Test
-  public void everyCategoryHasAUseCase() throws Exception {
+  public void everyCategoryHasAUseCase() {
     Set<ShowMetricsCommand.Category> categoriesUsed = new HashSet<>();
     categoriesUsed.addAll(ShowMetricsCommand.REGION_METRIC_CATEGORIES);
     categoriesUsed.addAll(ShowMetricsCommand.MEMBER_METRIC_CATEGORIES);
@@ -73,10 +74,11 @@ public class ShowMetricsCommandIntegrationTest {
         .containsOutput("was found but is not currently available");
   }
 
+  @SuppressWarnings("deprecation")
   @Test
-  public void getRegionMetricsShowsExactlyDefaultCategories() throws Exception {
+  public void getRegionMetricsShowsExactlyDefaultCategories() {
     // Use --region and --member to get RegionMetricsFromMember
-    String cmd = "show metrics --region=/" + REGION_NAME + " --member=" + MEMBER_NAME;
+    String cmd = "show metrics --region=" + SEPARATOR + REGION_NAME + " --member=" + MEMBER_NAME;
     List<String> expectedCategories =
         ShowMetricsInterceptor.getValidCategoriesAsStrings(true, true, false);
     // Blank lines are permitted for grouping.
@@ -86,10 +88,11 @@ public class ShowMetricsCommandIntegrationTest {
         expectedCategories.toArray(new String[0]));
   }
 
+  @SuppressWarnings("deprecation")
   @Test
-  public void getSystemRegionMetricsShowsExactlyDefaultCategories() throws Exception {
+  public void getSystemRegionMetricsShowsExactlyDefaultCategories() {
     // Use --region alone to get SystemRegionMetrics
-    String cmd = "show metrics --region=/" + REGION_NAME;
+    String cmd = "show metrics --region=" + SEPARATOR + REGION_NAME;
     List<String> expectedCategories =
         ShowMetricsInterceptor.getValidCategoriesAsStrings(true, false, false);
     // Blank lines are permitted for grouping.
@@ -100,8 +103,9 @@ public class ShowMetricsCommandIntegrationTest {
         expectedCategories.toArray(new String[0]));
   }
 
+  @SuppressWarnings("deprecation")
   @Test
-  public void getMemberMetricsShowsExactlyDefaultCategories() throws Exception {
+  public void getMemberMetricsShowsExactlyDefaultCategories() {
     // Use --member to get member metrics
     String cmd = "show metrics --member=" + MEMBER_NAME;
     List<String> expectedCategories =
@@ -114,8 +118,9 @@ public class ShowMetricsCommandIntegrationTest {
         expectedCategories.toArray(new String[0]));
   }
 
+  @SuppressWarnings("deprecation")
   @Test
-  public void getMemberWithPortMetricsShowsExactlyDefaultCategories() throws Exception {
+  public void getMemberWithPortMetricsShowsExactlyDefaultCategories() {
     // Use --member and --port to get member metrics with port info
     String cmd = "show metrics --member=" + MEMBER_NAME + " --port=" + server.getPort();
     List<String> expectedCategories =
@@ -128,8 +133,9 @@ public class ShowMetricsCommandIntegrationTest {
         expectedCategories.toArray(new String[0]));
   }
 
+  @SuppressWarnings("deprecation")
   @Test
-  public void getSystemMetricsShowsExactlyDefaultCategories() throws Exception {
+  public void getSystemMetricsShowsExactlyDefaultCategories() {
     // No specified options yield system-wide metrics
     String cmd = "show metrics";
     List<String> expectedCategories =
@@ -143,7 +149,7 @@ public class ShowMetricsCommandIntegrationTest {
   }
 
   @Test
-  public void invalidCategoryGetsReported() throws Exception {
+  public void invalidCategoryGetsReported() {
     String cmd =
         "show metrics --categories=\"cluster,cache,some_invalid_category,another_invalid_category\"";
 
@@ -152,8 +158,9 @@ public class ShowMetricsCommandIntegrationTest {
         .doesNotContainOutput("cache").doesNotContainOutput("cluster");
   }
 
+  @SuppressWarnings("deprecation")
   @Test
-  public void categoryOptionAbridgesOutput() throws Exception {
+  public void categoryOptionAbridgesOutput() {
     String cmd = "show metrics --categories=\"cluster,cache\"";
     List<String> expectedCategories = Arrays.asList("cluster", "cache", "");
     logger.info("Expecting categories: " + String.join(", ", expectedCategories));
@@ -163,7 +170,8 @@ public class ShowMetricsCommandIntegrationTest {
   }
 
   @Test
-  public void getRegionMetricsForPartitionedRegionWithStatistics() throws Exception {
+  @SuppressWarnings("deprecation")
+  public void getRegionMetricsForPartitionedRegionWithStatistics() {
     String cmd = "create region --name=region2 --type=PARTITION --enable-statistics";
     gfsh.executeAndAssertThat(cmd).statusIsSuccess();
     String cmd2 = "show metrics --member=" + MEMBER_NAME + " --region=region2";

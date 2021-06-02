@@ -42,6 +42,7 @@ import org.apache.geode.management.api.ClusterManagementListResult;
 import org.apache.geode.management.api.ClusterManagementResult;
 import org.apache.geode.management.api.ClusterManagementService;
 import org.apache.geode.management.api.RestTemplateClusterManagementServiceTransport;
+import org.apache.geode.management.cluster.client.ClusterManagementServiceBuilder;
 import org.apache.geode.management.configuration.Member;
 import org.apache.geode.management.internal.rest.LocatorLauncherContextLoader;
 import org.apache.geode.management.internal.rest.LocatorWebContext;
@@ -150,8 +151,7 @@ public class MemberManagementServiceDUnitTest {
     assertThat(result.isSuccessful()).isTrue();
     assertThat(result.getStatusCode())
         .isEqualTo(ClusterManagementResult.StatusCode.OK);
-    assertThat(result.getResult().size()).isEqualTo(1);
-    assertThat(result.getRuntimeResult().size()).isEqualTo(0);
+    assertThat(result.getResult().size()).isEqualTo(0);
   }
 
   @Test

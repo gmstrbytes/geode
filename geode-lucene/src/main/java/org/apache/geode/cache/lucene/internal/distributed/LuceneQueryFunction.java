@@ -24,6 +24,7 @@ import java.util.Set;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.search.Query;
 
+import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.CacheClosedException;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.execute.FunctionContext;
@@ -50,9 +51,8 @@ import org.apache.geode.internal.cache.PrimaryBucketException;
 import org.apache.geode.internal.cache.execute.InternalFunction;
 import org.apache.geode.internal.cache.execute.InternalFunctionInvocationTargetException;
 import org.apache.geode.internal.cache.execute.PartitionedRegionFunctionResultSender;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.logging.internal.log4j.api.LogService;
-import org.apache.geode.management.internal.security.ResourcePermissions;
 import org.apache.geode.security.ResourcePermission;
 
 /**
@@ -72,7 +72,7 @@ public class LuceneQueryFunction implements InternalFunction<LuceneFunctionConte
     if (context.getResultSender() instanceof PartitionedRegionFunctionResultSender) {
       PartitionedRegionFunctionResultSender resultSender =
           (PartitionedRegionFunctionResultSender) context.getResultSender();
-      Version clientVersion = resultSender.getClientVersion();
+      KnownVersion clientVersion = resultSender.getClientVersion();
       if (LuceneServiceImpl.LUCENE_REINDEX == false
           || (clientVersion != null && clientVersion
               .ordinal() < LuceneServiceImpl.LUCENE_REINDEX_ENABLED_VERSION_ORDINAL)) {
@@ -95,7 +95,7 @@ public class LuceneQueryFunction implements InternalFunction<LuceneFunctionConte
     // Hence the query waits for the repositories to be ready instead of throwing the exception
     if (!remoteMembers.isEmpty()) {
       for (InternalDistributedMember remoteMember : remoteMembers) {
-        if (remoteMember.getVersionObject().ordinal() < Version.GEODE_1_6_0.ordinal()) {
+        if (remoteMember.getVersion().ordinal() < KnownVersion.GEODE_1_6_0.ordinal()) {
           // re-execute but wait till indexing is complete
           execute(ctx, true);
           return;
@@ -125,7 +125,7 @@ public class LuceneQueryFunction implements InternalFunction<LuceneFunctionConte
       throw new IllegalArgumentException("Missing query provider");
     }
 
-    InternalLuceneIndex index = getLuceneIndex(region, searchContext);
+    InternalLuceneIndex index = getLuceneIndex(context.getCache(), region, searchContext);
     if (index == null) {
       throw new LuceneIndexNotFoundException(searchContext.getIndexName(), region.getFullPath());
     }
@@ -182,9 +182,9 @@ public class LuceneQueryFunction implements InternalFunction<LuceneFunctionConte
     }
   }
 
-  private InternalLuceneIndex getLuceneIndex(final Region region,
+  private InternalLuceneIndex getLuceneIndex(final Cache cache, final Region region,
       final LuceneFunctionContext<IndexResultCollector> searchContext) {
-    LuceneService service = LuceneServiceProvider.get(region.getCache());
+    LuceneService service = LuceneServiceProvider.get(cache);
     InternalLuceneIndex index = null;
     try {
       index = (InternalLuceneIndex) service.getIndex(searchContext.getIndexName(),
@@ -197,7 +197,7 @@ public class LuceneQueryFunction implements InternalFunction<LuceneFunctionConte
           } catch (InterruptedException e) {
             return null;
           }
-          region.getCache().getCancelCriterion().checkCancelInProgress(null);
+          cache.getCancelCriterion().checkCancelInProgress(null);
         }
         index = (InternalLuceneIndex) service.getIndex(searchContext.getIndexName(),
             region.getFullPath());
@@ -234,6 +234,7 @@ public class LuceneQueryFunction implements InternalFunction<LuceneFunctionConte
 
   @Override
   public Collection<ResourcePermission> getRequiredPermissions(String regionName) {
-    return Collections.singletonList(ResourcePermissions.DATA_READ);
+    return Collections.singletonList(new ResourcePermission(ResourcePermission.Resource.DATA,
+        ResourcePermission.Operation.READ, regionName));
   }
 }

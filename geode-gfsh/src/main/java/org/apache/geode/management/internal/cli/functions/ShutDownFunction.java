@@ -34,14 +34,20 @@ import org.apache.geode.logging.internal.log4j.api.LogService;
  *
  *
  */
-public class ShutDownFunction implements InternalFunction {
+public class ShutDownFunction implements InternalFunction<Void> {
   private static final Logger logger = LogService.getLogger();
-
-  public static final String ID = ShutDownFunction.class.getName();
   private static final long serialVersionUID = 1L;
 
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.ShutDownFunction";
+
   @Override
-  public void execute(FunctionContext context) {
+  public String getId() {
+    return ID;
+  }
+
+  @Override
+  public void execute(FunctionContext<Void> context) {
     try {
       final InternalDistributedSystem system = InternalDistributedSystem.getConnectedInstance();
       if (system == null) {
@@ -66,7 +72,7 @@ public class ShutDownFunction implements InternalFunction {
   private void disconnectInNonDaemonThread(final InternalDistributedSystem ids)
       throws InterruptedException, ExecutionException {
     ExecutorService exec = LoggingExecutors.newSingleThreadExecutor("Shutdown Disconnector", false);
-    Future future = exec.submit(() -> {
+    Future<?> future = exec.submit(() -> {
       try {
         // Allow the function call to exit so we don't get disconnect exceptions in the client
         // making the call.
@@ -83,12 +89,6 @@ public class ShutDownFunction implements InternalFunction {
     } finally {
       exec.shutdown();
     }
-  }
-
-  @Override
-  public String getId() {
-    return ShutDownFunction.ID;
-
   }
 
   @Override

@@ -61,6 +61,7 @@ public class AlterRuntimeConfigCommand extends GfshCommand {
       interceptor = "org.apache.geode.management.internal.cli.commands.AlterRuntimeConfigCommand$AlterRuntimeInterceptor")
   @ResourceOperation(resource = ResourcePermission.Resource.CLUSTER,
       operation = ResourcePermission.Operation.MANAGE)
+  @SuppressWarnings("deprecation")
   public ResultModel alterRuntimeConfig(
       @CliOption(key = {CliStrings.MEMBER, CliStrings.MEMBERS},
           optionContext = ConverterHint.ALL_MEMBER_IDNAME,
@@ -251,5 +252,10 @@ public class AlterRuntimeConfigCommand extends GfshCommand {
       }
       return ResultModel.createInfo("");
     }
+  }
+
+  @Override
+  public boolean affectsClusterConfiguration() {
+    return true;
   }
 }

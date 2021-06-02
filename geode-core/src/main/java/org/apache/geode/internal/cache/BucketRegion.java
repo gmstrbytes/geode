@@ -18,6 +18,7 @@ package org.apache.geode.internal.cache;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.Serializable;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -90,7 +91,7 @@ import org.apache.geode.internal.logging.log4j.LogMarker;
 import org.apache.geode.internal.offheap.annotations.Released;
 import org.apache.geode.internal.offheap.annotations.Retained;
 import org.apache.geode.internal.offheap.annotations.Unretained;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.statistics.StatisticsClock;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.util.internal.GeodeGlossary;
@@ -517,9 +518,11 @@ public class BucketRegion extends DistributedRegion implements Bucket {
   @Override
   public boolean virtualPut(EntryEventImpl event, boolean ifNew, boolean ifOld,
       Object expectedOldValue, boolean requireOldValue, long lastModified,
-      boolean overwriteDestroyed, boolean invokeCallbacks, boolean throwConcurrentModificaiton)
+      boolean overwriteDestroyed, boolean invokeCallbacks,
+      boolean throwConcurrentModification)
       throws TimeoutException, CacheWriterException {
-    boolean locked = lockKeysAndPrimary(event);
+
+    boolean isLocked = lockKeysAndPrimary(event);
 
     try {
       if (partitionedRegion.isParallelWanEnabled()) {
@@ -551,7 +554,7 @@ public class BucketRegion extends DistributedRegion implements Bucket {
       }
       return true;
     } finally {
-      if (locked) {
+      if (isLocked) {
         releaseLockForKeysAndPrimary(event);
       }
     }
@@ -753,7 +756,11 @@ public class BucketRegion extends DistributedRegion implements Bucket {
     Object[] keys = getKeysToBeLocked(event);
     waitUntilLocked(keys); // it might wait for long time
 
+    if (wasPrimaryLockedPreviously(event)) {
+      return true;
+    }
     boolean lockedForPrimary = false;
+
     try {
       lockedForPrimary = doLockForPrimary(false);
       // tryLock is false means doLockForPrimary won't return false.
@@ -872,7 +879,9 @@ public class BucketRegion extends DistributedRegion implements Bucket {
    * And release/remove the lockObject on the key(s)
    */
   void releaseLockForKeysAndPrimary(EntryEventImpl event) {
-    doUnlockForPrimary();
+    if (!wasPrimaryLockedPreviously(event)) {
+      doUnlockForPrimary();
+    }
 
     Object[] keys = getKeysToBeLocked(event);
     removeAndNotifyKeys(keys);
@@ -1214,6 +1223,13 @@ public class BucketRegion extends DistributedRegion implements Bucket {
     }
   }
 
+  public static class PrimaryMoveReadLockAcquired implements Serializable {
+  };
+
+  private boolean wasPrimaryLockedPreviously(EntryEventImpl event) {
+    return event.getCallbackArgument() instanceof PrimaryMoveReadLockAcquired;
+  }
+
   protected void distributeDestroyOperation(EntryEventImpl event) {
     long token = -1;
     DestroyOperation op = null;
@@ -1382,6 +1398,10 @@ public class BucketRegion extends DistributedRegion implements Bucket {
 
   public int getRedundancyLevel() {
     return redundancy;
+  }
+
+  public boolean hasLowRedundancy() {
+    return redundancy > getBucketAdvisor().getBucketRedundancy();
   }
 
   @Override
@@ -1848,10 +1868,10 @@ public class BucketRegion extends DistributedRegion implements Bucket {
         return;
       }
       Object instance = cd.getValue();
+
       if (instance instanceof org.apache.geode.Delta
           && ((org.apache.geode.Delta) instance).hasDelta()) {
-        try {
-          HeapDataOutputStream hdos = new HeapDataOutputStream(Version.CURRENT);
+        try (HeapDataOutputStream hdos = new HeapDataOutputStream(KnownVersion.CURRENT)) {
           long start = DistributionStats.getStatTime();
           ((org.apache.geode.Delta) instance).toDelta(hdos);
           event.setDeltaBytes(hdos.toByteArray());
@@ -1895,7 +1915,6 @@ public class BucketRegion extends DistributedRegion implements Bucket {
    * @param adjunctRecipients recipients that must unconditionally get the event
    * @param filterRoutingInfo routing information for all members having the region
    * @param processor the reply processor, or null if there isn't one
-   * @return the set of failed recipients
    */
   void performRemoveAllAdjunctMessaging(DistributedRemoveAllOperation op,
       Set cacheOpRecipients, Set<InternalDistributedMember> adjunctRecipients,
@@ -2094,9 +2113,7 @@ public class BucketRegion extends DistributedRegion implements Bucket {
       // if GII has failed, because there is not primary. So it's safe to set these
       // counters to 0.
       oldMemValue = bytesInMemory.getAndSet(0);
-    }
-
-    else {
+    } else {
       throw new InternalGemFireError(
           "Trying to clear a bucket region that was not destroyed or in initialization.");
     }
@@ -2256,8 +2273,9 @@ public class BucketRegion extends DistributedRegion implements Bucket {
 
     final int memoryDelta = op.computeMemoryDelta(oldSize, newSize);
 
-    if (memoryDelta == 0)
+    if (memoryDelta == 0) {
       return;
+    }
     // do the bigger one first to keep the sum > 0
     updateBucketMemoryStats(memoryDelta);
   }
@@ -2309,8 +2327,9 @@ public class BucketRegion extends DistributedRegion implements Bucket {
   }
 
   public void incNumOverflowBytesOnDisk(long delta) {
-    if (delta == 0)
+    if (delta == 0) {
       return;
+    }
     numOverflowBytesOnDisk.addAndGet(delta);
     // The following could be reenabled at a future time.
     // I deadcoded for now to make sure I didn't have it break
@@ -2347,11 +2366,13 @@ public class BucketRegion extends DistributedRegion implements Bucket {
 
   public int getSizeForEviction() {
     EvictionAttributes ea = getAttributes().getEvictionAttributes();
-    if (ea == null)
+    if (ea == null) {
       return 0;
+    }
     EvictionAlgorithm algo = ea.getAlgorithm();
-    if (!algo.isLRUHeap())
+    if (!algo.isLRUHeap()) {
       return 0;
+    }
     EvictionAction action = ea.getAction();
     return action.isLocalDestroy() ? getRegionMap().sizeInVM() : (int) getNumEntriesInVM();
   }

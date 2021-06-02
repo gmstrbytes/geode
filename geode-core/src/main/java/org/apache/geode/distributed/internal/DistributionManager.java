@@ -31,7 +31,7 @@ import org.apache.geode.distributed.internal.locks.ElderState;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.monitoring.ThreadsMonitoring;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 
 /**
  * This interface defines the services provided by any class that is a distribution manager.
@@ -71,7 +71,7 @@ public interface DistributionManager extends ReplySender {
    * @since GemFire 8.0
    */
   void retainMembersWithSameOrNewerVersion(Collection<InternalDistributedMember> members,
-      Version version);
+      KnownVersion version);
 
   /**
    * removes members that have the given version or later from the given collection, typically a Set
@@ -80,13 +80,15 @@ public interface DistributionManager extends ReplySender {
    * @since GemFire 8.0
    */
   void removeMembersWithSameOrNewerVersion(Collection<InternalDistributedMember> members,
-      Version version);
+      KnownVersion version);
 
   /**
    * Returns an unmodifiable set containing the identities of all of the known distribution
    * managers. As of 7.0 this includes locators since they have a cache.
    */
   Set<InternalDistributedMember> getDistributionManagerIds();
+
+  Set<InternalDistributedMember> getLocatorDistributionManagerIds();
 
   /**
    * Returns an unmodifiable set containing the identities of all of the known "normal" distribution
@@ -336,7 +338,9 @@ public interface DistributionManager extends ReplySender {
    */
   boolean areOnEquivalentHost(InternalDistributedMember member1, InternalDistributedMember member2);
 
-  Set<InetAddress> getEquivalents(InetAddress in);
+  default Set<InetAddress> getEquivalents(InetAddress in) {
+    throw new UnsupportedOperationException();
+  }
 
   Set<DistributedMember> getGroupMembers(String group);
 
@@ -465,5 +469,5 @@ public interface DistributionManager extends ReplySender {
    */
   void unregisterTestHook(MembershipTestHook mth);
 
-
+  String getRedundancyZone(InternalDistributedMember member);
 }

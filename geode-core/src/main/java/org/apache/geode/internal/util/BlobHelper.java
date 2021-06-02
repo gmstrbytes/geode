@@ -24,7 +24,7 @@ import org.apache.geode.internal.offheap.StoredObject;
 import org.apache.geode.internal.offheap.annotations.Unretained;
 import org.apache.geode.internal.serialization.ByteArrayDataInput;
 import org.apache.geode.internal.serialization.DSCODE;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.pdx.internal.PdxInputStream;
 
 /**
@@ -47,11 +47,13 @@ public class BlobHelper {
    * A blob is a serialized Object. This method serializes the object into a blob and returns the
    * byte array that contains the blob.
    */
-  public static byte[] serializeToBlob(Object obj, Version version) throws IOException {
+  public static byte[] serializeToBlob(Object obj, KnownVersion version) throws IOException {
     final long start = startSerialization();
-    HeapDataOutputStream hdos = new HeapDataOutputStream(version);
-    DataSerializer.writeObject(obj, hdos);
-    byte[] result = hdos.toByteArray();
+    byte[] result;
+    try (HeapDataOutputStream hdos = new HeapDataOutputStream(version)) {
+      DataSerializer.writeObject(obj, hdos);
+      result = hdos.toByteArray();
+    }
     endSerialization(start, result.length);
     return result;
   }
@@ -77,7 +79,7 @@ public class BlobHelper {
   /**
    * A blob is a serialized Object. This method returns the deserialized object.
    */
-  public static Object deserializeBlob(byte[] blob, Version version, ByteArrayDataInput in)
+  public static Object deserializeBlob(byte[] blob, KnownVersion version, ByteArrayDataInput in)
       throws IOException, ClassNotFoundException {
     Object result;
     final long start = startDeserialization();
@@ -86,8 +88,9 @@ public class BlobHelper {
       // blob in a PdxInputStream instead.
       // This will prevent us from making a copy of the byte[]
       // every time we deserialize a PdxInstance.
-      PdxInputStream is = new PdxInputStream(blob);
-      result = DataSerializer.readObject(is);
+      try (PdxInputStream is = new PdxInputStream(blob)) {
+        result = DataSerializer.readObject(is);
+      }
     } else {
       // if we have a nested pdx then we want to make a copy
       // when a PdxInstance is created so that the byte[] will
@@ -113,8 +116,9 @@ public class BlobHelper {
     // For both top level and nested pdxs we just want a reference to this off-heap blob.
     // No copies.
     // For non-pdx we want a stream that will read directly from the chunk.
-    PdxInputStream is = new PdxInputStream(blob);
-    result = DataSerializer.readObject(is);
+    try (PdxInputStream is = new PdxInputStream(blob)) {
+      result = DataSerializer.readObject(is);
+    }
     endDeserialization(start, blob.getDataSize());
     return result;
   }

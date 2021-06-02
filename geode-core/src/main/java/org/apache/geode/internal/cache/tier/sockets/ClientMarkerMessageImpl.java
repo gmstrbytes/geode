@@ -23,8 +23,8 @@ import org.apache.geode.DataSerializer;
 import org.apache.geode.internal.cache.EventID;
 import org.apache.geode.internal.cache.tier.MessageType;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
-import org.apache.geode.internal.serialization.Version;
 
 /**
  * Class <code>ClientMarkerMessageImpl</code> is a marker message that is placed in the
@@ -59,23 +59,10 @@ public class ClientMarkerMessageImpl implements ClientMessage {
 
   @Override
   public Message getMessage(CacheClientProxy proxy, boolean notify) throws IOException {
-    Version clientVersion = proxy.getVersion();
-    Message message = null;
-    if (clientVersion.compareTo(Version.GFE_57) >= 0) {
-      message = getGFEMessage();
-    } else {
-      throw new IOException(
-          "Unsupported client version for server-to-client message creation: " + clientVersion);
-    }
-
-    return message;
-  }
-
-  protected Message getGFEMessage() throws IOException {
-    Message message = new Message(1, Version.CURRENT);
+    Message message = new Message(1, KnownVersion.CURRENT);
     message.setMessageType(MessageType.CLIENT_MARKER);
     message.setTransactionId(0);
-    message.addObjPart(this.eventId);
+    message.addObjPart(eventId);
     return message;
   }
 
@@ -87,7 +74,7 @@ public class ClientMarkerMessageImpl implements ClientMessage {
   @Override
   public void toData(DataOutput out,
       SerializationContext context) throws IOException {
-    DataSerializer.writeObject(this.eventId, out);
+    DataSerializer.writeObject(eventId, out);
   }
 
   @Override
@@ -98,12 +85,12 @@ public class ClientMarkerMessageImpl implements ClientMessage {
   @Override
   public void fromData(DataInput in,
       DeserializationContext context) throws IOException, ClassNotFoundException {
-    this.eventId = (EventID) DataSerializer.readObject(in);
+    eventId = DataSerializer.readObject(in);
   }
 
   @Override
   public EventID getEventId() {
-    return this.eventId;
+    return eventId;
   }
 
   @Override
@@ -126,12 +113,10 @@ public class ClientMarkerMessageImpl implements ClientMessage {
   }
 
   @Override
-  public void setLatestValue(Object value) {
-    return;
-  }
+  public void setLatestValue(Object value) {}
 
   @Override
-  public Version[] getSerializationVersions() {
+  public KnownVersion[] getSerializationVersions() {
     return null;
   }
 }

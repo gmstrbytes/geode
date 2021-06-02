@@ -28,7 +28,6 @@ import org.apache.geode.cache30.ClientServerTestCase;
 import org.apache.geode.cache30.RegionTestCase;
 import org.apache.geode.distributed.internal.DistributionMessageObserver;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
-import org.apache.geode.distributed.internal.tcpserver.TcpClient;
 import org.apache.geode.internal.admin.ClientStatsManager;
 import org.apache.geode.internal.cache.DiskStoreObserver;
 import org.apache.geode.internal.cache.InitialImageOperation;
@@ -41,6 +40,7 @@ import org.apache.geode.internal.net.SocketCreator;
 import org.apache.geode.internal.net.SocketCreatorFactory;
 import org.apache.geode.management.internal.cli.LogWrapper;
 import org.apache.geode.pdx.internal.TypeRegistry;
+import org.apache.geode.test.dunit.DUnitEnv;
 import org.apache.geode.test.dunit.IgnoredException;
 import org.apache.geode.test.dunit.internal.DUnitLauncher;
 import org.apache.geode.test.junit.rules.serializable.SerializableExternalResource;
@@ -114,7 +114,7 @@ import org.apache.geode.util.internal.GeodeGlossary;
  * }
  * </pre>
  */
-@SuppressWarnings("unused")
+@SuppressWarnings({"serial", "unused"})
 public class DistributedRule extends AbstractDistributedRule {
 
   /**
@@ -151,6 +151,14 @@ public class DistributedRule extends AbstractDistributedRule {
 
   public static Properties getDistributedSystemProperties() {
     return DUnitLauncher.getDistributedSystemProperties();
+  }
+
+  public static int getLocatorPort() {
+    return DUnitEnv.get().getLocatorPort();
+  }
+
+  public static String getLocators() {
+    return "localhost[" + getLocatorPort() + "]";
   }
 
   /**
@@ -197,6 +205,7 @@ public class DistributedRule extends AbstractDistributedRule {
    * <p>
    * Note: {@link CacheRule} handles its own cleanup of Cache and Regions.
    */
+  @SuppressWarnings("serial")
   public static class TearDown extends SerializableExternalResource {
 
     @Override
@@ -209,7 +218,7 @@ public class DistributedRule extends AbstractDistributedRule {
       doTearDown();
     }
 
-    static void doTearDown() {
+    private static void doTearDown() {
       tearDownInVM();
       invokeInEveryVM(() -> {
         tearDownInVM();
@@ -243,7 +252,6 @@ public class DistributedRule extends AbstractDistributedRule {
       RegionTestCase.preSnapshotRegion = null;
       SocketCreator.resetHostNameCache();
       SocketCreator.resolve_dns = true;
-      TcpClient.clearStaticData();
 
       // clear system properties -- keep alphabetized
       System.clearProperty(GeodeGlossary.GEMFIRE_PREFIX + "log-level");

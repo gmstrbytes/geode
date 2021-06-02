@@ -14,6 +14,7 @@
  */
 package org.apache.geode.test.fake;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyLong;
 import static org.mockito.Mockito.mock;
@@ -63,7 +64,7 @@ import org.apache.geode.pdx.internal.TypeRegistry;
  * <pre>
  * cache = Fakes.cache(); Mockito.when(cache.getName()).thenReturn(...)
  *
- * <pre>
+ * </pre>
  *
  * Please help extend this class by adding other commonly used objects to this collection of fakes.
  */
@@ -94,6 +95,8 @@ public class Fakes {
 
     when(config.getCacheXmlFile()).thenReturn(new File(""));
     when(config.getDeployWorkingDir()).thenReturn(new File("."));
+    when(config.getJmxManagerUpdateRate()).thenReturn(100);
+
 
     when(cache.getDistributedSystem()).thenReturn(system);
     when(cache.getInternalDistributedSystem()).thenReturn(system);
@@ -124,6 +127,7 @@ public class Fakes {
     when(system.createAtomicStatistics(any(), any(), anyLong())).thenReturn(stats);
     when(system.createAtomicStatistics(any(), any())).thenReturn(stats);
     when(system.getProperties()).thenReturn(mock(Properties.class));
+    when(system.isConnected()).thenReturn(true);
 
     when(distributionManager.getId()).thenReturn(member);
     when(distributionManager.getDistributionManagerId()).thenReturn(member);
@@ -159,7 +163,7 @@ public class Fakes {
     when(region.getCache()).thenReturn(cache);
     when(region.getRegionService()).thenReturn(cache);
     when(region.getName()).thenReturn(name);
-    when(region.getFullPath()).thenReturn("/" + name);
+    when(region.getFullPath()).thenReturn(SEPARATOR + name);
     return region;
   }
 

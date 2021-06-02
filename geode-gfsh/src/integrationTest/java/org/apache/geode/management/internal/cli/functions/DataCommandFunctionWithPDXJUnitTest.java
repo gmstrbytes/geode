@@ -14,6 +14,7 @@
  */
 package org.apache.geode.management.internal.cli.functions;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.management.internal.cli.domain.DataCommandResult.MISSING_VALUE;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -61,7 +62,7 @@ public class DataCommandFunctionWithPDXJUnitTest {
     dan = new CustomerWithPhone("3", "Dan", "Dickinson", "(333) 333-3333");
 
     cache = server.getCache();
-    Region region = cache.getRegion(PARTITIONED_REGION);
+    Region<Integer, Customer> region = cache.getRegion(PARTITIONED_REGION);
     region.put(0, alice);
     region.put(1, bob);
     region.put(2, charlie);
@@ -72,7 +73,8 @@ public class DataCommandFunctionWithPDXJUnitTest {
   // upward during reporting.
   @Test
   public void testTableIsRectangular() {
-    TabularResultModel rawTable = getTableFromQuery("select * from /" + PARTITIONED_REGION);
+    TabularResultModel rawTable =
+        getTableFromQuery("select * from " + SEPARATOR + PARTITIONED_REGION);
     // Verify any table built
     Map<String, List<String>> content = rawTable.getContent();
     assertThat(content).isNotEmpty();
@@ -88,7 +90,7 @@ public class DataCommandFunctionWithPDXJUnitTest {
   @Test
   public void testVerifyDataDoesNotShift() {
     TabularResultModel rawTable =
-        getTableFromQuery("select * from /" + PARTITIONED_REGION + " order by id");
+        getTableFromQuery("select * from " + SEPARATOR + PARTITIONED_REGION + " order by id");
     // Verify any table built
     Map<String, List<String>> content = rawTable.getContent();
     assertThat(content).isNotEmpty();
@@ -106,7 +108,8 @@ public class DataCommandFunctionWithPDXJUnitTest {
   @Test
   public void testFilteredQueryWithPhone() {
     TabularResultModel rawTable = getTableFromQuery(
-        "select * from /" + PARTITIONED_REGION + " c where IS_DEFINED ( c.phone ) order by id");
+        "select * from " + SEPARATOR + PARTITIONED_REGION
+            + " c where IS_DEFINED ( c.phone ) order by id");
     Map<String, List<String>> content = rawTable.getContent();
     assertThat(content).isNotEmpty();
 
@@ -120,7 +123,8 @@ public class DataCommandFunctionWithPDXJUnitTest {
   @Test
   public void testFilteredQueryWithoutPhone() {
     TabularResultModel rawTable = getTableFromQuery(
-        "select * from /" + PARTITIONED_REGION + " c where IS_UNDEFINED ( c.phone ) order by id");
+        "select * from " + SEPARATOR + PARTITIONED_REGION
+            + " c where IS_UNDEFINED ( c.phone ) order by id");
     Map<String, List<String>> content = rawTable.getContent();
     assertThat(content).isNotNull();
     for (String k : new String[] {"id", "firstName", "lastName"}) {

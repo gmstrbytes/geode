@@ -197,7 +197,7 @@ public class TombstoneService {
   }
 
 
-  private TombstoneSweeper getSweeper(LocalRegion r) {
+  public TombstoneSweeper getSweeper(LocalRegion r) {
     if (r.getScope().isDistributed() && r.getServerProxy() == null
         && r.getDataPolicy().withReplication()) {
       return this.replicatedTombstoneSweeper;
@@ -373,7 +373,8 @@ public class TombstoneService {
     return this.replicatedTombstoneSweeper.getBlockGCLock();
   }
 
-  private static class Tombstone extends CompactVersionHolder {
+  @VisibleForTesting
+  public static class Tombstone extends CompactVersionHolder {
     // tombstone overhead size
     public static final int PER_TOMBSTONE_OVERHEAD =
         ReflectionSingleObjectSizer.REFERENCE_SIZE // queue's reference to the tombstone
@@ -385,7 +386,8 @@ public class TombstoneService {
     RegionEntry entry;
     LocalRegion region;
 
-    Tombstone(RegionEntry entry, LocalRegion region, VersionTag destroyedVersion) {
+    @VisibleForTesting
+    public Tombstone(RegionEntry entry, LocalRegion region, VersionTag destroyedVersion) {
       super(destroyedVersion);
       this.entry = entry;
       this.region = region;
@@ -423,8 +425,13 @@ public class TombstoneService {
     }
 
     @Override
-    protected boolean hasExpired(long msTillHeadTombstoneExpires) {
-      return msTillHeadTombstoneExpires <= 0;
+    protected boolean hasExpired(long msUntilTombstoneExpires) {
+      /*
+       * In case the tombstone expiration time would be too far out lets cap it. This is just
+       * making the system fault tolerant in the case that there are large clock jumps or
+       * unrealistically large timestamps.
+       */
+      return msUntilTombstoneExpires <= 0 || msUntilTombstoneExpires > EXPIRY_TIME;
     }
 
     @Override
@@ -450,9 +457,27 @@ public class TombstoneService {
 
     @Override
     protected void beforeSleepChecks() {}
+
+    @Override
+    public long getOldestTombstoneTime() {
+      long result = 0;
+      if (tombstones.peek() != null) {
+        result = tombstones.peek().getVersionTimeStamp();
+      }
+      return result;
+    }
+
+    @Override
+    public String getOldestTombstone() {
+      String result = null;
+      if (tombstones.peek() != null) {
+        result = tombstones.peek().toString();
+      }
+      return result;
+    }
   }
 
-  private static class ReplicateTombstoneSweeper extends TombstoneSweeper {
+  protected static class ReplicateTombstoneSweeper extends TombstoneSweeper {
     /**
      * Used to execute batch gc message execution in the background.
      */
@@ -540,7 +565,8 @@ public class TombstoneService {
     }
 
     /** expire a batch of tombstones */
-    private void expireBatch() {
+
+    protected void expireBatch() {
       // fix for bug #46087 - OOME due to too many GC threads
       if (this.batchExpirationInProgress) {
         // incorrect return due to race between this and waiting-pool GC thread is okay
@@ -575,6 +601,9 @@ public class TombstoneService {
           synchronized (expiredTombstonesLock) {
             for (Tombstone t : expiredTombstones) {
               DistributedRegion tr = (DistributedRegion) t.region;
+              if (!tr.isInitialized()) {
+                continue;
+              }
               tr.getVersionVector().recordGCVersion(t.getMemberID(), t.getRegionVersion());
               if (!reapedKeys.containsKey(tr)) {
                 reapedKeys.put(tr, Collections.emptySet());
@@ -600,15 +629,17 @@ public class TombstoneService {
             // for PR buckets we have to keep track of the keys removed because clients have
             // them all lumped in a single non-PR region
             DistributedRegion tr = (DistributedRegion) t.region;
-            boolean tombstoneWasStillInRegionMap =
-                tr.getRegionMap().removeTombstone(t.entry, t, false, true);
-            if (tombstoneWasStillInRegionMap && hasToTrackKeysForClients(tr)) {
-              Set<Object> keys = reapedKeys.get(tr);
-              if (keys.isEmpty()) {
-                keys = new HashSet<Object>();
-                reapedKeys.put(tr, keys);
+            if (reapedKeys.containsKey(tr)) {
+              boolean tombstoneWasStillInRegionMap =
+                  tr.getRegionMap().removeTombstone(t.entry, t, false, true);
+              if (tombstoneWasStillInRegionMap && hasToTrackKeysForClients(tr)) {
+                Set<Object> keys = reapedKeys.get(tr);
+                if (keys.isEmpty()) {
+                  keys = new HashSet<Object>();
+                  reapedKeys.put(tr, keys);
+                }
+                keys.add(t.entry.getKey());
               }
-              keys.add(t.entry.getKey());
             }
             return true;
           });
@@ -720,12 +751,17 @@ public class TombstoneService {
     }
 
     @Override
-    protected boolean hasExpired(long msTillHeadTombstoneExpires) {
+    protected boolean hasExpired(long msUntilTombstoneExpires) {
       if (testHook_forceExpirationCount > 0) {
         testHook_forceExpirationCount--;
         return true;
       }
-      return msTillHeadTombstoneExpires <= 0;
+      /*
+       * In case the tombstone expiration time would be too far out lets cap it. This is just
+       * making the system fault tolerant in the case that there are large clock jumps or
+       * unrealistically large timestamps.
+       */
+      return msUntilTombstoneExpires <= 0 || msUntilTombstoneExpires > EXPIRY_TIME;
     }
 
     @Override
@@ -737,6 +773,24 @@ public class TombstoneService {
       synchronized (expiredTombstonesLock) {
         expiredTombstones.add(tombstone);
       }
+    }
+
+    @Override
+    public long getOldestTombstoneTime() {
+      long result = 0;
+      if (tombstones.peek() != null) {
+        result = tombstones.peek().getVersionTimeStamp();
+      }
+      return result;
+    }
+
+    @Override
+    public String getOldestTombstone() {
+      String result = null;
+      if (tombstones.peek() != null) {
+        result = tombstones.peek().toString();
+      }
+      return result;
     }
 
     @Override
@@ -779,7 +833,7 @@ public class TombstoneService {
     }
   }
 
-  private abstract static class TombstoneSweeper implements Runnable {
+  public abstract static class TombstoneSweeper implements Runnable {
     /**
      * the expiration time for tombstones in this sweeper
      */
@@ -805,7 +859,8 @@ public class TombstoneService {
      * are left in this queue and the sweeper thread figures out that they are no longer valid
      * tombstones.
      */
-    private final Queue<Tombstone> tombstones;
+    @VisibleForTesting
+    public final Queue<Tombstone> tombstones;
     /**
      * Estimate of the amount of memory used by this sweeper
      */
@@ -1021,7 +1076,8 @@ public class TombstoneService {
     /**
      * See if the oldest unexpired tombstone should be expired.
      */
-    private void checkOldestUnexpired(long now) {
+    @VisibleForTesting
+    public void checkOldestUnexpired(long now) {
       sleepTime = 0;
       lockQueueHead();
       Tombstone oldest = tombstones.peek();
@@ -1036,8 +1092,8 @@ public class TombstoneService {
           if (logger.isTraceEnabled(LogMarker.TOMBSTONE_VERBOSE)) {
             logger.trace(LogMarker.TOMBSTONE_VERBOSE, "oldest unexpired tombstone is {}", oldest);
           }
-          long msTillHeadTombstoneExpires = oldest.getVersionTimeStamp() + EXPIRY_TIME - now;
-          if (hasExpired(msTillHeadTombstoneExpires)) {
+          long msUntilHeadTombstoneExpires = oldest.getVersionTimeStamp() + EXPIRY_TIME - now;
+          if (hasExpired(msUntilHeadTombstoneExpires)) {
             try {
               tombstones.remove();
               expireTombstone(oldest);
@@ -1047,7 +1103,7 @@ public class TombstoneService {
               logger.warn("Unexpected exception while processing tombstones", e);
             }
           } else {
-            sleepTime = msTillHeadTombstoneExpires;
+            sleepTime = Math.min(msUntilHeadTombstoneExpires, EXPIRY_TIME);
           }
         }
       } finally {
@@ -1079,7 +1135,7 @@ public class TombstoneService {
 
     protected abstract void handleNoUnexpiredTombstones();
 
-    protected abstract boolean hasExpired(long msTillTombstoneExpires);
+    protected abstract boolean hasExpired(long msUntilTombstoneExpires);
 
     protected abstract void expireTombstone(Tombstone tombstone);
 
@@ -1092,5 +1148,10 @@ public class TombstoneService {
 
     abstract boolean testHook_forceExpiredTombstoneGC(int count, long timeout, TimeUnit unit)
         throws InterruptedException;
+
+    public abstract long getOldestTombstoneTime();
+
+    public abstract String getOldestTombstone();
+
   } // class TombstoneSweeper
 }

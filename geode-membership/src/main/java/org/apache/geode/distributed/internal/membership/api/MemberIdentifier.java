@@ -131,7 +131,7 @@ public interface MemberIdentifier extends DataSerializableFixedID {
   /**
    * Get the Geode version of this member
    */
-  Version getVersionObject();
+  Version getVersion();
 
   /**
    * Replace the current member data with the given member data. This can be used to fill out a
@@ -190,7 +190,7 @@ public interface MemberIdentifier extends DataSerializableFixedID {
 
   String getUniqueId();
 
-  void setVersionObjectForTest(Version v);
+  void setVersionForTest(Version v);
 
   void setUniqueTag(String tag);
 

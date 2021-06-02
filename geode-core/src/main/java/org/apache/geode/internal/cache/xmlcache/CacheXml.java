@@ -28,7 +28,7 @@ import org.xml.sax.ext.EntityResolver2;
 
 import org.apache.geode.cache.CacheXmlException;
 import org.apache.geode.distributed.ConfigurationProperties;
-import org.apache.geode.internal.ClassPathLoader;
+import org.apache.geode.internal.classloader.ClassPathLoader;
 
 /**
  * The abstract superclass of classes that convert XML into a {@link org.apache.geode.cache.Cache}
@@ -433,6 +433,11 @@ public abstract class CacheXml implements EntityResolver2, ErrorHandler {
   protected static final String ORDER_POLICY = "order-policy";
   /** The name of the <code>remote-distributed-system</code> attribute */
   protected static final String REMOTE_DISTRIBUTED_SYSTEM_ID = "remote-distributed-system-id";
+  /** The name of the <code>group-transaction-events</code> attribute */
+  protected static final String GROUP_TRANSACTION_EVENTS = "group-transaction-events";
+  /** The name of the <code>enforce-threads-connect-same-receiver</code> attribute */
+  protected static final String ENFORCE_THREADS_CONNECT_SAME_RECEIVER =
+      "enforce-threads-connect-same-receiver";
 
   /** The name of the <code>bind-address</code> attribute */
   protected static final String BIND_ADDRESS = "bind-address";
@@ -546,10 +551,10 @@ public abstract class CacheXml implements EntityResolver2, ErrorHandler {
   protected static final String KEY_INDEX = "key-index";
   /** The name of the index type attribute */
   protected static final String INDEX_TYPE = "type";
-  /** The name of the <code>hash-index</code> index type attribute */
-  /**
+  /* The name of the <code>hash-index</code> index type attribute */
+  /*
    * @deprecated Due to the overhead caused by rehashing while expanding the backing array, Hash
-   *             Index has been deprecated since Apache Geode 1.4.0. Use {@link CacheXml#FUNCTIONAL}
+   * Index has been deprecated since Apache Geode 1.4.0. Use {@link CacheXml#FUNCTIONAL}
    */
   @Deprecated
   protected static final String HASH_INDEX_TYPE = "hash";
@@ -618,6 +623,7 @@ public abstract class CacheXml implements EntityResolver2, ErrorHandler {
   public static final String SUBSCRIPTION_TIMEOUT_MULTIPLIER = "subscription-timeout-multiplier";
   public static final String SOCKET_CONNECT_TIMEOUT = "socket-connect-timeout";
   public static final String FREE_CONNECTION_TIMEOUT = "free-connection-timeout";
+  public static final String SERVER_CONNECTION_TIMEOUT = "server-connection-timeout";
   public static final String LOAD_CONDITIONING_INTERVAL = "load-conditioning-interval";
   public static final String MIN_CONNECTIONS = "min-connections";
   public static final String RETRY_ATTEMPTS = "retry-attempts";
@@ -640,6 +646,7 @@ public abstract class CacheXml implements EntityResolver2, ErrorHandler {
   public static final String QUEUE_SIZE = "queue-size";
 
   public static final String MULTIUSER_SECURE_MODE_ENABLED = "multiuser-authentication";
+  public static final String SOCKET_FACTORY = "socket-factory";
   // end constants for connection pool
 
   /** Size of the disk dir in megabytes **/

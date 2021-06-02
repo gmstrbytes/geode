@@ -14,6 +14,7 @@
  */
 package org.apache.geode.internal.cache.ha;
 
+import static org.apache.geode.cache.Region.SEPARATOR_CHAR;
 import static org.apache.geode.internal.lang.SystemPropertyHelper.HA_REGION_QUEUE_EXPIRY_TIME_PROPERTY;
 import static org.apache.geode.internal.lang.SystemPropertyHelper.THREAD_ID_EXPIRY_TIME_PROPERTY;
 import static org.apache.geode.internal.lang.SystemPropertyHelper.getProductIntegerProperty;
@@ -23,6 +24,7 @@ import java.io.DataOutput;
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.ConcurrentModificationException;
 import java.util.HashMap;
@@ -41,8 +43,11 @@ import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.Logger;
 
@@ -79,6 +84,7 @@ import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.Assert;
+import org.apache.geode.internal.SystemTimer;
 import org.apache.geode.internal.cache.CacheServerImpl;
 import org.apache.geode.internal.cache.CachedDeserializable;
 import org.apache.geode.internal.cache.Conflatable;
@@ -98,8 +104,9 @@ import org.apache.geode.internal.cache.tier.sockets.Handshake;
 import org.apache.geode.internal.logging.log4j.LogMarker;
 import org.apache.geode.internal.serialization.DataSerializableFixedID;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.Versioning;
 import org.apache.geode.internal.statistics.StatisticsClock;
 import org.apache.geode.internal.util.BlobHelper;
 import org.apache.geode.internal.util.concurrent.StoppableCondition;
@@ -202,7 +209,7 @@ public class HARegionQueue implements RegionQueue {
    * via GII , then there should not be any violation. If there is data arriving thru GII, such
    * violations can be expected , but should be analyzed thoroughly.
    */
-  protected boolean puttingGIIDataInQueue;
+  protected final AtomicBoolean puttingGIIDataInQueue = new AtomicBoolean();
 
   /**
    * flag indicating whether interest has been registered for this queue. This is used to prevent
@@ -319,13 +326,20 @@ public class HARegionQueue implements RegionQueue {
    */
   protected long maxQueueSizeHitCount = 0;
 
+  final AtomicBoolean hasSynchronizedWithPrimary = new AtomicBoolean();
+  final AtomicBoolean scheduleSynchronizationWithPrimaryInProgress = new AtomicBoolean();
+  final AtomicBoolean doneGIIQueueing = new AtomicBoolean();
+  volatile long doneGIIQueueingTime;
+  volatile long positionBeforeGII = 0;
+  volatile long positionAfterGII = 0;
+
   /**
    * Processes the given string and returns a string which is allowed for region names
    *
    * @return legal region name
    */
   public static String createRegionName(String regionName) {
-    return regionName.replace('/', '#');
+    return regionName.replace(SEPARATOR_CHAR, '#');
   }
 
   /**
@@ -335,7 +349,6 @@ public class HARegionQueue implements RegionQueue {
       ClientProxyMembershipID clientProxyId, final byte clientConflation, boolean isPrimary,
       StatisticsClock statisticsClock)
       throws IOException, ClassNotFoundException, CacheException, InterruptedException {
-
     String processedRegionName = createRegionName(regionName);
 
     // Initialize the statistics
@@ -374,7 +387,10 @@ public class HARegionQueue implements RegionQueue {
     putGIIDataInRegion();
 
     if (this.getClass() == HARegionQueue.class) {
-      initialized.set(true);
+      synchronized (initialized) {
+        initialized.set(true);
+        initialized.notifyAll();
+      }
     }
   }
 
@@ -407,8 +423,29 @@ public class HARegionQueue implements RegionQueue {
       putGIIDataInRegion();
     }
     if (this.getClass() == HARegionQueue.class) {
-      initialized.set(true);
+      synchronized (initialized) {
+        initialized.set(true);
+        initialized.notifyAll();
+      }
     }
+  }
+
+  public boolean isQueueInitializedWithWait(long waitTime) {
+    try {
+      synchronized (initialized) {
+        if (!isQueueInitialized()) {
+          waitForInitialized(waitTime);
+        }
+      }
+    } catch (InterruptedException interruptedException) {
+      Thread.currentThread().interrupt();
+      return false;
+    }
+    return isQueueInitialized();
+  }
+
+  void waitForInitialized(long waitTime) throws InterruptedException {
+    initialized.wait(waitTime);
   }
 
   /**
@@ -463,7 +500,7 @@ public class HARegionQueue implements RegionQueue {
     // data, then the relevant data structures have to
     // be populated
     if (!entrySet.isEmpty()) {
-      this.puttingGIIDataInQueue = true;
+      puttingGIIDataInQueue.set(true);
       final boolean isDebugEnabled = logger.isDebugEnabled();
       try {
         Region.Entry entry = null;
@@ -508,7 +545,13 @@ public class HARegionQueue implements RegionQueue {
         }
         this.tailKey.set(max);
       } finally {
-        this.puttingGIIDataInQueue = false;
+        puttingGIIDataInQueue.set(false);
+        positionAfterGII = tailKey.get();
+        if (positionAfterGII > 0) {
+          positionBeforeGII = 1;
+        }
+        doneGIIQueueing.set(true);
+        doneGIIQueueingTime = System.currentTimeMillis();
         if (isDebugEnabled) {
           logger.debug("{} done putting GII data into queue", this);
         }
@@ -646,14 +689,14 @@ public class HARegionQueue implements RegionQueue {
     long sequenceID = eventId.getSequenceID();
     // Check from Events Map if the put operation should proceed or not
     DispatchedAndCurrentEvents dace = (DispatchedAndCurrentEvents) this.eventsMap.get(ti);
-    if (dace != null && dace.isGIIDace && this.puttingGIIDataInQueue) {
+    if (dace != null && dace.isGIIDace && puttingGIIDataInQueue.get()) {
       // we only need to retain DACE for which there are no entries in the queue.
       // for other thread identifiers we build up a new DACE
       dace = null;
     }
     if (dace != null) {
       // check the last dispatched sequence Id
-      if (this.puttingGIIDataInQueue || (sequenceID > dace.lastDispatchedSequenceId)) {
+      if (puttingGIIDataInQueue.get() || (sequenceID > dace.lastDispatchedSequenceId)) {
         // Asif:Insert the Event into the Region with proper locking.
         // It is possible that by the time put operation proceeds , the
         // Last dispatched id has changed so it is possible that the object at
@@ -661,7 +704,7 @@ public class HARegionQueue implements RegionQueue {
         // also does not get added
         if (!dace.putObject(event, sequenceID)) {
           // dace encountered a DESTROYED token - stop adding GII data
-          if (!this.puttingGIIDataInQueue) {
+          if (!puttingGIIDataInQueue.get()) {
             this.put(object);
           }
         } else {
@@ -1664,8 +1707,7 @@ public class HARegionQueue implements RegionQueue {
 
 
   /**
-   * Used for testing purposes only. Returns the set of current counters for the given
-   * ThreadIdentifier
+   * Returns the set of current counters for the given ThreadIdentifier
    *
    * @param id - the EventID object
    * @return - the current counters set
@@ -1799,7 +1841,7 @@ public class HARegionQueue implements RegionQueue {
                   InternalCqQuery cq =
                       ((InternalCqQuery) cqService.getClientCqFromServer(clientProxyID, cqName));
                   CqQueryVsdStats cqStats = cq.getVsdStats();
-                  if (cq != null && cqStats != null) {
+                  if (cqStats != null) {
                     cqStats.incNumHAQueuedEvents(incrementAmount);
                   }
                 }
@@ -2092,7 +2134,9 @@ public class HARegionQueue implements RegionQueue {
     Object inputValue;
     try {
       inputValue = BlobHelper.deserializeBlob(newValueCd.getSerializedValue(),
-          sender.getVersionObject(), null);
+          Versioning
+              .getKnownVersionOrDefault(sender.getVersion(), KnownVersion.CURRENT),
+          null);
       newValueCd = new VMCachedDeserializable(inputValue, newValueCd.getSizeInBytes());
     } catch (IOException | ClassNotFoundException e) {
       throw new RuntimeException("Unable to deserialize HA event for region " + regionName);
@@ -2215,7 +2259,10 @@ public class HARegionQueue implements RegionQueue {
 
       super.putGIIDataInRegion();
       if (this.getClass() == BlockingHARegionQueue.class) {
-        initialized.set(true);
+        synchronized (initialized) {
+          initialized.set(true);
+          initialized.notifyAll();
+        }
       }
     }
 
@@ -2438,12 +2485,14 @@ public class HARegionQueue implements RegionQueue {
         throws IOException, ClassNotFoundException, CacheException, InterruptedException {
       super(regionName, cache, hrqa, haContainer, clientProxyId, clientConflation, isPrimary,
           statisticsClock);
+      threadIdToSeqId.keepPrevAcks = true;
+      durableIDsList = new LinkedHashSet();
+      ackedEvents = new HashMap();
 
-      this.threadIdToSeqId.keepPrevAcks = true;
-      this.durableIDsList = new LinkedHashSet();
-      this.ackedEvents = new HashMap();
-      this.initialized.set(true);
-
+      synchronized (initialized) {
+        initialized.set(true);
+        initialized.notifyAll();
+      }
     }
 
     @Override
@@ -2711,7 +2760,7 @@ public class HARegionQueue implements RegionQueue {
             boolean interrupted = Thread.interrupted();
             try {
               synchronized (this) {
-                this.wait(messageSyncInterval * 1000);
+                this.wait(1000 * (long) messageSyncInterval);
               }
             } catch (InterruptedException e) {
               interrupted = true;
@@ -2930,7 +2979,7 @@ public class HARegionQueue implements RegionQueue {
       Long oldPosition = null;
       final boolean isDebugEnabled_BS = logger.isTraceEnabled(LogMarker.BRIDGE_SERVER_VERBOSE);
       if (isDebugEnabled_BS && this.lastSequenceIDPut >= sequenceID
-          && !owningQueue.puttingGIIDataInQueue) {
+          && !owningQueue.puttingGIIDataInQueue.get()) {
         logger.trace(LogMarker.BRIDGE_SERVER_VERBOSE,
             "HARegionQueue::DACE:putObject: Given sequence ID is already present ({}).\nThis may be a recovered operation via P2P or a GetInitialImage.\nlastSequenceIDPut = {} ; event = {};\n",
             sequenceID, lastSequenceIDPut, event);
@@ -2945,7 +2994,7 @@ public class HARegionQueue implements RegionQueue {
             logger.trace("HARegionQueue.putObject: adding {}", event);
           }
           this.lastSequenceIDPut = sequenceID;
-        } else if (!owningQueue.puttingGIIDataInQueue) {
+        } else if (!owningQueue.puttingGIIDataInQueue.get()) {
           if (isDebugEnabled_BS) {
             logger.trace(LogMarker.BRIDGE_SERVER_VERBOSE,
                 "{} eliding event with ID {}, because it is not greater than the last sequence ID ({}). The rejected event has key <{}> and value <{}>",
@@ -2967,7 +3016,7 @@ public class HARegionQueue implements RegionQueue {
           return false;
         }
 
-        if (sequenceID > lastDispatchedSequenceId || owningQueue.puttingGIIDataInQueue) {
+        if (sequenceID > lastDispatchedSequenceId || owningQueue.puttingGIIDataInQueue.get()) {
           // Insert the object into the Region
           Long position = owningQueue.tailKey.incrementAndGet();
 
@@ -3350,7 +3399,7 @@ public class HARegionQueue implements RegionQueue {
     }
 
     @Override
-    public Version[] getSerializationVersions() {
+    public KnownVersion[] getSerializationVersions() {
       // TODO Auto-generated method stub
       return null;
     }
@@ -3432,26 +3481,28 @@ public class HARegionQueue implements RegionQueue {
     }
   }
 
-  private void addClientCQsAndInterestList(ClientUpdateMessageImpl msg,
+  protected void addClientCQsAndInterestList(ClientUpdateMessageImpl msg,
       HAEventWrapper haEventWrapper, Map haContainer, String regionName) {
 
     ClientProxyMembershipID proxyID = ((HAContainerWrapper) haContainer).getProxyID(regionName);
-    if (haEventWrapper.getClientCqs() != null) {
-      CqNameToOp clientCQ = haEventWrapper.getClientCqs().get(proxyID);
-      if (clientCQ != null) {
-        msg.addClientCqs(proxyID, clientCQ);
+    if (proxyID != null) {
+      if (haEventWrapper.getClientCqs() != null) {
+        CqNameToOp clientCQ = haEventWrapper.getClientCqs().get(proxyID);
+        if (clientCQ != null) {
+          msg.addClientCqs(proxyID, clientCQ);
+        }
       }
-    }
 
-    // This is a remote HAEventWrapper.
-    // Add new Interested client lists.
-    ClientUpdateMessageImpl clientMsg =
-        (ClientUpdateMessageImpl) haEventWrapper.getClientUpdateMessage();
-    if (clientMsg != null) {
-      if (clientMsg.isClientInterestedInUpdates(proxyID)) {
-        msg.addClientInterestList(proxyID, true);
-      } else if (clientMsg.isClientInterestedInInvalidates(proxyID)) {
-        msg.addClientInterestList(proxyID, false);
+      // This is a remote HAEventWrapper.
+      // Add new Interested client lists.
+      ClientUpdateMessageImpl clientMsg =
+          (ClientUpdateMessageImpl) haEventWrapper.getClientUpdateMessage();
+      if (clientMsg != null) {
+        if (clientMsg.isClientInterestedInUpdates(proxyID)) {
+          msg.addClientInterestList(proxyID, true);
+        } else if (clientMsg.isClientInterestedInInvalidates(proxyID)) {
+          msg.addClientInterestList(proxyID, false);
+        }
       }
     }
   }
@@ -3686,7 +3737,7 @@ public class HARegionQueue implements RegionQueue {
           if (logger.isDebugEnabled()) {
             logger.debug(caller + " decremented Event ID hash code: " + haContainerKey.hashCode()
                 + "; System ID hash code: " + System.identityHashCode(haContainerKey)
-                + "; Wrapper details: " + haContainerKey);
+                + "; Wrapper details: " + haContainerKey + "; for queue: " + regionName);
           }
           if (haContainerKey.decAndGetReferenceCount() == 0L) {
             HARegionQueue.this.haContainer.remove(haContainerKey);
@@ -3909,4 +3960,182 @@ public class HARegionQueue implements RegionQueue {
   public Queue getGiiQueue() {
     return this.giiQueue;
   }
+
+  List<EventID> getDispatchedEvents(List<EventID> eventIds) {
+    List<EventID> dispatchedEvents = new LinkedList<>();
+    for (EventID eventId : eventIds) {
+      if (isDispatched(eventId)) {
+        dispatchedEvents.add(eventId);
+      }
+    }
+    return dispatchedEvents;
+  }
+
+  boolean isDispatched(EventID eventId) {
+    DispatchedAndCurrentEvents wrapper = getDispatchedAndCurrentEvents(eventId);
+    if (wrapper != null && eventId.getSequenceID() > wrapper.lastDispatchedSequenceId) {
+      return false;
+    }
+    return true;
+  }
+
+  DispatchedAndCurrentEvents getDispatchedAndCurrentEvents(EventID eventId) {
+    ThreadIdentifier tid = getThreadIdentifier(eventId);
+    return (DispatchedAndCurrentEvents) eventsMap.get(tid);
+  }
+
+  public synchronized void synchronizeQueueWithPrimary(InternalDistributedMember primary,
+      InternalCache cache) {
+    if (scheduleSynchronizationWithPrimaryInProgress.get() || hasSynchronizedWithPrimary.get()
+        || !doneGIIQueueing.get()) {
+      // Order of the check is important here as timer scheduled thread
+      // setting hasSynchronizedWithPrimary to true first before setting
+      // scheduleSynchronizationWithPrimaryInProgress to false in doSynchronizationWithPrimary.
+      return;
+    }
+    if (primary.getVersionOrdinal() < KnownVersion.GEODE_1_14_0.ordinal()) {
+      if (logger.isDebugEnabled()) {
+        logger.debug("Don't send to primary with version older than KnownVersion.GEODE_1_14_0");
+      }
+      return;
+    }
+    if (!hasSynchronizedWithPrimary.get() && !scheduleSynchronizationWithPrimaryInProgress.get()) {
+      scheduleSynchronizationWithPrimaryInProgress.set(true);
+    }
+    long delay = getDelay();
+    scheduleSynchronizationWithPrimary(primary, cache, delay);
+  }
+
+  long getDelay() {
+    // Wait for in-flight events during gii to be distributed to the member with primary queue.
+    long waitTime = 15 * 1000;
+    long currentTime = getCurrentTime();
+    long elapsed = currentTime - doneGIIQueueingTime;
+    return elapsed < waitTime ? waitTime - elapsed : 0L;
+  }
+
+  long getCurrentTime() {
+    return System.currentTimeMillis();
+  }
+
+  synchronized void scheduleSynchronizationWithPrimary(InternalDistributedMember primary,
+      InternalCache cache, long delay) {
+    cache.getCCPTimer().schedule(new SystemTimer.SystemTimerTask() {
+      @Override
+      public void run2() {
+        doSynchronizationWithPrimary(primary, cache);
+      }
+    }, delay);
+  }
+
+  synchronized void doSynchronizationWithPrimary(InternalDistributedMember primary,
+      InternalCache cache) {
+    int maxChunkSize = 1000;
+    try {
+      List<EventID> giiEvents = getGIIEvents();
+      if (giiEvents.size() == 0) {
+        hasSynchronizedWithPrimary.set(true);
+        return;
+      }
+      Collection<List<EventID>> chunks = null;
+
+      if (giiEvents.size() > maxChunkSize) {
+        chunks = getChunks(giiEvents, maxChunkSize);
+      }
+
+      if (chunks == null) {
+        if (!removeDispatchedEvents(primary, cache, giiEvents)) {
+          return;
+        }
+      } else {
+        for (List<EventID> chunk : chunks) {
+          if (!removeDispatchedEvents(primary, cache, chunk)) {
+            return;
+          }
+        }
+      }
+      if (logger.isDebugEnabled()) {
+        logger.debug("HARegionQueue {} has synced with primary on {}", regionName, primary);
+      }
+      hasSynchronizedWithPrimary.set(true);
+    } finally {
+      scheduleSynchronizationWithPrimaryInProgress.set(false);
+    }
+  }
+
+  Collection<List<EventID>> getChunks(List<EventID> events, int size) {
+    AtomicInteger counter = new AtomicInteger(0);
+    return events.stream().collect(Collectors.groupingBy(event -> counter.getAndIncrement() / size))
+        .values();
+  }
+
+  boolean removeDispatchedEvents(InternalDistributedMember primary, InternalCache cache,
+      List<EventID> chunkEvents) {
+    List<EventID> dispatchedEvents = getDispatchedEventsFromPrimary(primary, cache, chunkEvents);
+
+    if (dispatchedEvents == null) {
+      // failed to get events from current primary, need to retry.
+      return false;
+    }
+
+    for (EventID id : dispatchedEvents) {
+      if (!removeDispatchedEventAfterSyncWithPrimary(id)) {
+        // failed to remove all dispatched events, need to retry
+        return false;
+      }
+    }
+    return true;
+  }
+
+  List<EventID> getDispatchedEventsFromPrimary(InternalDistributedMember primary,
+      InternalCache cache, List<EventID> chunkEvents) {
+    return QueueSynchronizationProcessor.getDispatchedEvents(cache.getDistributionManager(),
+        primary, regionName, chunkEvents);
+  }
+
+  List<EventID> getGIIEvents() {
+    List<EventID> events = new LinkedList<>();
+    for (long i = positionBeforeGII; i < positionAfterGII + 1; i++) {
+      Map.Entry<?, ?> entry = region.getEntry(i);
+      // could be already removed after processing QueueRemovalMessage
+      if (entry != null && entry.getValue() instanceof HAEventWrapper) {
+        HAEventWrapper wrapper = (HAEventWrapper) entry.getValue();
+        events.add(wrapper.getEventId());
+      }
+    }
+    return events;
+  }
+
+  boolean removeDispatchedEventAfterSyncWithPrimary(EventID id) {
+    boolean interrupted = Thread.interrupted();
+    try {
+      if (logger.isDebugEnabled()) {
+        logger.debug(
+            "After sync with primary for HARegionQueue {}, removing dispatched event with ID {}",
+            regionName, id);
+      }
+      removeDispatchedEvents(id);
+    } catch (RegionDestroyedException ignore) {
+      logger.info(
+          "HARegionQueue {} was found to be destroyed when attempting to remove dispatched event with ID {} after sync",
+          regionName, id);
+    } catch (CancelException ignore) {
+      return false;
+    } catch (CacheException e) {
+      logger.error(String.format(
+          "HARegionQueue %s encountered an exception when attempting to remove event with ID %s from the queue",
+          regionName, id), e);
+    } catch (InterruptedException ignore) {
+      Thread.currentThread().interrupt();
+      return false;
+    } catch (RejectedExecutionException ignore) {
+      interrupted = true;
+    } finally {
+      if (interrupted) {
+        Thread.currentThread().interrupt();
+      }
+    }
+    return true;
+  }
+
 }

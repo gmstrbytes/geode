@@ -14,8 +14,10 @@
  */
 package org.apache.geode.internal.cache.tier.sockets;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
@@ -43,7 +45,6 @@ import org.apache.geode.cache.util.CacheListenerAdapter;
 import org.apache.geode.cache.util.CacheWriterAdapter;
 import org.apache.geode.cache30.ClientServerTestCase;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.cache.CacheObserverAdapter;
 import org.apache.geode.internal.cache.CacheObserverHolder;
 import org.apache.geode.internal.cache.EntryEventImpl;
@@ -344,7 +345,7 @@ public class EventIDVerificationDUnitTest extends JUnit4DistributedTestCase {
 
     RegionAttributes attrs = factory.create();
     cache.createRegion(REGION_NAME, attrs);
-    int port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    int port = getRandomAvailableTCPPort();
     CacheServer server1 = cache.addCacheServer();
     server1.setPort(port);
     server1.setNotifyBySubscription(true);
@@ -354,7 +355,7 @@ public class EventIDVerificationDUnitTest extends JUnit4DistributedTestCase {
 
   public static void createEntry() {
     try {
-      Region r = cache.getRegion("/" + REGION_NAME);
+      Region r = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(r);
 
       if (!r.containsKey("key-1")) {
@@ -369,7 +370,7 @@ public class EventIDVerificationDUnitTest extends JUnit4DistributedTestCase {
 
   public static void put() {
     try {
-      Region r = cache.getRegion("/" + REGION_NAME);
+      Region r = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(r);
 
       r.put("key-1", "vm2-key-1");
@@ -383,7 +384,7 @@ public class EventIDVerificationDUnitTest extends JUnit4DistributedTestCase {
 
   public static void destroy() {
     try {
-      Region r = cache.getRegion("/" + REGION_NAME);
+      Region r = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(r);
       r.destroy("key-1");
     } catch (Exception ex) {
@@ -394,7 +395,7 @@ public class EventIDVerificationDUnitTest extends JUnit4DistributedTestCase {
 
   public static void remove() {
     try {
-      Region r = cache.getRegion("/" + REGION_NAME);
+      Region r = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(r);
       r.remove("key-1");
     } catch (Exception ex) {
@@ -405,7 +406,7 @@ public class EventIDVerificationDUnitTest extends JUnit4DistributedTestCase {
 
   public static void destroyRegion() {
     try {
-      Region r = cache.getRegion("/" + REGION_NAME);
+      Region r = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(r);
       r.destroyRegion();
     } catch (Exception ex) {
@@ -415,7 +416,7 @@ public class EventIDVerificationDUnitTest extends JUnit4DistributedTestCase {
 
   public static void clearRegion() {
     try {
-      Region r = cache.getRegion("/" + REGION_NAME);
+      Region r = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(r);
       r.clear();
     } catch (Exception ex) {

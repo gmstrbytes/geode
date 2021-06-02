@@ -17,6 +17,7 @@ package org.apache.geode.internal.net;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
 import static org.apache.geode.distributed.ConfigurationProperties.SSL_CIPHERS;
 import static org.apache.geode.distributed.ConfigurationProperties.SSL_ENABLED_COMPONENTS;
+import static org.apache.geode.distributed.ConfigurationProperties.SSL_ENDPOINT_IDENTIFICATION_ENABLED;
 import static org.apache.geode.distributed.ConfigurationProperties.SSL_KEYSTORE;
 import static org.apache.geode.distributed.ConfigurationProperties.SSL_KEYSTORE_PASSWORD;
 import static org.apache.geode.distributed.ConfigurationProperties.SSL_PROTOCOLS;
@@ -32,7 +33,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
 import static org.mockito.Mockito.mock;
 
 import java.io.DataInputStream;
@@ -52,13 +52,17 @@ import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
+import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import javax.net.ssl.SNIServerName;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLException;
+import javax.net.ssl.StandardConstants;
 
 import org.apache.commons.io.FileUtils;
 import org.junit.After;
@@ -72,6 +76,7 @@ import org.junit.rules.TestName;
 import org.apache.geode.distributed.internal.DMStats;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionConfigImpl;
+import org.apache.geode.distributed.internal.tcpserver.HostAndPort;
 import org.apache.geode.internal.ByteBufferOutputStream;
 import org.apache.geode.internal.inet.LocalHostUtil;
 import org.apache.geode.internal.security.SecurableCommunicationChannel;
@@ -129,6 +134,7 @@ public class SSLSocketIntegrationTest {
     properties.setProperty(SSL_TRUSTSTORE, keystore.getCanonicalPath());
     properties.setProperty(SSL_TRUSTSTORE_PASSWORD, "password");
     properties.setProperty(SSL_REQUIRE_AUTHENTICATION, "true");
+    properties.setProperty(SSL_ENDPOINT_IDENTIFICATION_ENABLED, "false");
     properties.setProperty(SSL_CIPHERS, "any");
     properties.setProperty(SSL_PROTOCOLS, "TLSv1.2");
 
@@ -175,12 +181,14 @@ public class SSLSocketIntegrationTest {
   }
 
   @Test
-  public void securedSocketTransmissionShouldWork() throws Exception {
-    this.serverSocket = this.socketCreator.createServerSocket(0, 0, this.localHost);
+  public void securedSocketTransmissionShouldWork() throws Throwable {
+    this.serverSocket = this.socketCreator.forCluster().createServerSocket(0, 0, this.localHost);
     this.serverThread = startServer(this.serverSocket, 15000);
 
     int serverPort = this.serverSocket.getLocalPort();
-    this.clientSocket = this.socketCreator.connectForServer(this.localHost, serverPort);
+    this.clientSocket = this.socketCreator.forCluster()
+        .connect(new HostAndPort(this.localHost.getHostAddress(), serverPort), 0, null,
+            Socket::new);
 
     // transmit expected string from Client to Server
     ObjectOutputStream output = new ObjectOutputStream(this.clientSocket.getOutputStream());
@@ -191,12 +199,14 @@ public class SSLSocketIntegrationTest {
     await().until(() -> {
       return !serverThread.isAlive();
     });
-    assertNull(serverException);
+    if (serverException != null) {
+      throw serverException;
+    }
     assertThat(this.messageFromClient.get()).isEqualTo(MESSAGE);
   }
 
   @Test
-  public void testSecuredSocketTransmissionShouldWorkUsingNIO() throws Exception {
+  public void testSecuredSocketTransmissionShouldWorkUsingNIO() throws Throwable {
     ServerSocketChannel serverChannel = ServerSocketChannel.open();
     serverSocket = serverChannel.socket();
 
@@ -217,7 +227,7 @@ public class SSLSocketIntegrationTest {
     clientSocket = clientChannel.socket();
     NioSslEngine engine =
         clusterSocketCreator.handshakeSSLSocketChannel(clientSocket.getChannel(),
-            clusterSocketCreator.createSSLEngine("localhost", 1234), 0, true,
+            clusterSocketCreator.createSSLEngine("localhost", 1234, true), 0,
             ByteBuffer.allocate(65535), new BufferPool(mock(DMStats.class)));
     clientChannel.configureBlocking(true);
 
@@ -229,7 +239,9 @@ public class SSLSocketIntegrationTest {
     await().until(() -> {
       return !serverThread.isAlive();
     });
-    assertNull(serverException);
+    if (serverException != null) {
+      throw serverException;
+    }
     // assertThat(this.messageFromClient.get()).isEqualTo(MESSAGE);
   }
 
@@ -244,11 +256,13 @@ public class SSLSocketIntegrationTest {
     ByteBuffer buffer = bbos.getContentBuffer();
     System.out.println(
         "client buffer position is " + buffer.position() + " and limit is " + buffer.limit());
-    ByteBuffer wrappedBuffer = engine.wrap(buffer);
-    System.out.println("client wrapped buffer position is " + wrappedBuffer.position()
-        + " and limit is " + wrappedBuffer.limit());
-    int bytesWritten = clientChannel.write(wrappedBuffer);
-    System.out.println("client bytes written is " + bytesWritten);
+    try (final ByteBufferSharing outputSharing = engine.wrap(buffer)) {
+      ByteBuffer wrappedBuffer = outputSharing.getBuffer();
+      System.out.println("client wrapped buffer position is " + wrappedBuffer.position()
+          + " and limit is " + wrappedBuffer.limit());
+      int bytesWritten = clientChannel.write(wrappedBuffer);
+      System.out.println("client bytes written is " + bytesWritten);
+    }
   }
 
   private Thread startServerNIO(final ServerSocket serverSocket, int timeoutMillis)
@@ -261,12 +275,19 @@ public class SSLSocketIntegrationTest {
 
         socket = serverSocket.accept();
         SocketCreator sc = SocketCreatorFactory.getSocketCreatorForComponent(CLUSTER);
+        final SSLEngine sslEngine = sc.createSSLEngine("localhost", 1234, false);
         engine =
-            sc.handshakeSSLSocketChannel(socket.getChannel(), sc.createSSLEngine("localhost", 1234),
+            sc.handshakeSSLSocketChannel(socket.getChannel(), sslEngine,
                 timeoutMillis,
-                false,
                 ByteBuffer.allocate(65535),
                 new BufferPool(mock(DMStats.class)));
+        final List<SNIServerName> serverNames = sslEngine.getSSLParameters().getServerNames();
+        if (serverNames != null && serverNames.stream()
+            .mapToInt(SNIServerName::getType)
+            .anyMatch(type -> type == StandardConstants.SNI_HOST_NAME)) {
+          serverException = new AssertionError("found SNI server name in SSL Parameters");
+          return;
+        }
 
         readMessageFromNIOSSLClient(socket, buffer, engine);
         readMessageFromNIOSSLClient(socket, buffer, engine);
@@ -279,9 +300,11 @@ public class SSLSocketIntegrationTest {
           final NioSslEngine nioSslEngine = engine;
           engine.close(socket.getChannel());
           assertThatThrownBy(() -> {
-            nioSslEngine.unwrap(ByteBuffer.wrap(new byte[0]));
+            try (final ByteBufferSharing unused =
+                nioSslEngine.unwrap(ByteBuffer.wrap(new byte[0]))) {
+            }
           })
-              .isInstanceOf(IllegalStateException.class);
+              .isInstanceOf(IOException.class);
         }
       }
     }, this.testName.getMethodName() + "-server");
@@ -293,24 +316,35 @@ public class SSLSocketIntegrationTest {
   private void readMessageFromNIOSSLClient(Socket socket, ByteBuffer buffer, NioSslEngine engine)
       throws IOException {
 
-    ByteBuffer unwrapped = engine.getUnwrappedBuffer(buffer);
-    // if we already have unencrypted data skip unwrapping
-    if (unwrapped.position() == 0) {
-      int bytesRead;
-      // if we already have encrypted data skip reading from the socket
-      if (buffer.position() == 0) {
-        bytesRead = socket.getChannel().read(buffer);
-        buffer.flip();
+    try (final ByteBufferSharing sharedBuffer = engine.getUnwrappedBuffer()) {
+      final ByteBuffer unwrapped = sharedBuffer.getBuffer();
+      // if we already have unencrypted data skip unwrapping
+      if (unwrapped.position() == 0) {
+        int bytesRead;
+        // if we already have encrypted data skip reading from the socket
+        if (buffer.position() == 0) {
+          bytesRead = socket.getChannel().read(buffer);
+          buffer.flip();
+        } else {
+          bytesRead = buffer.remaining();
+        }
+        System.out.println("server bytes read is " + bytesRead + ": buffer position is "
+            + buffer.position() + " and limit is " + buffer.limit());
+        try (final ByteBufferSharing sharedBuffer2 = engine.unwrap(buffer)) {
+          final ByteBuffer unwrapped2 = sharedBuffer2.getBuffer();
+
+          unwrapped2.flip();
+          System.out.println("server unwrapped buffer position is " + unwrapped2.position()
+              + " and limit is " + unwrapped2.limit());
+          finishReadMessageFromNIOSSLClient(unwrapped2);
+        }
       } else {
-        bytesRead = buffer.remaining();
+        finishReadMessageFromNIOSSLClient(unwrapped);
       }
-      System.out.println("server bytes read is " + bytesRead + ": buffer position is "
-          + buffer.position() + " and limit is " + buffer.limit());
-      unwrapped = engine.unwrap(buffer);
-      unwrapped.flip();
-      System.out.println("server unwrapped buffer position is " + unwrapped.position()
-          + " and limit is " + unwrapped.limit());
     }
+  }
+
+  private void finishReadMessageFromNIOSSLClient(final ByteBuffer unwrapped) throws IOException {
     ByteBufferInputStream bbis = new ByteBufferInputStream(unwrapped);
     DataInputStream dis = new DataInputStream(bbis);
     String welcome = dis.readUTF();
@@ -324,7 +358,7 @@ public class SSLSocketIntegrationTest {
 
   @Test(expected = SocketTimeoutException.class)
   public void handshakeCanTimeoutOnServer() throws Throwable {
-    this.serverSocket = this.socketCreator.createServerSocket(0, 0, this.localHost);
+    this.serverSocket = this.socketCreator.forCluster().createServerSocket(0, 0, this.localHost);
     this.serverThread = startServer(this.serverSocket, 1000);
 
     int serverPort = this.serverSocket.getLocalPort();
@@ -407,8 +441,9 @@ public class SSLSocketIntegrationTest {
     try {
       await("connect to server socket").until(() -> {
         try {
-          Socket clientSocket = socketCreator.connectForClient(
-              LocalHostUtil.getLocalHost().getHostAddress(), serverSocketPort, 500);
+          Socket clientSocket = socketCreator.forClient().connect(
+              new HostAndPort(LocalHostUtil.getLocalHost().getHostAddress(), serverSocketPort),
+              500);
           clientSocket.close();
           System.err.println(
               "client successfully connected to server but should not have been able to do so");

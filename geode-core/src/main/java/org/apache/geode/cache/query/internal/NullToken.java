@@ -22,8 +22,8 @@ import org.apache.geode.cache.query.QueryService;
 import org.apache.geode.cache.query.internal.index.IndexManager;
 import org.apache.geode.internal.serialization.DataSerializableFixedID;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
-import org.apache.geode.internal.serialization.Version;
 
 /**
  * A Token representing null.
@@ -33,6 +33,9 @@ import org.apache.geode.internal.serialization.Version;
  */
 public class NullToken implements DataSerializableFixedID, Comparable {
 
+  @SuppressWarnings("lgtm[java/useless-null-check]")
+  // The "useless null check" alert is suppressed here as the first time the constructor is called,
+  // QueryService.NULL is actually null, but subsequent times it is not
   public NullToken() {
     Support.assertState(IndexManager.NULL == null, "NULL constant already instantiated");
   }
@@ -76,7 +79,7 @@ public class NullToken implements DataSerializableFixedID, Comparable {
       DeserializationContext context) throws IOException, ClassNotFoundException {}
 
   @Override
-  public Version[] getSerializationVersions() {
+  public KnownVersion[] getSerializationVersions() {
     return null;
   }
 }

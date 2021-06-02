@@ -143,7 +143,11 @@ public interface GatewaySender {
 
   boolean DEFAULT_IS_PARALLEL = false;
 
+  boolean DEFAULT_MUST_GROUP_TRANSACTION_EVENTS = false;
+
   boolean DEFAULT_IS_FOR_INTERNAL_USE = false;
+
+  boolean DEFAULT_ENFORCE_THREADS_CONNECT_SAME_RECEIVER = false;
 
   /**
    * Retry a connection from sender to receiver after specified time interval (in milliseconds) in
@@ -152,6 +156,47 @@ public interface GatewaySender {
   int CONNECTION_RETRY_INTERVAL = Integer
       .getInteger(GeodeGlossary.GEMFIRE_PREFIX + "gateway-connection-retry-interval", 1000)
       .intValue();
+
+  /**
+   * Number of times to retry to get events for a transaction from the gateway sender queue when
+   * group-transaction-events is set to true.
+   * When group-transaction-events is set to true and a batch ready to be sent does not contain
+   * all the events for all the transactions to which the events belong, the gateway sender will try
+   * to get the missing events of the transactions from the queue to add them to the batch
+   * before sending it.
+   * If the missing events are not in the queue when the gateway sender tries to get them
+   * it will retry for a maximum of times equal to the value set in this parameter before
+   * delivering the batch without the missing events and logging an error.
+   * Setting this parameter to a very low value could cause that under heavy load and
+   * group-transaction-events set to true, batches are sent with incomplete transactions. Setting it
+   * to a high value could cause that under heavy load and group-transaction-events set to true,
+   * batches are held for some time before being sent.
+   */
+  int GET_TRANSACTION_EVENTS_FROM_QUEUE_RETRIES =
+      Integer.getInteger(GeodeGlossary.GEMFIRE_PREFIX + "get-transaction-events-from-queue-retries",
+          2);
+  /**
+   * Milliseconds to wait before retrying to get events for a transaction from the
+   * gateway sender queue when group-transaction-events is true.
+   */
+  int GET_TRANSACTION_EVENTS_FROM_QUEUE_WAIT_TIME_MS =
+      Integer.getInteger(
+          GeodeGlossary.GEMFIRE_PREFIX + "get-transaction-events-from-queue-wait-time-ms",
+          1);
+
+  /**
+   * When group-transaction-events is true and the gateway sender is stopped,
+   * addition to the queue of a group of transaction events might be interrupted.
+   * To ensure that the queue does not contain incomplete transactions, this parameter
+   * allows for a grace period, specified in milliseconds, before the gateway sender is actually
+   * stopped, allowing complete transaction event groups to be queued. Any event received
+   * during the grace period that is not part of a transaction event group in the queue
+   * is dropped.
+   */
+  int TIME_TO_COMPLETE_TRANSACTIONS_BEFORE_STOP_MS =
+      Integer.getInteger(
+          GeodeGlossary.GEMFIRE_PREFIX + "time-to-complete-transactions-before-stop-ms",
+          1000);
 
   /**
    * The order policy. This enum is applicable only when concurrency-level is > 1.
@@ -180,6 +225,12 @@ public interface GatewaySender {
    * changed.
    */
   void start();
+
+  /**
+   * Starts this GatewaySender and discards previous queue content. Once the GatewaySender is
+   * running, its configuration cannot be changed.
+   */
+  void startWithCleanQueue();
 
   /**
    * Stops this GatewaySender. The scope of this operation is the VM on which it is invoked. In case
@@ -384,6 +435,13 @@ public interface GatewaySender {
    */
   boolean isParallel();
 
+  /**
+   * Returns groupTransactionEvents boolean property for this GatewaySender.
+   *
+   * @return groupTransactionEvents boolean property for this GatewaySender
+   *
+   */
+  boolean mustGroupTransactionEvents();
 
   /**
    * Returns the number of dispatcher threads working for this <code>GatewaySender</code>. Default
@@ -404,7 +462,6 @@ public interface GatewaySender {
 
   int getMaxParallelismForReplicatedRegion();
 
-
   /**
    * Destroys the GatewaySender.
    * <p>
@@ -415,4 +472,54 @@ public interface GatewaySender {
    *
    */
   void destroy();
+
+  /**
+   * Returns enforceThreadsConnectSameReceiver boolean property for this GatewaySender.
+   *
+   * @return enforceThreadsConnectSameReceiver boolean property for this GatewaySender
+   *
+   */
+  boolean getEnforceThreadsConnectSameReceiver();
+
+
+  /**
+   * Set AlertThreshold for this GatewaySender.
+   *
+   * @since Geode 1.14
+   *
+   */
+  void setAlertThreshold(int alertThreshold);
+
+  /**
+   * Set BatchSize for this GatewaySender.
+   *
+   * @since Geode 1.14
+   *
+   */
+  void setBatchSize(int batchSize);
+
+  /**
+   * Set BatchTimeInterval for this GatewaySender.
+   *
+   * @since Geode 1.14
+   *
+   */
+  void setBatchTimeInterval(int batchTimeInterval);
+
+  /**
+   * Set GroupTransactionEvents for this GatewaySender.
+   *
+   * @since Geode 1.14
+   *
+   */
+  void setGroupTransactionEvents(boolean groupTransactionEvents);
+
+  /**
+   * Set GatewayEventFilters for this GatewaySender.
+   *
+   * @since Geode 1.14
+   *
+   */
+  void setGatewayEventFilters(List<GatewayEventFilter> filters);
+
 }

@@ -29,11 +29,25 @@ public interface GatewaySenderFactory {
 
   /**
    * Indicates whether all VMs need to distribute events to remote site. In this case only the
-   * events originating in a particular VM will be in dispatched in order.
+   * events originating in a particular VM will be dispatched in order.
    *
    * @param isParallel boolean to indicate whether distribution policy is parallel
    */
   GatewaySenderFactory setParallel(boolean isParallel);
+
+  /**
+   * Indicates whether events belonging to the same transaction must be
+   * delivered inside the same batch, i.e. they cannot be spread across different
+   * batches.
+   * <code>groupTransactionEvents</code> can be enabled only on parallel gateway senders
+   * or on serial gateway senders with just one dispatcher thread.
+   * It cannot be enabled if batch conflation is enabled.
+   *
+   * @param groupTransactionEvents boolean to indicate whether events from
+   *        the same transaction must be delivered inside
+   *        the same batch.
+   */
+  GatewaySenderFactory setGroupTransactionEvents(boolean groupTransactionEvents);
 
   /**
    * Adds a <code>GatewayEventFilter</code>
@@ -175,6 +189,19 @@ public interface GatewaySenderFactory {
    * @param filter The <code>GatewayEventSubstitutionFilter</code>
    */
   GatewaySenderFactory setGatewayEventSubstitutionFilter(GatewayEventSubstitutionFilter filter);
+
+  /**
+   * If true, receiver member id is checked by all dispatcher threads when the connection is
+   * established to ensure they connect to the same receiver. Instead of starting all dispatcher
+   * threads in parallel, one thread is started first, and after that the rest are started in
+   * parallel. Default is false.
+   *
+   * @param enforceThreadsConnectSameReceiver boolean if true threads will verify if they are
+   *        connected to the same receiver
+   *
+   */
+  GatewaySenderFactory setEnforceThreadsConnectSameReceiver(
+      boolean enforceThreadsConnectSameReceiver);
 
   /**
    * Creates a <code>GatewaySender</code> to communicate with remote distributed system

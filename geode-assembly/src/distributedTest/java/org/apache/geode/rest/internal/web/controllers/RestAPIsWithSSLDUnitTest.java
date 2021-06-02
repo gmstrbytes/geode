@@ -111,10 +111,10 @@ public class RestAPIsWithSSLDUnitTest {
   private static File findTrustStore(Properties props) {
     String propertyValue = props.getProperty(SSL_TRUSTSTORE);
     if (StringUtils.isEmpty(propertyValue)) {
-      propertyValue = props.getProperty(HTTP_SERVICE_SSL_TRUSTSTORE);
+      propertyValue = getDeprecatedTrustStore(props);
     }
     if (StringUtils.isEmpty(propertyValue)) {
-      propertyValue = props.getProperty(HTTP_SERVICE_SSL_KEYSTORE);
+      propertyValue = getDeprecatedKeystore(props);
     }
     return new File(propertyValue);
   }
@@ -122,9 +122,19 @@ public class RestAPIsWithSSLDUnitTest {
   private static File findKeyStoreJKS(Properties props) {
     String propertyValue = props.getProperty(SSL_KEYSTORE);
     if (StringUtils.isEmpty(propertyValue)) {
-      propertyValue = props.getProperty(HTTP_SERVICE_SSL_KEYSTORE);
+      propertyValue = getDeprecatedKeystore(props);
     }
     return new File(propertyValue);
+  }
+
+  @SuppressWarnings("deprecation")
+  private static String getDeprecatedKeystore(Properties props) {
+    return props.getProperty(HTTP_SERVICE_SSL_KEYSTORE);
+  }
+
+  @SuppressWarnings("deprecation")
+  private static String getDeprecatedTrustStore(Properties props) {
+    return props.getProperty(HTTP_SERVICE_SSL_TRUSTSTORE);
   }
 
   private void startClusterWithSSL(final Properties sslProperties)
@@ -139,8 +149,9 @@ public class RestAPIsWithSSLDUnitTest {
 
     client.invoke(() -> {
       ClientCache clientCache = ClusterStartupRule.getClientCache();
-      Region region = clientCache.createClientRegionFactory(ClientRegionShortcut.PROXY)
-          .create(PEOPLE_REGION_NAME);
+      Region<String, Person> region =
+          clientCache.<String, Person>createClientRegionFactory(ClientRegionShortcut.PROXY)
+              .create(PEOPLE_REGION_NAME);
 
       // put person object
       region.put("1", new Person(101L, "Mithali", "Dorai", "Raj", new Date(), Gender.FEMALE));
@@ -150,7 +161,7 @@ public class RestAPIsWithSSLDUnitTest {
       region.put("5",
           new Person(105L, "Jhulan", "Chidambaram", "Goswami", new Date(), Gender.FEMALE));
 
-      Map<String, Object> userMap = new HashMap<String, Object>();
+      Map<String, Person> userMap = new HashMap<>();
       userMap.put("6", new Person(101L, "Rahul", "Rajiv", "Gndhi", new Date(), Gender.MALE));
       userMap.put("7", new Person(102L, "Narendra", "Damodar", "Modi", new Date(), Gender.MALE));
       userMap.put("8", new Person(103L, "Atal", "Bihari", "Vajpayee", new Date(), Gender.MALE));
@@ -199,6 +210,7 @@ public class RestAPIsWithSSLDUnitTest {
 
     // Host checking is disabled here, as tests might run on multiple hosts and
     // host entries can not be assumed
+    @SuppressWarnings("deprecation")
     SSLConnectionSocketFactory sslConnectionSocketFactory = new SSLConnectionSocketFactory(
         sslcontext, SSLConnectionSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER);
 
@@ -328,22 +340,6 @@ public class RestAPIsWithSSLDUnitTest {
   }
 
   @Test
-  public void testSSLWithTLSv11Protocol() throws Exception {
-    Properties props = new Properties();
-    props.setProperty(SSL_KEYSTORE, findTrustedJKSWithSingleEntry().getCanonicalPath());
-    props.setProperty(SSL_TRUSTSTORE, findTrustedJKSWithSingleEntry().getCanonicalPath());
-    props.setProperty(SSL_KEYSTORE_PASSWORD, "password");
-    props.setProperty(SSL_TRUSTSTORE_PASSWORD, "password");
-    props.setProperty(SSL_KEYSTORE_TYPE, "JKS");
-    props.setProperty(SSL_PROTOCOLS, "TLSv1.1");
-    props.setProperty(SSL_CIPHERS, "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA");
-    props.setProperty(SSL_ENABLED_COMPONENTS, SecurableCommunicationChannel.WEB.getConstant());
-
-    startClusterWithSSL(props);
-    validateConnection(props);
-  }
-
-  @Test
   public void testSSLWithTLSv12Protocol() throws Exception {
     Properties props = new Properties();
     props.setProperty(SSL_KEYSTORE, findTrustedJKSWithSingleEntry().getCanonicalPath());
@@ -422,6 +418,7 @@ public class RestAPIsWithSSLDUnitTest {
     validateConnection(props);
   }
 
+  @SuppressWarnings("deprecation")
   @Test
   public void testSSLWithMultipleCipherSuiteLegacy() throws Exception {
     System.setProperty("javax.net.debug", "ssl,handshake");
@@ -458,6 +455,7 @@ public class RestAPIsWithSSLDUnitTest {
     validateConnection(props);
   }
 
+  @SuppressWarnings("deprecation")
   @Test
   public void testSimpleSSLLegacy() throws Exception {
     Properties props = new Properties();
@@ -470,6 +468,7 @@ public class RestAPIsWithSSLDUnitTest {
     validateConnection(props);
   }
 
+  @SuppressWarnings("deprecation")
   @Test
   public void testSSLWithoutKeyStoreTypeLegacy() throws Exception {
     Properties props = new Properties();
@@ -482,6 +481,7 @@ public class RestAPIsWithSSLDUnitTest {
     validateConnection(props);
   }
 
+  @SuppressWarnings("deprecation")
   @Test
   public void testSSLWithSSLProtocolLegacy() throws Exception {
     Properties props = new Properties();
@@ -495,6 +495,7 @@ public class RestAPIsWithSSLDUnitTest {
     validateConnection(props);
   }
 
+  @SuppressWarnings("deprecation")
   @Test
   public void testSSLWithTLSProtocolLegacy() throws Exception {
     Properties props = new Properties();
@@ -508,20 +509,7 @@ public class RestAPIsWithSSLDUnitTest {
     validateConnection(props);
   }
 
-  @Test
-  public void testSSLWithTLSv11ProtocolLegacy() throws Exception {
-    Properties props = new Properties();
-    props.setProperty(HTTP_SERVICE_SSL_ENABLED, "true");
-    props.setProperty(HTTP_SERVICE_SSL_KEYSTORE,
-        findTrustedJKSWithSingleEntry().getCanonicalPath());
-    props.setProperty(HTTP_SERVICE_SSL_KEYSTORE_PASSWORD, "password");
-    props.setProperty(HTTP_SERVICE_SSL_PROTOCOLS, "TLSv1.1");
-    props.setProperty(HTTP_SERVICE_SSL_CIPHERS, "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA");
-
-    startClusterWithSSL(props);
-    validateConnection(props);
-  }
-
+  @SuppressWarnings("deprecation")
   @Test
   public void testSSLWithTLSv12ProtocolLegacy() throws Exception {
     Properties props = new Properties();
@@ -535,6 +523,7 @@ public class RestAPIsWithSSLDUnitTest {
     validateConnection(props);
   }
 
+  @SuppressWarnings("deprecation")
   @Test
   public void testWithMultipleProtocolLegacy() throws Exception {
     Properties props = new Properties();
@@ -548,6 +537,7 @@ public class RestAPIsWithSSLDUnitTest {
     validateConnection(props);
   }
 
+  @SuppressWarnings("deprecation")
   @Test
   public void testSSLWithCipherSuiteLegacy() throws Exception {
     System.setProperty("javax.net.debug", "ssl");
@@ -570,6 +560,7 @@ public class RestAPIsWithSSLDUnitTest {
     validateConnection(props);
   }
 
+  @SuppressWarnings("deprecation")
   @Test
   public void testMutualAuthenticationLegacy() throws Exception {
     Properties props = new Properties();

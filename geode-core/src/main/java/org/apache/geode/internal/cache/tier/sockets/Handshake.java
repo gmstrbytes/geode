@@ -34,14 +34,14 @@ import org.apache.geode.cache.client.ServerRefusedConnectionException;
 import org.apache.geode.cache.client.internal.ClientSideHandshakeImpl;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.internal.ClassLoadUtil;
+import org.apache.geode.internal.ClassLoadUtils;
 import org.apache.geode.internal.HeapDataOutputStream;
 import org.apache.geode.internal.cache.tier.ConnectionProxy;
 import org.apache.geode.internal.logging.InternalLogWriter;
 import org.apache.geode.internal.security.CallbackInstantiator;
 import org.apache.geode.internal.security.Credentials;
 import org.apache.geode.internal.security.SecurityService;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.security.AuthInitialize;
 import org.apache.geode.security.AuthenticationFailedException;
@@ -75,7 +75,7 @@ public abstract class Handshake {
    * @since GemFire 5.7
    */
   @MutableForTesting
-  protected static Version currentClientVersion = ConnectionProxy.VERSION;
+  protected static KnownVersion currentClientVersion = ConnectionProxy.VERSION;
 
   protected SecurityService securityService;
 
@@ -223,7 +223,7 @@ public abstract class Handshake {
   public void writeCredentials(DataOutputStream dos, DataInputStream dis, Properties p_credentials,
       boolean isNotification, DistributedMember member)
       throws IOException, GemFireSecurityException {
-    HeapDataOutputStream hdos = new HeapDataOutputStream(32, Version.CURRENT);
+    HeapDataOutputStream hdos = new HeapDataOutputStream(32, KnownVersion.CURRENT);
     try {
       writeCredentials(dos, dis, p_credentials, isNotification, member, hdos);
     } finally {
@@ -486,7 +486,7 @@ public abstract class Handshake {
       if (securityService.isIntegratedSecurity()) {
         return securityService.login(credentials);
       } else {
-        Method instanceGetter = ClassLoadUtil.methodFromName(authenticatorMethod);
+        Method instanceGetter = ClassLoadUtils.methodFromName(authenticatorMethod);
         auth = (Authenticator) instanceGetter.invoke(null, (Object[]) null);
         auth.init(securityProperties, logWriter, securityLogWriter);
         return auth.authenticate(credentials, member);

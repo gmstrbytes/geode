@@ -16,7 +16,6 @@ package org.apache.geode.management.internal.cli.functions;
 
 import java.io.Serializable;
 import java.util.Collection;
-import java.util.Iterator;
 
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.internal.cache.CacheServerImpl;
@@ -31,15 +30,20 @@ import org.apache.geode.internal.cache.tier.sockets.ServerConnection;
 /**
  * @since GemFire 8.0
  */
-public class ContinuousQueryFunction implements InternalFunction {
+public class ContinuousQueryFunction implements InternalFunction<String> {
   private static final long serialVersionUID = 1L;
-
-  public static final String ID = ContinuousQueryFunction.class.getName();
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.ContinuousQueryFunction";
 
   @Override
-  public void execute(FunctionContext context) {
+  public String getId() {
+    return ID;
+  }
+
+  @Override
+  public void execute(FunctionContext<String> context) {
     try {
-      String clientID = (String) context.getArguments();
+      String clientID = context.getArguments();
       InternalCache cache = (InternalCache) context.getCache();
       if (cache.getCacheServers().size() > 0) {
         CacheServerImpl server = (CacheServerImpl) cache.getCacheServers().iterator().next();
@@ -52,22 +56,19 @@ public class ContinuousQueryFunction implements InternalFunction {
                   cacheClientNotifier.getClientProxies();
               ClientInfo clientInfo = null;
               boolean foundClientinCCP = false;
-              Iterator<CacheClientProxy> it = cacheClientProxySet.iterator();
-              while (it.hasNext()) {
+              for (CacheClientProxy ccp : cacheClientProxySet) {
 
-                CacheClientProxy ccp = it.next();
                 if (ccp != null) {
                   String clientIdFromProxy = ccp.getProxyID().getDSMembership();
                   if (clientIdFromProxy != null && clientIdFromProxy.equals(clientID)) {
                     foundClientinCCP = true;
                     String durableId = ccp.getProxyID().getDurableId();
                     boolean isPrimary = ccp.isPrimary();
+                    final String id = cache.getDistributedSystem().getDistributedMember().getId();
                     clientInfo = new ClientInfo(
                         (durableId != null && durableId.length() > 0 ? "Yes" : "No"),
-                        (isPrimary == true
-                            ? cache.getDistributedSystem().getDistributedMember().getId() : ""),
-                        (isPrimary == false
-                            ? cache.getDistributedSystem().getDistributedMember().getId() : ""));
+                        (isPrimary ? id : ""),
+                        (!isPrimary ? id : ""));
                     break;
 
                   }
@@ -75,7 +76,7 @@ public class ContinuousQueryFunction implements InternalFunction {
               }
 
               // try getting from server connections
-              if (foundClientinCCP == false) {
+              if (!foundClientinCCP) {
                 ServerConnection[] serverConnections = acceptor.getAllServerConnectionList();
 
                 for (ServerConnection conn : serverConnections) {
@@ -100,11 +101,6 @@ public class ContinuousQueryFunction implements InternalFunction {
           .lastResult("Exception in ContinuousQueryFunction =" + e.getMessage());
     }
     context.getResultSender().lastResult(null);
-  }
-
-  @Override
-  public String getId() {
-    return ContinuousQueryFunction.ID;
   }
 
   @Override

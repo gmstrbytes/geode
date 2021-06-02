@@ -14,8 +14,10 @@
  */
 package org.apache.geode.internal.cache.tier.sockets;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
@@ -39,7 +41,6 @@ import org.apache.geode.cache.client.Pool;
 import org.apache.geode.cache.client.PoolManager;
 import org.apache.geode.cache.server.CacheServer;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.test.dunit.Assert;
 import org.apache.geode.test.dunit.Host;
 import org.apache.geode.test.dunit.LogWriterUtils;
@@ -144,7 +145,7 @@ public class RegisterInterestKeysDUnitTest extends JUnit4DistributedTestCase {
    */
   public static void createEntriesK1() {
     try {
-      Region r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+      Region r1 = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(r1);
       r1.create("key1", "key-1");
       assertEquals(r1.getEntry("key1").getValue(), "key-1");
@@ -187,7 +188,7 @@ public class RegisterInterestKeysDUnitTest extends JUnit4DistributedTestCase {
     cache.createRegion(REGION_NAME, attrs);
     CacheServer server = cache.addCacheServer();
     assertNotNull(server);
-    int port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    int port = getRandomAvailableTCPPort();
     server.setPort(port);
     server.setNotifyBySubscription(true);
     server.start();
@@ -204,7 +205,7 @@ public class RegisterInterestKeysDUnitTest extends JUnit4DistributedTestCase {
 
   public static void registerKeysK1() {
     try {
-      Region r = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+      Region r = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(r);
       assertEquals(false, r.containsKey("key1"));
       List list = new ArrayList();

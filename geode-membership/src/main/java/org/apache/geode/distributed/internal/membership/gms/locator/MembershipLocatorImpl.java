@@ -19,10 +19,12 @@ import java.io.IOException;
 import java.net.ConnectException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.SocketAddress;
 import java.net.UnknownHostException;
 import java.nio.file.Path;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import org.apache.logging.log4j.Logger;
@@ -36,6 +38,8 @@ import org.apache.geode.distributed.internal.membership.api.MembershipLocator;
 import org.apache.geode.distributed.internal.membership.api.MembershipLocatorStatistics;
 import org.apache.geode.distributed.internal.membership.gms.GMSMembership;
 import org.apache.geode.distributed.internal.membership.gms.Services;
+import org.apache.geode.distributed.internal.tcpserver.HostAddress;
+import org.apache.geode.distributed.internal.tcpserver.HostAndPort;
 import org.apache.geode.distributed.internal.tcpserver.ProtocolChecker;
 import org.apache.geode.distributed.internal.tcpserver.TcpClient;
 import org.apache.geode.distributed.internal.tcpserver.TcpHandler;
@@ -58,7 +62,7 @@ public class MembershipLocatorImpl<ID extends MemberIdentifier> implements Membe
   private final GMSLocator<ID> gmsLocator;
   private final TcpClient locatorClient;
 
-  public MembershipLocatorImpl(int port, InetAddress bindAddress,
+  public MembershipLocatorImpl(int port, HostAddress bindAddress,
       ProtocolChecker protocolChecker,
       Supplier<ExecutorService> executorServiceSupplier,
       TcpSocketCreator socketCreator,
@@ -69,12 +73,15 @@ public class MembershipLocatorImpl<ID extends MemberIdentifier> implements Membe
       MembershipLocatorStatistics locatorStats, Path workingDirectory,
       MembershipConfig config)
       throws MembershipConfigurationException, UnknownHostException {
-    handler = new PrimaryHandler(fallbackHandler, config.getLocatorWaitTime());
-    String host = bindAddress == null ? LocalHostUtil.getLocalHost().getHostName()
+    handler =
+        new PrimaryHandler(fallbackHandler, config.getLocatorWaitTime(),
+            () -> System.currentTimeMillis(), x -> Thread.sleep(x));
+    String host = bindAddress == null ? LocalHostUtil.getLocalHostName()
         : bindAddress.getHostName();
+    InetAddress inetAddress = bindAddress == null ? null : bindAddress.getAddress();
     String threadName = "Distribution Locator on " + host + ": " + port;
 
-    this.server = new TcpServer(port, bindAddress, handler,
+    this.server = new TcpServer(port, inetAddress, handler,
         threadName, protocolChecker,
         locatorStats::getStatTime,
         executorServiceSupplier,
@@ -86,9 +93,9 @@ public class MembershipLocatorImpl<ID extends MemberIdentifier> implements Membe
 
     locatorClient = new TcpClient(socketCreator,
         objectSerializer,
-        objectDeserializer);
+        objectDeserializer, Socket::new);
     gmsLocator =
-        new GMSLocator<>(bindAddress, config.getLocators(), locatorsAreCoordinators,
+        new GMSLocator<ID>(bindAddress, config.getLocators(), locatorsAreCoordinators,
             config.isNetworkPartitionDetectionEnabled(),
             locatorStats, config.getSecurityUDPDHAlgo(), workingDirectory, locatorClient,
             objectSerializer,
@@ -138,8 +145,8 @@ public class MembershipLocatorImpl<ID extends MemberIdentifier> implements Membe
   }
 
   @Override
-  public SocketAddress getBindAddress() {
-    return server.getBindAddress();
+  public SocketAddress getSocketAddress() {
+    return server.getSocketAddress();
   }
 
   @Override
@@ -175,16 +182,20 @@ public class MembershipLocatorImpl<ID extends MemberIdentifier> implements Membe
     if (isAlive()) {
       logger.info("Stopping {}", this);
       try {
-        locatorClient.stop(((InetSocketAddress) getBindAddress()).getAddress(), getPort());
+        locatorClient
+            .stop(
+                new HostAndPort(((InetSocketAddress) getSocketAddress()).getHostString(),
+                    getPort()));
       } catch (ConnectException ignore) {
         // must not be running
       }
 
       boolean interrupted = Thread.interrupted();
+      long waitTimeMillis = TcpServer.SHUTDOWN_WAIT_TIME * 2;
       try {
         // TcpServer up to SHUTDOWN_WAIT_TIME for its executor pool to shut down.
         // We wait 2 * SHUTDOWN_WAIT_TIME here to account for that shutdown, and then our own.
-        waitToShutdown(TcpServer.SHUTDOWN_WAIT_TIME * 2);
+        waitToShutdown(waitTimeMillis);
 
       } catch (InterruptedException ex) {
         interrupted = true;
@@ -198,13 +209,14 @@ public class MembershipLocatorImpl<ID extends MemberIdentifier> implements Membe
       }
 
       if (isAlive()) {
-        logger.fatal("Could not stop {} in 60 seconds", this);
+        logger.fatal("Could not stop {} in {} seconds", this,
+            TimeUnit.MILLISECONDS.toSeconds(waitTimeMillis));
       }
     }
   }
 
   @Override
   public String toString() {
-    return "Locator on " + getBindAddress() + ":" + getPort();
+    return "Locator on " + getSocketAddress() + ":" + getPort();
   }
 }

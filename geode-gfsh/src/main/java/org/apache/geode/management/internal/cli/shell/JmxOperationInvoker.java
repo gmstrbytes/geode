@@ -51,7 +51,7 @@ import com.healthmarketscience.rmiio.RemoteOutputStreamClient;
 import org.apache.commons.io.IOUtils;
 import org.apache.logging.log4j.Logger;
 
-import org.apache.geode.internal.admin.SSLConfig;
+import org.apache.geode.internal.net.SSLConfig;
 import org.apache.geode.internal.net.SSLConfigurationFactory;
 import org.apache.geode.internal.security.SecurableCommunicationChannel;
 import org.apache.geode.logging.internal.log4j.api.LogService;
@@ -110,10 +110,13 @@ public class JmxOperationInvoker implements OperationInvoker {
 
     // when not using JMXShiroAuthenticator in the integrated security, JMX own password file
     // authentication requires the credentials been sent in String[] format.
-    // Our JMXShiroAuthenticator handles both String[] and Properties format
+    // Our JMXShiroAuthenticator handles both String[] and String format.
+    String token = gfProperties.getProperty(ResourceConstants.TOKEN);
     String username = gfProperties.getProperty(ResourceConstants.USER_NAME);
     String password = gfProperties.getProperty(ResourceConstants.PASSWORD);
-    if (username != null) {
+    if (token != null) {
+      env.put(JMXConnector.CREDENTIALS, token);
+    } else if (username != null) {
       env.put(JMXConnector.CREDENTIALS, new String[] {username, password});
     }
 
@@ -127,8 +130,9 @@ public class JmxOperationInvoker implements OperationInvoker {
       env.put("com.sun.jndi.rmi.factory.socket", new ContextAwareSSLRMIClientSocketFactory());
     }
 
+    final String hostName = checkAndConvertToCompatibleIPv6Syntax(host);
     this.url = new JMXServiceURL(MessageFormat.format(JMX_URL_FORMAT,
-        checkAndConvertToCompatibleIPv6Syntax(host), String.valueOf(port)));
+        hostName, String.valueOf(port)));
     this.connector = JMXConnectorFactory.connect(url, env);
     this.mbsc = connector.getMBeanServerConnection();
     this.connector.addConnectionNotificationListener(new JMXConnectionListener(this), null, null);
@@ -247,13 +251,11 @@ public class JmxOperationInvoker implements OperationInvoker {
         stagedFilePaths = new ArrayList<>();
         for (File file : commandRequest.getFileList()) {
           FileUploader.RemoteFile remote = fileUploadMBeanProxy.uploadFile(file.getName());
-          FileInputStream source = new FileInputStream(file);
-
-          OutputStream target = RemoteOutputStreamClient.wrap(remote.getOutputStream());
-          IOUtils.copyLarge(source, target);
-          target.close();
-
-          stagedFilePaths.add(remote.getFilename());
+          try (FileInputStream source = new FileInputStream(file);
+              OutputStream target = RemoteOutputStreamClient.wrap(remote.getOutputStream())) {
+            IOUtils.copyLarge(source, target);
+            stagedFilePaths.add(remote.getFilename());
+          }
         }
       }
     } catch (IOException e) {

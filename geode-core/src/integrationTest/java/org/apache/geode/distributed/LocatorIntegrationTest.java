@@ -21,15 +21,13 @@ import static org.apache.geode.distributed.ConfigurationProperties.JMX_MANAGER_S
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATOR_WAIT_TIME;
 import static org.apache.geode.distributed.ConfigurationProperties.LOG_FILE;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
-import static org.apache.geode.internal.AvailablePort.SOCKET;
-import static org.apache.geode.internal.AvailablePort.getRandomAvailablePort;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.apache.geode.util.internal.GeodeGlossary.GEMFIRE_PREFIX;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.InetAddress;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
@@ -51,7 +49,9 @@ import org.junit.runners.Parameterized.UseParametersRunnerFactory;
 
 import org.apache.geode.distributed.internal.InternalLocator;
 import org.apache.geode.distributed.internal.ServerLocation;
+import org.apache.geode.distributed.internal.tcpserver.HostAndPort;
 import org.apache.geode.distributed.internal.tcpserver.TcpClient;
+import org.apache.geode.distributed.internal.tcpserver.TcpSocketFactory;
 import org.apache.geode.internal.AvailablePortHelper;
 import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.cache.GemFireCacheImpl;
@@ -128,7 +128,7 @@ public class LocatorIntegrationTest {
    */
   @Test
   public void testGfshConnectShouldSucceedIfJmxManagerStartIsTrueInLocator() throws Exception {
-    int jmxPort = getRandomAvailablePort(SOCKET);
+    int jmxPort = getRandomAvailableTCPPort();
 
     Properties configProperties = new Properties();
     configProperties.setProperty(MCAST_PORT, "0");
@@ -173,8 +173,9 @@ public class LocatorIntegrationTest {
     TcpClient client = new TcpClient(SocketCreatorFactory
         .getSocketCreatorForComponent(SecurableCommunicationChannel.LOCATOR),
         InternalDataSerializer.getDSFIDSerializer().getObjectSerializer(),
-        InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer());
-    String[] info = client.getInfo(InetAddress.getLocalHost(), boundPort);
+        InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer(),
+        TcpSocketFactory.DEFAULT);
+    String[] info = client.getInfo(new HostAndPort("localhost", boundPort));
 
     assertThat(info).isNotNull();
     assertThat(info.length).isGreaterThanOrEqualTo(1);

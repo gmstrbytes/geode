@@ -27,13 +27,14 @@ import java.util.concurrent.ConcurrentMap;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.InternalGemFireException;
+import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.cache.FixedPartitionAttributes;
 import org.apache.geode.cache.PartitionResolver;
 import org.apache.geode.cache.Region;
 import org.apache.geode.distributed.internal.ServerLocation;
-import org.apache.geode.internal.ClassPathLoader;
 import org.apache.geode.internal.cache.BucketServerLocation66;
 import org.apache.geode.internal.cache.FixedPartitionAttributesImpl;
+import org.apache.geode.internal.classloader.ClassPathLoader;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
@@ -203,6 +204,7 @@ public class ClientPartitionAdvisor {
     }
   }
 
+  @VisibleForTesting
   public Map<Integer, List<BucketServerLocation66>> getBucketServerLocationsMap_TEST_ONLY() {
     return this.bucketServerLocationsMap;
   }

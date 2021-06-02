@@ -14,6 +14,7 @@
  */
 package org.apache.geode.cache.query.dunit;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.test.dunit.Assert.assertEquals;
 import static org.apache.geode.test.dunit.Assert.assertFalse;
 import static org.apache.geode.test.dunit.Assert.assertTrue;
@@ -65,28 +66,32 @@ public class SelectStarQueryDUnitTest extends JUnit4CacheTestCase {
   private final String regName = "exampleRegion";
   private final String regName2 = "exampleRegion2";
 
-  private final String[] queries = {"SELECT * FROM /" + regName, // 0
-      "SELECT * FROM /" + regName + " limit 5", // 1
-      "SELECT p from  /" + regName + " p", // 2
-      "SELECT count(*) FROM /" + regName, // 3
-      "SELECT ALL * from /" + regName, // 4
-      "SELECT * from /" + regName + ".values", // 5
-      "SELECT distinct * FROM /" + regName, // 6
-      "SELECT distinct * FROM /" + regName + " p order by p.ID", // 7
-      "SELECT * from /" + regName + " r, positions.values pos"// 8
+  private final String[] queries = {"SELECT * FROM " + SEPARATOR + regName, // 0
+      "SELECT * FROM " + SEPARATOR + regName + " limit 5", // 1
+      "SELECT p from  " + SEPARATOR + regName + " p", // 2
+      "SELECT count(*) FROM " + SEPARATOR + regName, // 3
+      "SELECT ALL * from " + SEPARATOR + regName, // 4
+      "SELECT * from " + SEPARATOR + regName + ".values", // 5
+      "SELECT distinct * FROM " + SEPARATOR + regName, // 6
+      "SELECT distinct * FROM " + SEPARATOR + regName + " p order by p.ID", // 7
+      "SELECT * from " + SEPARATOR + regName + " r, positions.values pos"// 8
   };
   private final int[] resultSize = {20, 5, 20, 1, 20, 20, 20, 20, 40};
 
-  private final String[] multipleRegionQueries = {" SELECT * FROM /" + regName + ", /" + regName2,
-      "SELECT * FROM /" + regName + ", /" + regName2 + " limit 5",
-      "SELECT distinct * FROM /" + regName + ", /" + regName2,
-      "SELECT distinct * FROM /" + regName + " p1, /" + regName2 + " p2 order by p1.ID",
-      "SELECT count(*) FROM /" + regName + ", /" + regName2,
-      "SELECT p, q from  /" + regName + " p, /" + regName2 + " q",
-      "SELECT ALL * from /" + regName + " p, /" + regName2 + " q",
-      "SELECT * from /" + regName + ".values" + ", /" + regName2 + ".values",
-      "SELECT * from /" + regName + " p, p.positions.values pos" + ", /" + regName2
-          + " q, q.positions.values pos",};
+  private final String[] multipleRegionQueries =
+      {" SELECT * FROM " + SEPARATOR + regName + ", " + SEPARATOR + regName2,
+          "SELECT * FROM " + SEPARATOR + regName + ", " + SEPARATOR + regName2 + " limit 5",
+          "SELECT distinct * FROM " + SEPARATOR + regName + ", " + SEPARATOR + regName2,
+          "SELECT distinct * FROM " + SEPARATOR + regName + " p1, " + SEPARATOR + regName2
+              + " p2 order by p1.ID",
+          "SELECT count(*) FROM " + SEPARATOR + regName + ", " + SEPARATOR + regName2,
+          "SELECT p, q from  " + SEPARATOR + regName + " p, " + SEPARATOR + regName2 + " q",
+          "SELECT ALL * from " + SEPARATOR + regName + " p, " + SEPARATOR + regName2 + " q",
+          "SELECT * from " + SEPARATOR + regName + ".values" + ", " + SEPARATOR + regName2
+              + ".values",
+          "SELECT * from " + SEPARATOR + regName + " p, p.positions.values pos" + ", " + SEPARATOR
+              + regName2
+              + " q, q.positions.values pos",};
   private final int[] resultSize2 = {400, 5, 400, 400, 1, 400, 400, 400, 1600};
 
   @Override
@@ -140,8 +145,9 @@ public class SelectStarQueryDUnitTest extends JUnit4CacheTestCase {
         try {
           remoteQS = ((ClientCache) getCache()).getQueryService();
           SelectResults sr = (SelectResults) remoteQS
-              .newQuery("select distinct oP.ID, oP.status, oP.getType from /" + regName
-                  + " oP where element(select distinct p.ID, p.status, p.getType from /" + regName
+              .newQuery("select distinct oP.ID, oP.status, oP.getType from " + SEPARATOR + regName
+                  + " oP where element(select distinct p.ID, p.status, p.getType from " + SEPARATOR
+                  + regName
                   + " p where p.ID = oP.ID).status = 'inactive'")
               .execute();
           assertEquals(50, sr.size());
@@ -210,8 +216,9 @@ public class SelectStarQueryDUnitTest extends JUnit4CacheTestCase {
         try {
           remoteQS = ((ClientCache) getCache()).getQueryService();
           SelectResults sr = (SelectResults) remoteQS
-              .newQuery("select distinct oP.ID, oP.status, oP.getType from /" + regName
-                  + " oP where element(select distinct p.ID, p.status, p.getType from /" + regName
+              .newQuery("select distinct oP.ID, oP.status, oP.getType from " + SEPARATOR + regName
+                  + " oP where element(select distinct p.ID, p.status, p.getType from " + SEPARATOR
+                  + regName
                   + " p where p.ID = oP.ID).status = 'inactive'")
               .execute();
           assertEquals(50, sr.size());
@@ -585,7 +592,7 @@ public class SelectStarQueryDUnitTest extends JUnit4CacheTestCase {
           r1.put("key-" + i, ba);
         }
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;
@@ -955,7 +962,7 @@ public class SelectStarQueryDUnitTest extends JUnit4CacheTestCase {
         QueryService qs = null;
         try {
           qs = getCache().getQueryService();
-          qs.createIndex("status", "status", "/" + regName);
+          qs.createIndex("status", "status", SEPARATOR + regName);
         } catch (Exception e) {
           fail("Exception getting query service ", e);
         }
@@ -1025,7 +1032,7 @@ public class SelectStarQueryDUnitTest extends JUnit4CacheTestCase {
         QueryService qs = null;
         try {
           qs = getCache().getQueryService();
-          qs.createIndex("status", "status", "/" + regName2);
+          qs.createIndex("status", "status", SEPARATOR + regName2);
         } catch (Exception e) {
           fail("Exception getting query service ", e);
         }
@@ -1524,7 +1531,7 @@ public class SelectStarQueryDUnitTest extends JUnit4CacheTestCase {
         ((GemFireCacheImpl) getCache()).setReadSerializedForTest(true);
         Region r1 = getCache().createRegionFactory(RegionShortcut.REPLICATE).create(regName);
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;
@@ -1615,7 +1622,7 @@ public class SelectStarQueryDUnitTest extends JUnit4CacheTestCase {
         }
 
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;
@@ -1637,7 +1644,7 @@ public class SelectStarQueryDUnitTest extends JUnit4CacheTestCase {
         }
 
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;

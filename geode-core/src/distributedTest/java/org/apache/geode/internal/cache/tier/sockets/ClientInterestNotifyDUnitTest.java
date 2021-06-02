@@ -14,9 +14,11 @@
  */
 package org.apache.geode.internal.cache.tier.sockets;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.DELTA_PROPAGATION;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -44,7 +46,6 @@ import org.apache.geode.cache.client.PoolManager;
 import org.apache.geode.cache.server.CacheServer;
 import org.apache.geode.cache.util.CacheListenerAdapter;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.cache.CacheServerImpl;
 import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.test.awaitility.GeodeAwaitility;
@@ -428,7 +429,7 @@ public class ClientInterestNotifyDUnitTest extends JUnit4DistributedTestCase {
     cacheServer.createRegion(REGION_NAME2, attrs);
     cacheServer.createRegion(REGION_NAME3, attrs);
     CacheServer server = cacheServer.addCacheServer();
-    int port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    int port = getRandomAvailableTCPPort();
     server.setPort(port);
     server.setNotifyBySubscription(true);
     server.setSocketBufferSize(32768);
@@ -466,10 +467,10 @@ public class ClientInterestNotifyDUnitTest extends JUnit4DistributedTestCase {
   public static void registerInterest() {
     try {
       Cache cacheClient = GemFireCacheImpl.getInstance();
-      Region region1 = cacheClient.getRegion(Region.SEPARATOR + REGION_NAME1);
-      Region region2 = cacheClient.getRegion(Region.SEPARATOR + REGION_NAME2);
+      Region region1 = cacheClient.getRegion(SEPARATOR + REGION_NAME1);
+      Region region2 = cacheClient.getRegion(SEPARATOR + REGION_NAME2);
       // We intentionally do not register interest in region 3 to check no events recvd.
-      Region region3 = cacheClient.getRegion(Region.SEPARATOR + REGION_NAME3);
+      Region region3 = cacheClient.getRegion(SEPARATOR + REGION_NAME3);
       assertTrue(region1 != null);
       assertTrue(region2 != null);
       assertTrue(region3 != null);
@@ -491,8 +492,8 @@ public class ClientInterestNotifyDUnitTest extends JUnit4DistributedTestCase {
   public static void unregisterInterest() {
     try {
       Cache cacheClient = GemFireCacheImpl.getInstance();
-      Region region1 = cacheClient.getRegion(Region.SEPARATOR + REGION_NAME1);
-      Region region2 = cacheClient.getRegion(Region.SEPARATOR + REGION_NAME2);
+      Region region1 = cacheClient.getRegion(SEPARATOR + REGION_NAME1);
+      Region region2 = cacheClient.getRegion(SEPARATOR + REGION_NAME2);
       region1.unregisterInterest("ALL_KEYS");
       region2.unregisterInterest("ALL_KEYS");
     } catch (CacheWriterException e) {
@@ -507,9 +508,9 @@ public class ClientInterestNotifyDUnitTest extends JUnit4DistributedTestCase {
     try {
       LogWriterUtils.getLogWriter().info("Putting entries...");
       Cache cacheClient = GemFireCacheImpl.getInstance();
-      Region r1 = cacheClient.getRegion(Region.SEPARATOR + REGION_NAME1);
-      Region r2 = cacheClient.getRegion(Region.SEPARATOR + REGION_NAME2);
-      Region r3 = cacheClient.getRegion(Region.SEPARATOR + REGION_NAME3);
+      Region r1 = cacheClient.getRegion(SEPARATOR + REGION_NAME1);
+      Region r2 = cacheClient.getRegion(SEPARATOR + REGION_NAME2);
+      Region r3 = cacheClient.getRegion(SEPARATOR + REGION_NAME3);
       r1.put("key-1", "11");
       r2.put("key-1", "11");
       r3.put("key-1", "11");
@@ -535,9 +536,9 @@ public class ClientInterestNotifyDUnitTest extends JUnit4DistributedTestCase {
     try {
       LogWriterUtils.getLogWriter().info("Putting entries...");
       Cache cacheClient = GemFireCacheImpl.getInstance();
-      Region r1 = cacheClient.getRegion(Region.SEPARATOR + REGION_NAME1);
-      Region r2 = cacheClient.getRegion(Region.SEPARATOR + REGION_NAME2);
-      Region r3 = cacheClient.getRegion(Region.SEPARATOR + REGION_NAME3);
+      Region r1 = cacheClient.getRegion(SEPARATOR + REGION_NAME1);
+      Region r2 = cacheClient.getRegion(SEPARATOR + REGION_NAME2);
+      Region r3 = cacheClient.getRegion(SEPARATOR + REGION_NAME3);
       r1.put("key-1", "00");
       r2.put("key-1", "00");
       r3.put("key-1", "00");
@@ -554,7 +555,7 @@ public class ClientInterestNotifyDUnitTest extends JUnit4DistributedTestCase {
     try {
       LogWriterUtils.getLogWriter().info("Getting entries...");
       Cache cacheClient = GemFireCacheImpl.getInstance();
-      Region r3 = cacheClient.getRegion(Region.SEPARATOR + REGION_NAME3);
+      Region r3 = cacheClient.getRegion(SEPARATOR + REGION_NAME3);
       r3.get("key-1");
     } catch (Exception ex) {
       ex.printStackTrace();

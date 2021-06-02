@@ -14,6 +14,9 @@
  */
 package org.apache.geode.internal.tcp;
 
+import static java.lang.Integer.MAX_VALUE;
+import static java.util.concurrent.TimeUnit.SECONDS;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.lang.ref.Reference;
@@ -37,6 +40,7 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.SystemFailure;
 import org.apache.geode.alerting.internal.spi.AlertingAction;
+import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.DistributedSystemDisconnectedException;
@@ -47,7 +51,7 @@ import org.apache.geode.distributed.internal.membership.api.MemberIdentifier;
 import org.apache.geode.distributed.internal.membership.api.Membership;
 import org.apache.geode.internal.Assert;
 import org.apache.geode.internal.SystemTimer;
-import org.apache.geode.internal.lang.JavaWorkarounds;
+import org.apache.geode.internal.lang.utils.JavaWorkarounds;
 import org.apache.geode.internal.logging.CoreLoggingExecutors;
 import org.apache.geode.internal.net.BufferPool;
 import org.apache.geode.internal.net.SocketCloser;
@@ -198,20 +202,20 @@ public class ConnectionTable {
   private ConnectionTable(TCPConduit conduit) {
     owner = conduit;
     idleConnTimer = owner.idleConnectionTimeout != 0
-        ? new SystemTimer(conduit.getDM().getSystem(), true) : null;
+        ? new SystemTimer(conduit.getDM().getSystem()) : null;
     threadConnMaps = new ArrayList();
     threadConnectionMap = new ConcurrentHashMap();
     p2pReaderThreadPool = createThreadPoolForIO(conduit.getDM().getSystem().isShareSockets());
     socketCloser = new SocketCloser();
-    bufferPool = new BufferPool(owner.getStats());
+    bufferPool = conduit.getBufferPool();
   }
 
   private Executor createThreadPoolForIO(boolean conserveSockets) {
     if (conserveSockets) {
       return LoggingExecutors.newThreadOnEachExecute("SharedP2PReader");
     }
-    return CoreLoggingExecutors.newThreadPoolWithSynchronousFeed("UnsharedP2PReader", 1,
-        Integer.MAX_VALUE, READER_POOL_KEEP_ALIVE_TIME);
+    return CoreLoggingExecutors.newThreadPoolWithSynchronousFeed(1, MAX_VALUE,
+        READER_POOL_KEEP_ALIVE_TIME, SECONDS, "UnsharedP2PReader");
   }
 
   /** conduit calls acceptConnection after an accept */
@@ -518,8 +522,12 @@ public class ConnectionTable {
           if (!closed) {
             IdleConnTT task = new IdleConnTT(conn);
             conn.setIdleTimeoutTask(task);
-            getIdleConnTimer().scheduleAtFixedRate(task, owner.idleConnectionTimeout,
-                owner.idleConnectionTimeout);
+            synchronized (task) {
+              if (!task.isCancelled()) {
+                getIdleConnTimer().scheduleAtFixedRate(task, owner.idleConnectionTimeout,
+                    owner.idleConnectionTimeout);
+              }
+            }
           }
         }
       } catch (IllegalStateException e) {
@@ -619,7 +627,7 @@ public class ConnectionTable {
       return null;
     }
     if (idleConnTimer == null) {
-      idleConnTimer = new SystemTimer(getDM().getSystem(), true);
+      idleConnTimer = new SystemTimer(getDM().getSystem());
     }
     return idleConnTimer;
   }
@@ -707,7 +715,7 @@ public class ConnectionTable {
    *
    * @param beingSick a test hook to simulate a sick process
    */
-  private void closeReceivers(boolean beingSick) {
+  void closeReceivers(boolean beingSick) {
     synchronized (receivers) {
       for (Iterator it = receivers.iterator(); it.hasNext();) {
         Connection con = (Connection) it.next();
@@ -916,6 +924,17 @@ public class ConnectionTable {
       }
     }
   }
+
+  @VisibleForTesting
+  public static long getNumSenderSharedConnections() {
+    ConnectionTable ct = (ConnectionTable) lastInstance.get();
+    if (ct == null) {
+      return 0;
+    }
+    return (ct.getConduit().getStats().getSendersSU());
+  }
+
+
 
   /**
    * Clears lastInstance. Does not yet close underlying sockets, but probably not strictly
@@ -1204,25 +1223,25 @@ public class ConnectionTable {
 
   private static class IdleConnTT extends SystemTimer.SystemTimerTask {
 
-    private Connection c;
+    private Connection connection;
 
     private IdleConnTT(Connection c) {
-      this.c = c;
+      this.connection = c;
     }
 
     @Override
     public boolean cancel() {
-      Connection con = c;
+      Connection con = connection;
       if (con != null) {
         con.cleanUpOnIdleTaskCancel();
       }
-      c = null;
+      connection = null;
       return super.cancel();
     }
 
     @Override
     public void run2() {
-      Connection con = c;
+      Connection con = connection;
       if (con != null) {
         if (con.checkForIdleTimeout()) {
           cancel();

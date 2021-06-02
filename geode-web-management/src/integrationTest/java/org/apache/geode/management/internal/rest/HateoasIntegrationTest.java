@@ -37,7 +37,7 @@ import org.apache.geode.management.api.ClusterManagementException;
 import org.apache.geode.management.api.ClusterManagementResult;
 import org.apache.geode.management.api.ClusterManagementService;
 import org.apache.geode.management.api.RestTemplateClusterManagementServiceTransport;
-import org.apache.geode.management.client.ClusterManagementServiceBuilder;
+import org.apache.geode.management.cluster.client.ClusterManagementServiceBuilder;
 import org.apache.geode.management.configuration.Region;
 import org.apache.geode.management.configuration.RegionType;
 
@@ -89,10 +89,10 @@ public class HateoasIntegrationTest {
     context.perform(get("/v1/regions/customers"))
         .andExpect(status().isOk())
         .andExpect(
-            jsonPath("$.result.configurationByGroup[0].links.self",
+            jsonPath("$.result.links.self",
                 Matchers.endsWith("/regions/customers")))
         .andExpect(
-            jsonPath("$.result.configurationByGroup[0].links.indexes",
+            jsonPath("$.result.links.indexes",
                 Matchers.endsWith("/regions/customers/indexes")));
   }
 

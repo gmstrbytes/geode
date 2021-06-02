@@ -35,26 +35,32 @@ import org.apache.geode.management.internal.i18n.CliStrings;
 /**
  * The function to a create GatewayReceiver using given configuration parameters.
  */
-public class GatewayReceiverCreateFunction implements InternalFunction {
+public class GatewayReceiverCreateFunction implements InternalFunction<Object[]> {
 
   private static final Logger logger = LogService.getLogger();
 
   private static final long serialVersionUID = 8746830191680509335L;
 
-  private static final String ID = GatewayReceiverCreateFunction.class.getName();
-
   @Immutable
   public static final GatewayReceiverCreateFunction INSTANCE = new GatewayReceiverCreateFunction();
 
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.GatewayReceiverCreateFunction";
+
   @Override
-  public void execute(FunctionContext context) {
+  public String getId() {
+    return ID;
+  }
+
+  @Override
+  public void execute(FunctionContext<Object[]> context) {
     ResultSender<Object> resultSender = context.getResultSender();
 
     Cache cache = context.getCache();
     String memberNameOrId = context.getMemberName();
 
     Object[] gatewayReceiverCreateArgs =
-        (Object[]) context.getArguments();
+        context.getArguments();
     GatewayReceiverConfig gatewayReceiverConfig =
         (GatewayReceiverConfig) gatewayReceiverCreateArgs[0];
     Boolean ifNotExist = (Boolean) gatewayReceiverCreateArgs[1];
@@ -105,10 +111,4 @@ public class GatewayReceiverCreateFunction implements InternalFunction {
   boolean gatewayReceiverExists(Cache cache) {
     return cache.getGatewayReceivers() != null && !cache.getGatewayReceivers().isEmpty();
   }
-
-  @Override
-  public String getId() {
-    return ID;
-  }
-
 }

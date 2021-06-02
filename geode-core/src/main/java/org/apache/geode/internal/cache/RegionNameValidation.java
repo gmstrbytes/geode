@@ -17,14 +17,15 @@
 package org.apache.geode.internal.cache;
 
 
+import static org.apache.geode.cache.Region.SEPARATOR;
+
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.apache.geode.cache.Region;
 
 public class RegionNameValidation {
 
-  private static final Pattern NAME_PATTERN = Pattern.compile("[aA-zZ0-9-_.]+");
+  private static final Pattern NAME_PATTERN = Pattern.compile("[a-zA-Z0-9-_.^`\\[\\]\\\\]+");
 
   static Pattern getNamePattern() {
     return NAME_PATTERN;
@@ -43,10 +44,10 @@ public class RegionNameValidation {
       throw new IllegalArgumentException(
           "name cannot be empty");
     }
-    if (name.contains(Region.SEPARATOR)) {
+    if (name.contains(SEPARATOR)) {
       throw new IllegalArgumentException(
           String.format("name cannot contain the separator ' %s '",
-              Region.SEPARATOR));
+              SEPARATOR));
     }
 
     // Validate the name of the region only if it isn't an internal region

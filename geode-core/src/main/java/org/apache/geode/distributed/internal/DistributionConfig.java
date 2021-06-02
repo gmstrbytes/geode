@@ -112,6 +112,7 @@ import static org.apache.geode.distributed.ConfigurationProperties.MEMCACHED_PRO
 import static org.apache.geode.distributed.ConfigurationProperties.NAME;
 import static org.apache.geode.distributed.ConfigurationProperties.OFF_HEAP_MEMORY_SIZE;
 import static org.apache.geode.distributed.ConfigurationProperties.REDIS_BIND_ADDRESS;
+import static org.apache.geode.distributed.ConfigurationProperties.REDIS_ENABLED;
 import static org.apache.geode.distributed.ConfigurationProperties.REDIS_PASSWORD;
 import static org.apache.geode.distributed.ConfigurationProperties.REDIS_PORT;
 import static org.apache.geode.distributed.ConfigurationProperties.REDUNDANCY_ZONE;
@@ -192,9 +193,11 @@ import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 import org.apache.geode.GemFireIOException;
 import org.apache.geode.LogWriter;
@@ -1286,6 +1289,7 @@ public interface DistributionConfig extends Config, LogConfig, StatisticsConfig 
    *
    * @since GemFire 4.0
    */
+  @InternalConfigAttribute
   String LOG_WRITER_NAME = "log-writer";
 
   /**
@@ -1294,6 +1298,7 @@ public interface DistributionConfig extends Config, LogConfig, StatisticsConfig 
    *
    * @since GemFire 7.0
    */
+  @InternalConfigAttribute
   String DS_CONFIG_NAME = "ds-config";
 
   /**
@@ -1302,12 +1307,14 @@ public interface DistributionConfig extends Config, LogConfig, StatisticsConfig 
    *
    * @since GemFire 8.1
    */
+  @InternalConfigAttribute
   String DS_RECONNECTING_NAME = "ds-reconnecting";
 
   /**
    * The name of an internal property that specifies the quorum checker for the system that was
    * forcibly disconnected. This should be used if the DS_RECONNECTING_NAME property is used.
    */
+  @InternalConfigAttribute
   String DS_QUORUM_CHECKER_NAME = "ds-quorum-checker";
 
   /**
@@ -1316,6 +1323,7 @@ public interface DistributionConfig extends Config, LogConfig, StatisticsConfig 
    *
    * @since GemFire 5.5
    */
+  @InternalConfigAttribute
   String SECURITY_LOG_WRITER_NAME = "security-log-writer";
 
   /**
@@ -1325,6 +1333,7 @@ public interface DistributionConfig extends Config, LogConfig, StatisticsConfig 
    *
    * @since GemFire 5.0
    */
+  @InternalConfigAttribute
   String LOG_OUTPUTSTREAM_NAME = "log-output-stream";
 
   /**
@@ -1334,6 +1343,7 @@ public interface DistributionConfig extends Config, LogConfig, StatisticsConfig 
    *
    * @since GemFire 5.5
    */
+  @InternalConfigAttribute
   String SECURITY_LOG_OUTPUTSTREAM_NAME = "security-log-output-stream";
 
   /**
@@ -1386,7 +1396,7 @@ public interface DistributionConfig extends Config, LogConfig, StatisticsConfig 
   /**
    * The default value of the {@link ConfigurationProperties#SOCKET_BUFFER_SIZE} property
    */
-  int DEFAULT_SOCKET_BUFFER_SIZE = 32768;
+  static int DEFAULT_SOCKET_BUFFER_SIZE = 32768;
   /**
    * The minimum {@link ConfigurationProperties#SOCKET_BUFFER_SIZE}.
    * <p>
@@ -1401,9 +1411,6 @@ public interface DistributionConfig extends Config, LogConfig, StatisticsConfig 
   int MAX_SOCKET_BUFFER_SIZE = Connection.MAX_MSG_SIZE;
 
   boolean VALIDATE = Boolean.getBoolean(GeodeGlossary.GEMFIRE_PREFIX + "validateMessageSize");
-  int VALIDATE_CEILING = Integer
-      .getInteger(GeodeGlossary.GEMFIRE_PREFIX + "validateMessageSizeCeiling", 8 * 1024 * 1024)
-      .intValue();
 
   /**
    * The name of the {@link ConfigurationProperties#SOCKET_BUFFER_SIZE} property
@@ -1901,7 +1908,7 @@ public interface DistributionConfig extends Config, LogConfig, StatisticsConfig 
   /**
    * The default value of the {@link ConfigurationProperties#CONSERVE_SOCKETS} property
    */
-  boolean DEFAULT_CONSERVE_SOCKETS = true;
+  boolean DEFAULT_CONSERVE_SOCKETS = false;
 
   /**
    * Returns the value of the {@link ConfigurationProperties#ROLES} property
@@ -3467,29 +3474,12 @@ public interface DistributionConfig extends Config, LogConfig, StatisticsConfig 
   String DEFAULT_MEMCACHED_BIND_ADDRESS = "";
 
   /**
-   * Returns the value of the {@link ConfigurationProperties#REDIS_PORT} property
-   *
-   * @return the port on which GeodeRedisServer should be started
-   *
-   * @since GemFire 8.0
-   */
-  @ConfigAttributeGetter(name = REDIS_PORT)
-  int getRedisPort();
-
-  @ConfigAttributeSetter(name = REDIS_PORT)
-  void setRedisPort(int value);
-
-  @ConfigAttribute(type = Integer.class, min = 0, max = 65535)
-  String REDIS_PORT_NAME = REDIS_PORT;
-  int DEFAULT_REDIS_PORT = 0;
-
-  /**
    * Returns the value of the {@link ConfigurationProperties#REDIS_BIND_ADDRESS} property
    * <p>
    * Returns the value of the
    * {@link ConfigurationProperties#REDIS_BIND_ADDRESS} property
    *
-   * @return the bind address for GemFireRedisServer
+   * @return the bind address for GeodeRedisServer
    *
    * @since GemFire 8.0
    */
@@ -3504,12 +3494,33 @@ public interface DistributionConfig extends Config, LogConfig, StatisticsConfig 
   String DEFAULT_REDIS_BIND_ADDRESS = "";
 
   /**
+   * Returns the value of the {@link ConfigurationProperties#REDIS_ENABLED} property
+   * <p>
+   * Returns the value of the
+   * {@link ConfigurationProperties#REDIS_ENABLED} property
+   *
+   * @return boolean value indicating whether or not a Redis API for Geode Server should be started
+   *
+   * @since GemFire 14.0
+   */
+  @ConfigAttributeGetter(name = REDIS_ENABLED)
+  boolean getRedisEnabled();
+
+  @ConfigAttributeSetter(name = REDIS_ENABLED)
+  void setRedisEnabled(boolean redisEnabled);
+
+
+  @ConfigAttribute(type = Boolean.class)
+  String REDIS_ENABLED_NAME = REDIS_ENABLED;
+  boolean DEFAULT_REDIS_ENABLED = false;
+
+  /**
    * Returns the value of the {@link ConfigurationProperties#REDIS_PASSWORD} property
    * <p>
    * Returns the value of the
    * {@link ConfigurationProperties#REDIS_PASSWORD} property
    *
-   * @return the authentication password for GemFireRedisServer
+   * @return the authentication password for GeodeRedisServer
    *
    * @since GemFire 8.0
    */
@@ -3522,6 +3533,23 @@ public interface DistributionConfig extends Config, LogConfig, StatisticsConfig 
   @ConfigAttribute(type = String.class)
   String REDIS_PASSWORD_NAME = REDIS_PASSWORD;
   String DEFAULT_REDIS_PASSWORD = "";
+
+  /**
+   * Returns the value of the {@link ConfigurationProperties#REDIS_PORT} property
+   *
+   * @return the port on which GeodeRedisServer should be started
+   *
+   * @since GemFire 8.0
+   */
+  @ConfigAttributeGetter(name = REDIS_PORT)
+  int getRedisPort();
+
+  @ConfigAttributeSetter(name = REDIS_PORT)
+  void setRedisPort(int value);
+
+  @ConfigAttribute(type = Integer.class, min = 0, max = 65535)
+  String REDIS_PORT_NAME = REDIS_PORT;
+  int DEFAULT_REDIS_PORT = 6379;
 
   // Added for the HTTP service
 
@@ -4356,7 +4384,7 @@ public interface DistributionConfig extends Config, LogConfig, StatisticsConfig 
   /**
    * Sets the value of the {@link ConfigurationProperties#SERVER_SSL_TRUSTSTORE} property.
    *
-   * @deprecated Geode 1.0 use {@link #setServerSSLTrustStore(String)}
+   * @deprecated Geode 1.0 use {@link #setClusterSSLTrustStore(String)}
    */
   @Deprecated
   @ConfigAttributeSetter(name = SERVER_SSL_TRUSTSTORE)
@@ -4550,7 +4578,7 @@ public interface DistributionConfig extends Config, LogConfig, StatisticsConfig 
    * Sets the value of the {@link ConfigurationProperties#GATEWAY_SSL_REQUIRE_AUTHENTICATION}
    * property.
    *
-   * @deprecated Geode 1.0 use {@link #setGatewaySSLRequireAuthentication(boolean)}
+   * @deprecated Geode 1.0 use {@link #setClusterSSLRequireAuthentication(boolean)}
    */
   @Deprecated
   @ConfigAttributeSetter(name = GATEWAY_SSL_REQUIRE_AUTHENTICATION)
@@ -5347,6 +5375,8 @@ public interface DistributionConfig extends Config, LogConfig, StatisticsConfig 
   @MakeImmutable
   Map<String, ConfigAttribute> attributes = new HashMap<>();
   @MakeImmutable
+  Set<String> internalAttributeNames = new HashSet<>();
+  @MakeImmutable
   Map<String, Method> setters = new HashMap<>();
   @MakeImmutable
   Map<String, Method> getters = new HashMap<>();
@@ -5357,11 +5387,19 @@ public interface DistributionConfig extends Config, LogConfig, StatisticsConfig 
     List<String> atts = new ArrayList<>();
     for (Field field : DistributionConfig.class.getDeclaredFields()) {
       if (field.isAnnotationPresent(ConfigAttribute.class)) {
+        field.setAccessible(true);
         try {
           atts.add((String) field.get(null));
           attributes.put((String) field.get(null), field.getAnnotation(ConfigAttribute.class));
         } catch (IllegalAccessException e) {
-          e.printStackTrace();
+          // field.setAccessible() will throw a SecurityException if it fails
+        }
+      } else if (field.isAnnotationPresent(InternalConfigAttribute.class)) {
+        field.setAccessible(true);
+        try {
+          internalAttributeNames.add((String) field.get(null));
+        } catch (IllegalAccessException e) {
+          // field.setAccessible() will throw a SecurityException if it fails
         }
       }
     }

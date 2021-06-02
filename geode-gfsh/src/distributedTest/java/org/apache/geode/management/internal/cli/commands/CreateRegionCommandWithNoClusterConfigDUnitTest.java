@@ -15,6 +15,8 @@
 
 package org.apache.geode.management.internal.cli.commands;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
+
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Rule;
@@ -65,12 +67,13 @@ public class CreateRegionCommandWithNoClusterConfigDUnitTest {
         "create region --name=" + regionName + " --type=REPLICATE_PROXY --group=group2")
         .statusIsSuccess();
 
-    locator.waitUntilRegionIsReadyOnExactlyThisManyServers("/" + regionName, 2);
+    locator.waitUntilRegionIsReadyOnExactlyThisManyServers(SEPARATOR + regionName, 2);
 
     gfsh.executeAndAssertThat("create region --name=failed --template-region=" + regionName)
         .statusIsError()
         .hasInfoSection().hasOutput()
-        .contains("Multiple types of template region /multipleTemplateRegionTypes exist.");
+        .contains("Multiple types of template region " + SEPARATOR
+            + "multipleTemplateRegionTypes exist.");
   }
 
   @Test
@@ -79,7 +82,7 @@ public class CreateRegionCommandWithNoClusterConfigDUnitTest {
     gfsh.executeAndAssertThat("create region --name=" + regionName + " --type=REPLICATE")
         .statusIsSuccess();
 
-    locator.waitUntilRegionIsReadyOnExactlyThisManyServers("/" + regionName, 2);
+    locator.waitUntilRegionIsReadyOnExactlyThisManyServers(SEPARATOR + regionName, 2);
     gfsh.executeAndAssertThat("create region --name=success --template-region=" + regionName)
         .statusIsSuccess();
   }

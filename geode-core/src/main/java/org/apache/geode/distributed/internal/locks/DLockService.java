@@ -56,8 +56,8 @@ import org.apache.geode.internal.Assert;
 import org.apache.geode.internal.logging.log4j.LogMarker;
 import org.apache.geode.internal.serialization.DataSerializableFixedID;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
-import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.internal.util.StopWatch;
 import org.apache.geode.internal.util.concurrent.FutureResult;
 import org.apache.geode.logging.internal.OSProcess;
@@ -2663,6 +2663,18 @@ public class DLockService extends DistributedLockService {
   // -------------------------------------------------------------------------
   // External API methods
   // -------------------------------------------------------------------------
+  public static DistributedLockService getOrCreateService(String serviceName,
+      InternalDistributedSystem ds) {
+    DistributedLockService cmsLockService = DLockService.getServiceNamed(serviceName);
+    try {
+      if (cmsLockService == null) {
+        cmsLockService = DLockService.create(serviceName, ds, true, true);
+      }
+    } catch (IllegalArgumentException ignore) {
+      return DLockService.getServiceNamed(serviceName);
+    }
+    return cmsLockService;
+  }
 
   /**
    * @see org.apache.geode.distributed.DistributedLockService#getServiceNamed(String)
@@ -2991,7 +3003,7 @@ public class DLockService extends DistributedLockService {
         SerializationContext context) {}
 
     @Override
-    public Version[] getSerializationVersions() {
+    public KnownVersion[] getSerializationVersions() {
       return null;
     }
   }

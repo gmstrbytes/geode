@@ -174,7 +174,23 @@ public interface GatewaySenderMXBean {
   /**
    * Returns the total number of batches of events that were resent.
    */
+  int getTotalBatchesDistributed();
+
+  /**
+   * Returns the total number of batches of events that were resent.
+   */
   int getTotalBatchesRedistributed();
+
+  /**
+   * Returns the total number of batches sent with incomplete transactions.
+   * Only relevant if group-transaction-events is enabled.
+   */
+  int getTotalBatchesWithIncompleteTransactions();
+
+  /**
+   * Returns the total number of bytes in heap occupied by the event queue.
+   */
+  long getTotalQueueSizeBytesInUse();
 
   /**
    * Starts this GatewaySender. Once the GatewaySender is running its configuration cannot be
@@ -184,6 +200,15 @@ public interface GatewaySenderMXBean {
   @ResourceOperation(resource = Resource.CLUSTER, operation = Operation.MANAGE,
       target = Target.GATEWAY)
   void start();
+
+  /**
+   * Starts this GatewaySender and cleans previous queue content.
+   * Once the GatewaySender is running its configuration cannot be changed.
+   *
+   */
+  @ResourceOperation(resource = Resource.CLUSTER, operation = Operation.MANAGE,
+      target = Target.GATEWAY)
+  void startWithCleanQueue();
 
   /**
    * Stops this GatewaySender.
@@ -245,6 +270,8 @@ public interface GatewaySenderMXBean {
    * @return True if the property is set, false otherwise.
    */
   boolean isParallel();
+
+  boolean mustGroupTransactionEvents();
 
   /**
    * Returns the host and port information of GatewayReceiver to which this gateway sender is

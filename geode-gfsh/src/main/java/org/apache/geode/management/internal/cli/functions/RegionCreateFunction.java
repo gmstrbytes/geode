@@ -18,8 +18,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.annotations.Immutable;
-import org.apache.geode.cache.Cache;
-import org.apache.geode.cache.Region;
+import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.cache.RegionExistsException;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.cache.execute.ResultSender;
@@ -38,13 +37,12 @@ import org.apache.geode.management.internal.util.RegionPath;
  *
  * @since GemFire 7.0
  */
+@SuppressWarnings("rawtypes")
 public class RegionCreateFunction implements InternalFunction {
 
   private static final Logger logger = LogService.getLogger();
 
   private static final long serialVersionUID = 8746830191680509335L;
-
-  private static final String ID = RegionCreateFunction.class.getName();
 
   @Immutable
   public static final RegionCreateFunction INSTANCE = new RegionCreateFunction();
@@ -52,36 +50,33 @@ public class RegionCreateFunction implements InternalFunction {
   @Immutable
   private static final RegionConfigRealizer realizer = new RegionConfigRealizer();
 
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.RegionCreateFunction";
+
+  @Override
+  public String getId() {
+    return ID;
+  }
+
   @Override
   public boolean isHA() {
     return false;
   }
 
   @Override
+  @SuppressWarnings("unchecked")
   public void execute(FunctionContext context) {
     ResultSender<Object> resultSender = context.getResultSender();
 
-    Cache cache = ((InternalCache) context.getCache()).getCacheForProcessingClientRequests();
+    InternalCache cache =
+        ((InternalCache) context.getCache()).getCacheForProcessingClientRequests();
     String memberNameOrId = context.getMemberName();
 
     CreateRegionFunctionArgs regionCreateArgs = (CreateRegionFunctionArgs) context.getArguments();
 
-    if (regionCreateArgs.isIfNotExists()) {
-      Region<Object, Object> region = cache.getRegion(regionCreateArgs.getRegionPath());
-      if (region != null) {
-        resultSender
-            .lastResult(new CliFunctionResult(memberNameOrId, CliFunctionResult.StatusState.OK,
-                CliStrings.format(
-                    CliStrings.CREATE_REGION__MSG__SKIPPING_0_REGION_PATH_1_ALREADY_EXISTS,
-                    memberNameOrId, regionCreateArgs.getRegionPath())));
-        return;
-      }
-    }
-
     try {
       RegionPath regionPath = new RegionPath(regionCreateArgs.getRegionPath());
-      realizer.create(regionCreateArgs.getConfig(), regionCreateArgs.getRegionPath(),
-          (InternalCache) cache);
+      getRealizer().create(regionCreateArgs.getConfig(), regionCreateArgs.getRegionPath(), cache);
       XmlEntity xmlEntity = new XmlEntity(CacheXml.REGION, "name", regionPath.getRootRegionName());
       resultSender.lastResult(new CliFunctionResult(memberNameOrId, xmlEntity.getXmlDefinition(),
           CliStrings.format(CliStrings.CREATE_REGION__MSG__REGION_0_CREATED_ON_1,
@@ -99,10 +94,18 @@ public class RegionCreateFunction implements InternalFunction {
     } catch (IllegalArgumentException e) {
       resultSender.lastResult(handleException(memberNameOrId, e.getMessage(), e));
     } catch (RegionExistsException e) {
-      String exceptionMsg =
-          CliStrings.format(CliStrings.CREATE_REGION__MSG__REGION_PATH_0_ALREADY_EXISTS_ON_1,
-              regionCreateArgs.getRegionPath(), memberNameOrId);
-      resultSender.lastResult(handleException(memberNameOrId, exceptionMsg, e));
+      if (regionCreateArgs.isIfNotExists()) {
+        resultSender
+            .lastResult(new CliFunctionResult(memberNameOrId, CliFunctionResult.StatusState.OK,
+                CliStrings.format(
+                    CliStrings.CREATE_REGION__MSG__SKIPPING_0_REGION_PATH_1_ALREADY_EXISTS,
+                    memberNameOrId, regionCreateArgs.getRegionPath())));
+      } else {
+        String exceptionMsg =
+            CliStrings.format(CliStrings.CREATE_REGION__MSG__REGION_PATH_0_ALREADY_EXISTS_ON_1,
+                regionCreateArgs.getRegionPath(), memberNameOrId);
+        resultSender.lastResult(handleException(memberNameOrId, exceptionMsg, e));
+      }
     } catch (Exception e) {
       String exceptionMsg = e.getMessage();
       if (exceptionMsg == null) {
@@ -126,8 +129,8 @@ public class RegionCreateFunction implements InternalFunction {
     return new CliFunctionResult(memberNameOrId, CliFunctionResult.StatusState.ERROR);
   }
 
-  @Override
-  public String getId() {
-    return ID;
+  @VisibleForTesting
+  protected RegionConfigRealizer getRealizer() {
+    return realizer;
   }
 }

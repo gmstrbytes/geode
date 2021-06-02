@@ -14,24 +14,32 @@
  */
 package org.apache.geode.internal.cache;
 
+import static org.apache.geode.distributed.internal.ClusterDistributionManager.LOCATOR_DM_TYPE;
 import static org.apache.geode.distributed.internal.InternalDistributedSystem.ALLOW_MULTIPLE_SYSTEMS_PROPERTY;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isA;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.io.File;
 import java.io.NotSerializableException;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.IntStream;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.After;
@@ -50,6 +58,7 @@ import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
+import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.SystemTimer;
 import org.apache.geode.internal.cache.GemFireCacheImpl.ReplyProcessor21Factory;
 import org.apache.geode.internal.cache.control.InternalResourceManager;
@@ -58,6 +67,8 @@ import org.apache.geode.internal.cache.eviction.HeapEvictor;
 import org.apache.geode.internal.security.SecurityService;
 import org.apache.geode.management.internal.JmxManagerAdvisor;
 import org.apache.geode.pdx.internal.TypeRegistry;
+import org.apache.geode.test.awaitility.GeodeAwaitility;
+import org.apache.geode.test.junit.rules.ExecutorServiceRule;
 
 /**
  * Unit tests for {@link GemFireCacheImpl}.
@@ -75,6 +86,9 @@ public class GemFireCacheImplTest {
   @Rule
   public RestoreSystemProperties restoreSystemProperties = new RestoreSystemProperties();
 
+  @Rule
+  public ExecutorServiceRule executorServiceRule = new ExecutorServiceRule();
+
   @Before
   public void setUp() {
     cacheConfig = mock(CacheConfig.class);
@@ -84,6 +98,7 @@ public class GemFireCacheImplTest {
     typeRegistry = mock(TypeRegistry.class);
 
     DistributionConfig distributionConfig = mock(DistributionConfig.class);
+    when(distributionConfig.getUseSharedConfiguration()).thenReturn(false);
     DistributionManager distributionManager = mock(DistributionManager.class);
     ReplyProcessor21 replyProcessor21 = mock(ReplyProcessor21.class);
 
@@ -618,6 +633,69 @@ public class GemFireCacheImplTest {
   public void getCacheServers_isCanonical() {
     assertThat(gemFireCacheImpl.getCacheServers())
         .isSameAs(gemFireCacheImpl.getCacheServers());
+  }
+
+  @Test
+  public void testMultiThreadLockUnlockDiskStore() throws InterruptedException {
+    int nThread = 10;
+    String diskStoreName = "MyDiskStore";
+    AtomicInteger nTrue = new AtomicInteger();
+    AtomicInteger nFalse = new AtomicInteger();
+    IntStream.range(0, nThread).forEach(tid -> {
+      executorServiceRule.submit(() -> {
+        try {
+          boolean lockResult = gemFireCacheImpl.doLockDiskStore(diskStoreName);
+          if (lockResult) {
+            nTrue.incrementAndGet();
+          } else {
+            nFalse.incrementAndGet();
+          }
+        } finally {
+          boolean unlockResult = gemFireCacheImpl.doUnlockDiskStore(diskStoreName);
+          if (unlockResult) {
+            nTrue.incrementAndGet();
+          } else {
+            nFalse.incrementAndGet();
+          }
+        }
+      });
+    });
+    executorServiceRule.getExecutorService().shutdown();
+    executorServiceRule.getExecutorService()
+        .awaitTermination(GeodeAwaitility.getTimeout().toNanos(), TimeUnit.NANOSECONDS);
+    // 1 thread returns true for locking, all 10 threads return true for unlocking
+    assertThat(nTrue.get()).isEqualTo(11);
+    // 9 threads return false for locking
+    assertThat(nFalse.get()).isEqualTo(9);
+  }
+
+  @Test
+  public void cacheXmlGenerationErrorDisablesAutoReconnect() {
+    gemFireCacheImpl.prepareForReconnect((printWriter) -> {
+      throw new RuntimeException("error generating cache XML");
+    });
+    verify(internalDistributedSystem.getConfig()).setDisableAutoReconnect(Boolean.TRUE);
+    verify(cacheConfig, never()).setCacheXMLDescription(isA(String.class));
+  }
+
+  @Test
+  public void anythingThrownDuringInitializeDeclarativeCacheShouldBeCaughtAndFinallyCloseCache() {
+    InternalDistributedMember internalDistributedMember = mock(InternalDistributedMember.class);
+    when(internalDistributedSystem.getDistributedMember()).thenReturn(internalDistributedMember);
+    DistributionConfig distributionConfig = mock(DistributionConfig.class);
+    when(internalDistributedSystem.getConfig()).thenReturn(distributionConfig);
+    File file = mock(File.class);
+    when(distributionConfig.getDeployWorkingDir()).thenReturn(file);
+    when(file.canWrite()).thenReturn(true);
+    when(file.listFiles()).thenReturn(new File[0]);
+    when(file.list()).thenReturn(new String[0]);
+    when(internalDistributedMember.getVmKind()).thenReturn(LOCATOR_DM_TYPE);
+    when(internalDistributedSystem.getDistributedMember())
+        .thenThrow(new Error("Expected error by test."));
+    assertThat(gemFireCacheImpl.isClosed()).isFalse();
+    assertThatThrownBy(() -> gemFireCacheImpl.initialize()).isInstanceOf(Error.class)
+        .hasMessageContaining("Expected error by test.");
+    assertThat(gemFireCacheImpl.isClosed()).isTrue();
   }
 
   @SuppressWarnings({"LambdaParameterHidesMemberVariable", "OverlyCoupledMethod", "unchecked"})

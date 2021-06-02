@@ -16,6 +16,7 @@ package org.apache.geode.cache.client.internal;
 
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -38,7 +39,6 @@ import org.apache.geode.cache.client.ServerConnectivityException;
 import org.apache.geode.cache.server.CacheServer;
 import org.apache.geode.distributed.DistributedSystem;
 import org.apache.geode.distributed.internal.ServerLocation;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.AvailablePortHelper;
 import org.apache.geode.test.junit.categories.ClientServerTest;
 
@@ -59,7 +59,7 @@ public class ConnectionPoolImplJUnitTest {
     props.setProperty(MCAST_PORT, "0");
     props.setProperty(LOCATORS, "");
     cache = CacheFactory.create(DistributedSystem.connect(props));
-    port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    port = getRandomAvailableTCPPort();
   }
 
   @After
@@ -102,6 +102,7 @@ public class ConnectionPoolImplJUnitTest {
     // check defaults
     assertEquals(PoolFactory.DEFAULT_SOCKET_CONNECT_TIMEOUT, pool.getSocketConnectTimeout());
     assertEquals(PoolFactory.DEFAULT_FREE_CONNECTION_TIMEOUT, pool.getFreeConnectionTimeout());
+    assertEquals(PoolFactory.DEFAULT_SERVER_CONNECTION_TIMEOUT, pool.getServerConnectionTimeout());
     assertEquals(PoolFactory.DEFAULT_SOCKET_BUFFER_SIZE, pool.getSocketBufferSize());
     assertEquals(PoolFactory.DEFAULT_READ_TIMEOUT, pool.getReadTimeout());
     assertEquals(PoolFactory.DEFAULT_MIN_CONNECTIONS, pool.getMinConnections());
@@ -251,5 +252,28 @@ public class ConnectionPoolImplJUnitTest {
 
     assertEquals(location1, pool.executeOnPrimary(testOp));
     assertEquals(location1, pool.executeOnQueuesAndReturnPrimaryResult(testOp));
+  }
+
+  @Test
+  public void testCalculateRetryFromThrownException() throws Exception {
+    int readTimeout = 234234;
+    int socketTimeout = 123123;
+    int port1 = 10000;
+    int retryAttempts = 0;
+
+    PoolFactory cpf = PoolManager.createFactory();
+    cpf.addServer("localhost", port).setSocketConnectTimeout(socketTimeout)
+        .setReadTimeout(readTimeout).setThreadLocalConnections(true);
+
+    ServerLocation location1 = new ServerLocation("fakehost", port1);
+
+    PoolImpl pool = (PoolImpl) cpf.create("testpool");
+    try {
+      pool.acquireConnection(location1);
+      fail("expected a ServerConnectivityException");
+    } catch (Exception e) {
+      retryAttempts = pool.calculateRetryAttempts(e);
+    }
+    assertEquals(1, retryAttempts);
   }
 }

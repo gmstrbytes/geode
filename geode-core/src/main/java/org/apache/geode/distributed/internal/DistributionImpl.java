@@ -19,8 +19,6 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.io.NotSerializableException;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -65,13 +63,14 @@ import org.apache.geode.distributed.internal.membership.api.MessageListener;
 import org.apache.geode.distributed.internal.membership.api.QuorumChecker;
 import org.apache.geode.distributed.internal.tcpserver.TcpClient;
 import org.apache.geode.distributed.internal.tcpserver.TcpSocketCreator;
+import org.apache.geode.distributed.internal.tcpserver.TcpSocketFactory;
 import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.admin.remote.RemoteTransportConfig;
 import org.apache.geode.internal.net.SocketCreatorFactory;
 import org.apache.geode.internal.security.SecurableCommunicationChannel;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
-import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.internal.tcp.ConnectExceptions;
 import org.apache.geode.internal.tcp.ConnectionException;
 import org.apache.geode.internal.util.Breadcrumbs;
@@ -132,10 +131,11 @@ public class DistributionImpl implements Distribution {
       final TcpClient locatorClient = new TcpClient(SocketCreatorFactory
           .getSocketCreatorForComponent(SecurableCommunicationChannel.LOCATOR),
           InternalDataSerializer.getDSFIDSerializer().getObjectSerializer(),
-          InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer());
+          InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer(),
+          TcpSocketFactory.DEFAULT);
       final TcpSocketCreator socketCreator = SocketCreatorFactory
           .getSocketCreatorForComponent(SecurableCommunicationChannel.CLUSTER);
-      membership = MembershipBuilder.<InternalDistributedMember>newMembershipBuilder(
+      membership = MembershipBuilder.newMembershipBuilder(
           socketCreator,
           locatorClient,
           InternalDataSerializer.getDSFIDSerializer(),
@@ -181,9 +181,9 @@ public class DistributionImpl implements Distribution {
       throw new GemFireSecurityException(e.getMessage(),
           e);
     } catch (MembershipConfigurationException e) {
-      throw new GemFireConfigException(e.getMessage());
+      throw new GemFireConfigException("Problem configuring membership services", e);
     } catch (MemberStartupException e) {
-      throw new SystemConnectException(e.getMessage());
+      throw new SystemConnectException("Problem starting up membership services", e);
     } catch (RuntimeException e) {
       logger.error("Unexpected problem starting up membership services", e);
       throw new SystemConnectException("Problem starting up membership services: " + e.getMessage()
@@ -235,7 +235,7 @@ public class DistributionImpl implements Distribution {
   }
 
   @Override
-  public Set<InternalDistributedMember> send(InternalDistributedMember[] destinations,
+  public Set<InternalDistributedMember> send(List<InternalDistributedMember> destinations,
       DistributionMessage msg) throws NotSerializableException {
     Set<InternalDistributedMember> result;
     boolean allDestinations = msg.forAll();
@@ -246,18 +246,16 @@ public class DistributionImpl implements Distribution {
 
     if (membership.isJoining()) {
       // If we get here, we are starting up, so just report a failure.
-      if (allDestinations)
+      if (allDestinations) {
         return null;
-      else {
-        result = new HashSet<>();
-        Collections.addAll(result, destinations);
-        return result;
+      } else {
+        return new HashSet<>(destinations);
       }
     }
 
     if (msg instanceof AdminMessageType && shutdownInProgress()) {
       // no admin messages while shutting down - this can cause threads to hang
-      return new HashSet<>(Arrays.asList(msg.getRecipientsArray()));
+      return new HashSet<>(msg.getRecipients());
     }
 
     // Handle trivial cases
@@ -267,7 +265,7 @@ public class DistributionImpl implements Distribution {
             msg);
       return null; // trivially: all recipients received the message
     }
-    if (destinations.length == 0) {
+    if (destinations.isEmpty()) {
       if (logger.isTraceEnabled())
         logger.trace(
             "Membership: Message send: returning early because empty destination list passed in: '{}'",
@@ -288,7 +286,7 @@ public class DistributionImpl implements Distribution {
     boolean sendViaMessenger = isForceUDPCommunications() || (msg instanceof ShutdownMessage);
 
     if (useMcast || tcpDisabled || sendViaMessenger) {
-      result = membership.send(destinations, msg);
+      result = membership.send(destinations.toArray(EMPTY_MEMBER_ARRAY), msg);
     } else {
       result = directChannelSend(destinations, msg);
     }
@@ -328,7 +326,7 @@ public class DistributionImpl implements Distribution {
    */
   @Override
   public Set<InternalDistributedMember> directChannelSend(
-      InternalDistributedMember[] destinations,
+      List<InternalDistributedMember> destinations,
       DistributionMessage content)
       throws NotSerializableException {
     MembershipStatistics theStats = clusterDistributionManager.getStats();
@@ -339,7 +337,7 @@ public class DistributionImpl implements Distribution {
       keys = membership.getAllMembers(EMPTY_MEMBER_ARRAY);
     } else {
       allDestinations = false;
-      keys = destinations;
+      keys = destinations.toArray(EMPTY_MEMBER_ARRAY);
     }
 
     int sentBytes;
@@ -798,6 +796,10 @@ public class DistributionImpl implements Distribution {
     return result;
   }
 
+  public DirectChannel getDirectChannel() {
+    return directChannel;
+  }
+
 
   /**
    * Insert our own MessageReceiver between us and the direct channel, in order to correctly filter
@@ -871,7 +873,7 @@ public class DistributionImpl implements Distribution {
     }
 
     @Override
-    public Version[] getSerializationVersions() {
+    public KnownVersion[] getSerializationVersions() {
       return null;
     }
   }
@@ -919,7 +921,7 @@ public class DistributionImpl implements Distribution {
       // network-down testing
       InternalLocator loc = (InternalLocator) Locator.getLocator();
       if (loc != null) {
-        loc.stop(true, !distribution.disableAutoReconnect, false);
+        loc.stop(true, !distribution.disableAutoReconnect, true);
       }
     }
   }

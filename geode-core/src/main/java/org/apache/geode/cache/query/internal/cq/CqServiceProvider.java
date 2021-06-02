@@ -23,6 +23,7 @@ import org.apache.geode.annotations.Immutable;
 import org.apache.geode.annotations.internal.MutableForTesting;
 import org.apache.geode.cache.query.internal.cq.spi.CqServiceFactory;
 import org.apache.geode.internal.cache.InternalCache;
+import org.apache.geode.internal.cache.tier.sockets.CommandInitializer;
 import org.apache.geode.util.internal.GeodeGlossary;
 
 public class CqServiceProvider {
@@ -36,7 +37,7 @@ public class CqServiceProvider {
    */
   @MutableForTesting
   public static boolean MAINTAIN_KEYS = Boolean
-      .valueOf(System.getProperty(GeodeGlossary.GEMFIRE_PREFIX + "cq.MAINTAIN_KEYS", "true"));
+      .parseBoolean(System.getProperty(GeodeGlossary.GEMFIRE_PREFIX + "cq.MAINTAIN_KEYS", "true"));
 
   /**
    * A debug flag used for testing vMotion during CQ registration
@@ -59,7 +60,7 @@ public class CqServiceProvider {
       return new MissingCqService();
     }
 
-    return factory.create(cache);
+    return factory.create(cache, CommandInitializer.getDefaultInstance());
   }
 
   public static ServerCQ readCq(DataInput in) throws ClassNotFoundException, IOException {

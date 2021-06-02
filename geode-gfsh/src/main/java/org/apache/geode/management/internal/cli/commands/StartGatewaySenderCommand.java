@@ -35,7 +35,7 @@ import org.apache.geode.logging.internal.executors.LoggingExecutors;
 import org.apache.geode.management.GatewaySenderMXBean;
 import org.apache.geode.management.cli.CliMetaData;
 import org.apache.geode.management.cli.ConverterHint;
-import org.apache.geode.management.cli.SingleGfshCommand;
+import org.apache.geode.management.cli.GfshCommand;
 import org.apache.geode.management.internal.SystemManagementService;
 import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.management.internal.cli.result.model.TabularResultModel;
@@ -43,7 +43,7 @@ import org.apache.geode.management.internal.i18n.CliStrings;
 import org.apache.geode.management.internal.security.ResourceOperation;
 import org.apache.geode.security.ResourcePermission;
 
-public class StartGatewaySenderCommand extends SingleGfshCommand {
+public class StartGatewaySenderCommand extends GfshCommand {
 
   @CliCommand(value = CliStrings.START_GATEWAYSENDER, help = CliStrings.START_GATEWAYSENDER__HELP)
   @CliMetaData(relatedTopic = CliStrings.TOPIC_GEODE_WAN)
@@ -59,7 +59,12 @@ public class StartGatewaySenderCommand extends SingleGfshCommand {
 
       @CliOption(key = {CliStrings.MEMBER, CliStrings.MEMBERS},
           optionContext = ConverterHint.MEMBERIDNAME,
-          help = CliStrings.START_GATEWAYSENDER__MEMBER__HELP) String[] onMember) {
+          help = CliStrings.START_GATEWAYSENDER__MEMBER__HELP) String[] onMember,
+
+      @CliOption(key = CliStrings.START_GATEWAYSENDER__CLEAN_QUEUE,
+          unspecifiedDefaultValue = "false",
+          specifiedDefaultValue = "true",
+          help = CliStrings.START_GATEWAYSENDER__CLEAN_QUEUE__HELP) final Boolean cleanQueues) {
 
     final String id = senderId.trim();
 
@@ -75,7 +80,7 @@ public class StartGatewaySenderCommand extends SingleGfshCommand {
     ExecutorService execService =
         LoggingExecutors.newCachedThreadPool("Start Sender Command Thread ", true);
 
-    List<Callable<List>> callables = new ArrayList<>();
+    List<Callable<List<String>>> callables = new ArrayList<>();
 
     for (final DistributedMember member : dsMembers) {
 
@@ -96,7 +101,11 @@ public class StartGatewaySenderCommand extends SingleGfshCommand {
             statusList.add(CliStrings.format(
                 CliStrings.GATEWAY_SENDER_0_IS_ALREADY_STARTED_ON_MEMBER_1, id, member.getId()));
           } else {
-            bean.start();
+            if (cleanQueues) {
+              bean.startWithCleanQueue();
+            } else {
+              bean.start();
+            }
             statusList.add(member.getId());
             statusList.add(CliStrings.GATEWAY_OK);
             statusList.add(CliStrings.format(CliStrings.GATEWAY_SENDER_0_IS_STARTED_ON_MEMBER_1, id,
@@ -114,7 +123,7 @@ public class StartGatewaySenderCommand extends SingleGfshCommand {
     }
 
     Iterator<DistributedMember> memberIterator = dsMembers.iterator();
-    List<Future<List>> futures;
+    List<Future<List<String>>> futures;
 
     try {
       futures = execService.invokeAll(callables);
@@ -128,7 +137,7 @@ public class StartGatewaySenderCommand extends SingleGfshCommand {
 
     ResultModel resultModel = new ResultModel();
     TabularResultModel resultData = resultModel.addTable(CliStrings.START_GATEWAYSENDER);
-    for (Future<List> future : futures) {
+    for (Future<List<String>> future : futures) {
       DistributedMember member = memberIterator.next();
       List<String> memberStatus;
       try {

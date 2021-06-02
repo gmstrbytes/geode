@@ -39,7 +39,7 @@ import org.apache.geode.cache.wan.GatewaySender;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.management.internal.cli.functions.GatewaySenderFunctionArgs;
 import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.management.internal.functions.CliFunctionResult;
@@ -158,6 +158,32 @@ public class CreateGatewaySenderCommandTest {
   }
 
   @Test
+  public void testInvalidGroupTransactionEventsDueToSerialAndMoreThanOneThread() {
+    doReturn(mock(Set.class)).when(command).getMembers(any(), any());
+    cliFunctionResult = new CliFunctionResult("member",
+        CliFunctionResult.StatusState.OK, "cliFunctionResult");
+    functionResults.add(cliFunctionResult);
+    gfsh.executeAndAssertThat(command,
+        "create gateway-sender --member=xyz --id=1 --remote-distributed-system-id=1 " +
+            "--group-transaction-events --parallel=false --dispatcher-threads=2 --order-policy=THREAD")
+        .statusIsError().containsOutput(
+            "Serial Gateway Sender cannot be created with --group-transaction-events when --dispatcher-threads is greater than 1");
+  }
+
+  @Test
+  public void testInvalidGroupTransactionEventsDueToConflationEnabled() {
+    doReturn(mock(Set.class)).when(command).getMembers(any(), any());
+    cliFunctionResult = new CliFunctionResult("member",
+        CliFunctionResult.StatusState.OK, "cliFunctionResult");
+    functionResults.add(cliFunctionResult);
+    gfsh.executeAndAssertThat(command,
+        "create gateway-sender --member=xyz --id=1 --remote-distributed-system-id=1 " +
+            "--group-transaction-events --enable-batch-conflation --order-policy=THREAD")
+        .statusIsError().containsOutput(
+            "Gateway Sender cannot be created with both --group-transaction-events and --enable-batch-conflation");
+  }
+
+  @Test
   public void testFunctionArgs() {
     doReturn(mock(Set.class)).when(command).getMembers(any(), any());
     cliFunctionResult = new CliFunctionResult("member",
@@ -204,9 +230,9 @@ public class CreateGatewaySenderCommandTest {
     // Create a set of mixed version members
     Set<DistributedMember> members = new HashSet<>();
     InternalDistributedMember currentVersionMember = mock(InternalDistributedMember.class);
-    when(currentVersionMember.getVersionObject()).thenReturn(Version.CURRENT);
+    when(currentVersionMember.getVersion()).thenReturn(KnownVersion.CURRENT);
     InternalDistributedMember oldVersionMember = mock(InternalDistributedMember.class);
-    when(oldVersionMember.getVersionObject()).thenReturn(Version.GEODE_1_4_0);
+    when(oldVersionMember.getVersion()).thenReturn(KnownVersion.GEODE_1_4_0);
     members.add(currentVersionMember);
     members.add(oldVersionMember);
     doReturn(members).when(command).getMembers(any(), any());
@@ -246,8 +272,10 @@ public class CreateGatewaySenderCommandTest {
     assertThat(argsArgumentCaptor.getValue().getAlertThreshold()).isNull();
     assertThat(argsArgumentCaptor.getValue().getDispatcherThreads()).isNull();
     assertThat(argsArgumentCaptor.getValue().getOrderPolicy()).isNull();
-    assertThat(argsArgumentCaptor.getValue().getGatewayEventFilter()).isNotNull().isEmpty();
+    assertThat(argsArgumentCaptor.getValue().getGatewayEventFilter()).isNull();
     assertThat(argsArgumentCaptor.getValue().getGatewayTransportFilter()).isNotNull().isEmpty();
+    assertThat(argsArgumentCaptor.getValue().mustGroupTransactionEvents()).isNotNull();
+    assertThat(argsArgumentCaptor.getValue().getEnforceThreadsConnectSameReceiver()).isFalse();
   }
 
   @Test
@@ -276,6 +304,23 @@ public class CreateGatewaySenderCommandTest {
   }
 
   @Test
+  public void groupTransactionEventsShouldBeSetAsTrueWhenSpecifiedWithoutValue() {
+    doReturn(mock(Set.class)).when(command).getMembers(any(), any());
+    cliFunctionResult =
+        new CliFunctionResult("member", CliFunctionResult.StatusState.OK, "cliFunctionResult");
+    functionResults.add(cliFunctionResult);
+    gfsh.executeAndAssertThat(command,
+        "create gateway-sender --member=xyz --id=testGateway --remote-distributed-system-id=1"
+            + " --parallel"
+            + " --group-transaction-events")
+        .statusIsSuccess();
+    verify(command).executeAndGetFunctionResult(any(), argsArgumentCaptor.capture(), any());
+
+    assertThat(argsArgumentCaptor.getValue().getId()).isEqualTo("testGateway");
+    assertThat(argsArgumentCaptor.getValue().mustGroupTransactionEvents()).isTrue();
+  }
+
+  @Test
   public void booleanArgumentsShouldUseTheCustomParameterValueWhenSpecified() {
     doReturn(mock(Set.class)).when(command).getMembers(any(), any());
     cliFunctionResult =
@@ -287,7 +332,8 @@ public class CreateGatewaySenderCommandTest {
             + " --manual-start=false"
             + " --disk-synchronous=false"
             + " --enable-persistence=false"
-            + " --enable-batch-conflation=false")
+            + " --enable-batch-conflation=false"
+            + " --group-transaction-events=false")
         .statusIsSuccess();
     verify(command).executeAndGetFunctionResult(any(), argsArgumentCaptor.capture(), any());
 
@@ -298,5 +344,73 @@ public class CreateGatewaySenderCommandTest {
     assertThat(argsArgumentCaptor.getValue().isDiskSynchronous()).isFalse();
     assertThat(argsArgumentCaptor.getValue().isPersistenceEnabled()).isFalse();
     assertThat(argsArgumentCaptor.getValue().isBatchConflationEnabled()).isFalse();
+    assertThat(argsArgumentCaptor.getValue().mustGroupTransactionEvents()).isFalse();
+
+  }
+
+  @Test
+  public void testEnforceThreadsConnectSameReceiverCannotBeUsedForParallelSenders() {
+    gfsh.executeAndAssertThat(command,
+        "create gateway-sender --id=1 --remote-distributed-system-id=1 --parallel --enforce-threads-connect-same-receiver")
+        .statusIsError()
+        .containsOutput(
+            "Option --" + CliStrings.CREATE_GATEWAYSENDER__ENFORCE_THREADS_CONNECT_SAME_RECEIVER
+                + " only applies to serial gateway senders.");
+  }
+
+  @Test
+  public void testEnforceThreadsConnectSameReceiverIsTrueWhenUsedWithoutValue() {
+    doReturn(mock(Set.class)).when(command).getMembers(any(), any());
+    cliFunctionResult =
+        new CliFunctionResult("member", CliFunctionResult.StatusState.OK, "cliFunctionResult");
+    functionResults.add(cliFunctionResult);
+    gfsh.executeAndAssertThat(command,
+        "create gateway-sender --id=1 --remote-distributed-system-id=1 --enforce-threads-connect-same-receiver")
+        .statusIsSuccess();
+    verify(command).executeAndGetFunctionResult(any(), argsArgumentCaptor.capture(), any());
+
+    assertThat(argsArgumentCaptor.getValue().getEnforceThreadsConnectSameReceiver()).isTrue();
+  }
+
+  @Test
+  public void testEnforceThreadsConnectSameReceiverIsFalseWhenSetToFalse() {
+    doReturn(mock(Set.class)).when(command).getMembers(any(), any());
+    cliFunctionResult =
+        new CliFunctionResult("member", CliFunctionResult.StatusState.OK, "cliFunctionResult");
+    functionResults.add(cliFunctionResult);
+    gfsh.executeAndAssertThat(command,
+        "create gateway-sender --id=1 --remote-distributed-system-id=1 --enforce-threads-connect-same-receiver=false")
+        .statusIsSuccess();
+    verify(command).executeAndGetFunctionResult(any(), argsArgumentCaptor.capture(), any());
+
+    assertThat(argsArgumentCaptor.getValue().getEnforceThreadsConnectSameReceiver()).isFalse();
+  }
+
+  @Test
+  public void testEnforceThreadsConnectSameReceiverIsTrueWhenSetToTrue() {
+    doReturn(mock(Set.class)).when(command).getMembers(any(), any());
+    cliFunctionResult =
+        new CliFunctionResult("member", CliFunctionResult.StatusState.OK, "cliFunctionResult");
+    functionResults.add(cliFunctionResult);
+    gfsh.executeAndAssertThat(command,
+        "create gateway-sender --id=1 --remote-distributed-system-id=1 --enforce-threads-connect-same-receiver=true")
+        .statusIsSuccess();
+    verify(command).executeAndGetFunctionResult(any(), argsArgumentCaptor.capture(), any());
+
+    assertThat(argsArgumentCaptor.getValue().getEnforceThreadsConnectSameReceiver()).isTrue();
+  }
+
+  @Test
+  public void testEnforceThreadsConnectSameReceiverIsFalseByDefault() {
+    doReturn(mock(Set.class)).when(command).getMembers(any(), any());
+    cliFunctionResult =
+        new CliFunctionResult("member", CliFunctionResult.StatusState.OK, "cliFunctionResult");
+    functionResults.add(cliFunctionResult);
+    gfsh.executeAndAssertThat(command,
+        "create gateway-sender --id=1 --remote-distributed-system-id=1")
+        .statusIsSuccess();
+    verify(command).executeAndGetFunctionResult(any(), argsArgumentCaptor.capture(), any());
+
+    assertThat(argsArgumentCaptor.getValue().getEnforceThreadsConnectSameReceiver()).isFalse();
   }
 }

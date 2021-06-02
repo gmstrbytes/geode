@@ -14,6 +14,8 @@
  */
 package org.apache.geode.management.internal.cli.remote;
 
+import static org.apache.geode.management.internal.api.LocatorClusterManagementService.CMS_DLOCK_SERVICE_NAME;
+
 import java.lang.reflect.Method;
 import java.util.Collections;
 import java.util.List;
@@ -22,11 +24,13 @@ import java.util.Properties;
 
 import org.springframework.shell.core.Parser;
 import org.springframework.shell.event.ParseResult;
-import org.springframework.util.StringUtils;
 
 import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.internal.CommandProcessor;
+import org.apache.geode.distributed.DistributedLockService;
+import org.apache.geode.distributed.internal.locks.DLockService;
+import org.apache.geode.internal.GemFireVersion;
 import org.apache.geode.internal.cache.CacheService;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.security.SecurityService;
@@ -53,14 +57,13 @@ public class OnlineCommandProcessor implements CommandProcessor {
 
   private SecurityService securityService;
 
-  private InternalCache cache;
-
   public OnlineCommandProcessor() {}
 
   @VisibleForTesting
-  public OnlineCommandProcessor(Properties cacheProperties, SecurityService securityService,
-      CommandExecutor commandExecutor, InternalCache cache) {
-    this.gfshParser = new GfshParser(new CommandManager(cacheProperties, cache));
+  public OnlineCommandProcessor(GfshParser gfshParser,
+      SecurityService securityService,
+      CommandExecutor commandExecutor) {
+    this.gfshParser = gfshParser;
     this.executor = commandExecutor;
     this.securityService = securityService;
   }
@@ -93,7 +96,7 @@ public class OnlineCommandProcessor implements CommandProcessor {
       List<String> stagedFilePaths) {
     CommentSkipHelper commentSkipper = new CommentSkipHelper();
     String commentLessLine = commentSkipper.skipComments(command);
-    if (StringUtils.isEmpty(commentLessLine)) {
+    if (commentLessLine == null || commentLessLine.toString().isEmpty()) {
       return null;
     }
 
@@ -104,7 +107,11 @@ public class OnlineCommandProcessor implements CommandProcessor {
     ParseResult parseResult = parseCommand(commentLessLine);
 
     if (parseResult == null) {
-      return ResultModel.createError("Could not parse command string. " + command);
+      String version = GemFireVersion.getGemFireVersion();
+      String message = "Could not parse command string. " + command + "." + System.lineSeparator() +
+          "The command or some options in this command may not be supported by this locator(" +
+          version + ") gfsh is connected with.";
+      return ResultModel.createError(message);
     }
 
     Method method = parseResult.getMethod();
@@ -138,8 +145,10 @@ public class OnlineCommandProcessor implements CommandProcessor {
     Properties cacheProperties = cache.getDistributedSystem().getProperties();
     this.securityService = ((InternalCache) cache).getSecurityService();
     this.gfshParser = new GfshParser(new CommandManager(cacheProperties, (InternalCache) cache));
-    this.executor = new CommandExecutor();
-    this.cache = (InternalCache) cache;
+    DistributedLockService cmsDlockService = DLockService.getOrCreateService(
+        CMS_DLOCK_SERVICE_NAME,
+        ((InternalCache) cache).getInternalDistributedSystem());
+    this.executor = new CommandExecutor(cmsDlockService);
 
     return true;
   }

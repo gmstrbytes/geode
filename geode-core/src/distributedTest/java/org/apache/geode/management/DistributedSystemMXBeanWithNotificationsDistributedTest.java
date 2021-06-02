@@ -15,6 +15,7 @@
 package org.apache.geode.management;
 
 import static java.lang.management.ManagementFactory.getPlatformMBeanServer;
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.HTTP_SERVICE_PORT;
 import static org.apache.geode.distributed.ConfigurationProperties.JMX_MANAGER;
 import static org.apache.geode.distributed.ConfigurationProperties.JMX_MANAGER_PORT;
@@ -60,8 +61,8 @@ import org.apache.geode.management.internal.SystemManagementService;
 import org.apache.geode.management.internal.beans.MemberMBean;
 import org.apache.geode.management.internal.beans.SequenceNumber;
 import org.apache.geode.test.dunit.VM;
+import org.apache.geode.test.dunit.rules.DistributedErrorCollector;
 import org.apache.geode.test.dunit.rules.DistributedRule;
-import org.apache.geode.test.dunit.rules.SharedErrorCollector;
 import org.apache.geode.test.junit.categories.ManagementTest;
 
 /**
@@ -82,7 +83,7 @@ import org.apache.geode.test.junit.categories.ManagementTest;
 @SuppressWarnings("serial")
 public class DistributedSystemMXBeanWithNotificationsDistributedTest implements Serializable {
 
-  private static final long TIMEOUT = getTimeout().getValueInMS();
+  private static final long TIMEOUT = getTimeout().toMillis();
   private static final String MANAGER_NAME = "managerVM";
   private static final String MEMBER_NAME = "memberVM-";
 
@@ -113,7 +114,7 @@ public class DistributedSystemMXBeanWithNotificationsDistributedTest implements 
   public DistributedRule distributedRule = new DistributedRule();
 
   @Rule
-  public SharedErrorCollector errorCollector = new SharedErrorCollector();
+  public DistributedErrorCollector errorCollector = new DistributedErrorCollector();
 
   @Before
   public void setUp() throws Exception {
@@ -176,7 +177,8 @@ public class DistributedSystemMXBeanWithNotificationsDistributedTest implements 
       memberVM.invoke(() -> {
         Notification notification =
             new Notification(REGION_CREATED, getMemberNameOrUniqueId(distributedMember),
-                SequenceNumber.next(), System.currentTimeMillis(), REGION_CREATED_PREFIX + "/test");
+                SequenceNumber.next(), System.currentTimeMillis(),
+                REGION_CREATED_PREFIX + SEPARATOR + "test");
         NotificationBroadcasterSupport notifier = (MemberMBean) managementService.getMemberMXBean();
         notifier.sendNotification(notification);
       });

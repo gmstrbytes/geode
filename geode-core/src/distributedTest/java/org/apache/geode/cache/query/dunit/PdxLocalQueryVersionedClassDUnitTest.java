@@ -14,6 +14,8 @@
  */
 package org.apache.geode.cache.query.dunit;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
+
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
 
@@ -56,7 +58,7 @@ public class PdxLocalQueryVersionedClassDUnitTest extends PDXQueryTestBase {
     final VM client = host.getVM(1);
 
     final int numberOfEntries = 1000;
-    final String name = "/" + regionName;
+    final String name = SEPARATOR + regionName;
 
     final String query =
         "select distinct * from " + name + " where id > $1 and id < $2 and status = 'active'";
@@ -67,7 +69,7 @@ public class PdxLocalQueryVersionedClassDUnitTest extends PDXQueryTestBase {
       public Object call() throws Exception {
         Region r1 = getCache().createRegionFactory(RegionShortcut.REPLICATE).create(regionName);
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;

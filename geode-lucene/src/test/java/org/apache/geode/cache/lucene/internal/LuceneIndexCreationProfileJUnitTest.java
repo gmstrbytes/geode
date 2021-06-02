@@ -15,6 +15,7 @@
 package org.apache.geode.cache.lucene.internal;
 
 import static junitparams.JUnitParamsRunner.$;
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.cache.lucene.test.LuceneTestUtilities.CANNOT_CREATE_LUCENE_INDEX_DIFFERENT_ANALYZERS;
 import static org.apache.geode.cache.lucene.test.LuceneTestUtilities.CANNOT_CREATE_LUCENE_INDEX_DIFFERENT_ANALYZERS_1;
 import static org.apache.geode.cache.lucene.test.LuceneTestUtilities.CANNOT_CREATE_LUCENE_INDEX_DIFFERENT_ANALYZERS_2;
@@ -48,7 +49,7 @@ import org.apache.geode.cache.lucene.DummyLuceneSerializer;
 import org.apache.geode.cache.lucene.internal.repository.serializer.HeterogeneousLuceneSerializer;
 import org.apache.geode.cache.lucene.test.LuceneTestUtilities;
 import org.apache.geode.internal.HeapDataOutputStream;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.test.junit.categories.LuceneTest;
 
 @Category({LuceneTest.class})
@@ -78,7 +79,7 @@ public class LuceneIndexCreationProfileJUnitTest {
   @Parameters(method = "getProfileWithSerializer")
   public void toDataFromDataShouldContainSerializer(LuceneIndexCreationProfile profile,
       String expectedSerializerCLassName) throws IOException, ClassNotFoundException {
-    HeapDataOutputStream hdos = new HeapDataOutputStream(Version.CURRENT);
+    HeapDataOutputStream hdos = new HeapDataOutputStream(KnownVersion.CURRENT);
     DataSerializer.writeObject(profile, hdos);
     byte[] outputArray = hdos.toByteArray();
     ByteArrayInputStream bais = new ByteArrayInputStream(outputArray);
@@ -111,7 +112,8 @@ public class LuceneIndexCreationProfileJUnitTest {
   @Parameters(method = "getCheckCompatibilityProfiles")
   public void testCheckCompatibility(LuceneIndexCreationProfile myProfile,
       LuceneIndexCreationProfile otherProfile, String expectedResult) {
-    assertEquals(expectedResult, otherProfile.checkCompatibility("/" + REGION_NAME, myProfile));
+    assertEquals(expectedResult,
+        otherProfile.checkCompatibility(SEPARATOR + REGION_NAME, myProfile));
   }
 
   private Object[] getCheckCompatibilityProfiles() {

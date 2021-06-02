@@ -14,8 +14,10 @@
  */
 package org.apache.geode.internal.cache.ha;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.junit.Assert.assertNotNull;
 
 import java.util.Properties;
@@ -34,7 +36,6 @@ import org.apache.geode.cache.Scope;
 import org.apache.geode.cache30.CacheSerializableRunnable;
 import org.apache.geode.cache30.ClientServerTestCase;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.cache.CacheServerImpl;
 import org.apache.geode.test.dunit.Host;
 import org.apache.geode.test.dunit.NetworkUtils;
@@ -123,7 +124,7 @@ public class HABugInPutDUnitTest extends JUnit4DistributedTestCase {
     cache.createRegion(REGION_NAME, attrs);
     CacheServerImpl server = (CacheServerImpl) cache.addCacheServer();
     assertNotNull(server);
-    int port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    int port = getRandomAvailableTCPPort();
     server.setPort(port);
     server.setNotifyBySubscription(false);
     server.start();
@@ -144,7 +145,7 @@ public class HABugInPutDUnitTest extends JUnit4DistributedTestCase {
         -1, 2, null);
     RegionAttributes attrs = factory.create();
     cache.createRegion(REGION_NAME, attrs);
-    Region region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region region = cache.getRegion(SEPARATOR + REGION_NAME);
     assertNotNull(region);
     region.registerInterest(KEY1);
   }
@@ -155,7 +156,7 @@ public class HABugInPutDUnitTest extends JUnit4DistributedTestCase {
 
       @Override
       public void run2() throws CacheException {
-        Region region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+        Region region = cache.getRegion(SEPARATOR + REGION_NAME);
         assertNotNull(region);
         region.put(KEY1, VALUE1);
         cache.getLogger().info("Put done successfully");

@@ -14,8 +14,9 @@
  */
 package org.apache.geode.management.internal.cli;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Matchers.any;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
 
 import java.io.File;
@@ -62,7 +63,7 @@ public class GfshParserConverterTest {
   }
 
   @Test
-  public void testMultiDirInvalid() throws Exception {
+  public void testMultiDirInvalid() {
     String command = "create disk-store --name=testCreateDiskStore1 --group=Group1 "
         + "--allow-force-compaction=true --auto-compact=false --compaction-threshold=67 "
         + "--max-oplog-size=355 --queue-size=5321 --time-interval=2023 --write-buffer-size=3110 "
@@ -72,7 +73,7 @@ public class GfshParserConverterTest {
   }
 
   @Test
-  public void testMultiDirValid() throws Exception {
+  public void testMultiDirValid() {
     String command = "create disk-store --name=testCreateDiskStore1 --group=Group1 "
         + "--allow-force-compaction=true --auto-compact=false --compaction-threshold=67 "
         + "--max-oplog-size=355 --queue-size=5321 --time-interval=2023 --write-buffer-size=3110 "
@@ -84,15 +85,15 @@ public class GfshParserConverterTest {
   }
 
   @Test
-  public void testEmptyKey() throws Exception {
-    String command = "remove  --key=\"\" --region=/GemfireDataCommandsTestRegion";
+  public void testEmptyKey() {
+    String command = "remove  --key=\"\" --region=" + SEPARATOR + "GemfireDataCommandsTestRegion";
     GfshParseResult result = parser.parse(command);
     assertThat(result).isNotNull();
     assertThat(result.getParamValueAsString("key")).isEqualTo("");
   }
 
   @Test
-  public void testJsonKey() throws Exception {
+  public void testJsonKey() {
     String command = "get --key=('id':'testKey0') --region=regionA";
     GfshParseResult result = parser.parse(command);
     assertThat(result).isNotNull();
@@ -102,7 +103,7 @@ public class GfshParserConverterTest {
   public void testUnspecifiedValueToStringArray() {
     String command = "change loglevel --loglevel=finer --groups=group1,group2";
     ParseResult result = parser.parse(command);
-    String[] memberIdValue = (String[]) result.getArguments()[0];
+    String[] memberIdValue = (String[]) result.getArguments()[1];
     assertThat(memberIdValue).isNull();
   }
 
@@ -132,7 +133,7 @@ public class GfshParserConverterTest {
   }
 
   @Test
-  public void testDiskStoreNameConverter() throws Exception {
+  public void testDiskStoreNameConverter() {
     // spy the DiskStoreNameConverter
     DiskStoreNameConverter spy = parser.spyConverter(DiskStoreNameConverter.class);
 
@@ -146,7 +147,7 @@ public class GfshParserConverterTest {
   }
 
   @Test
-  public void testFilePathConverter() throws Exception {
+  public void testFilePathConverter() {
     FilePathStringConverter spy = parser.spyConverter(FilePathStringConverter.class);
     List<String> roots = Arrays.stream("/vol,/logs".split(",")).collect(Collectors.toList());
     List<String> siblings =
@@ -174,15 +175,16 @@ public class GfshParserConverterTest {
 
 
   @Test
-  public void testRegionPathConverter() throws Exception {
+  public void testRegionPathConverter() {
     RegionPathConverter spy = parser.spyConverter(RegionPathConverter.class);
-    Set<String> regions = Arrays.stream("/regionA,/regionB".split(",")).collect(Collectors.toSet());
+    Set<String> regions = Arrays.stream((SEPARATOR + "regionA," + SEPARATOR + "regionB").split(","))
+        .collect(Collectors.toSet());
     doReturn(regions).when(spy).getAllRegionPaths();
 
     String command = "describe region --name=";
     commandCandidate = parser.complete(command);
     assertThat(commandCandidate.size()).isEqualTo(regions.size());
-    assertThat(commandCandidate.getFirstCandidate()).isEqualTo(command + "/regionA");
+    assertThat(commandCandidate.getFirstCandidate()).isEqualTo(command + SEPARATOR + "regionA");
   }
 
   @Test

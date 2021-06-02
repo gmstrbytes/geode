@@ -25,7 +25,7 @@ import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.internal.cache.execute.InternalFunction;
 import org.apache.geode.internal.cache.tier.sockets.CacheClientNotifier;
 import org.apache.geode.internal.cache.tier.sockets.CacheClientProxy;
-import org.apache.geode.management.internal.cli.CliUtil;
+import org.apache.geode.management.internal.cli.CliUtils;
 import org.apache.geode.management.internal.functions.CliFunctionResult;
 import org.apache.geode.management.internal.i18n.CliStrings;
 
@@ -36,28 +36,30 @@ import org.apache.geode.management.internal.i18n.CliStrings;
  *
  * @see org.apache.geode.cache.Cache
  * @see org.apache.geode.cache.execute.Function
- * @see org.apache.geode.cache.execute.FunctionAdapter
  * @see org.apache.geode.cache.execute.FunctionContext
  * @see org.apache.geode.internal.InternalEntity
  * @see org.apache.geode.management.internal.cli.domain.IndexDetails
  * @since GemFire 7.0.1
  */
 @SuppressWarnings("unused")
-public class ListDurableCqNamesFunction implements InternalFunction {
+public class ListDurableCqNamesFunction implements InternalFunction<String> {
   private static final long serialVersionUID = 1L;
+
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.ListDurableCqNamesFunction";
 
   @Override
   public String getId() {
-    return ListDurableCqNamesFunction.class.getName();
+    return ID;
   }
 
   @Override
-  public void execute(final FunctionContext context) {
+  public void execute(final FunctionContext<String> context) {
     final Cache cache = context.getCache();
     final DistributedMember member = cache.getDistributedSystem().getDistributedMember();
-    String memberNameOrId = CliUtil.getMemberNameOrId(member);
+    String memberNameOrId = CliUtils.getMemberNameOrId(member);
 
-    String durableClientId = (String) context.getArguments();
+    String durableClientId = context.getArguments();
 
     context.getResultSender().lastResult(createFunctionResult(memberNameOrId, durableClientId));
   }

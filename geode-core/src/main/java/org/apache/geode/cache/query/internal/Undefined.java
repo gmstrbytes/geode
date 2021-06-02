@@ -23,8 +23,8 @@ import java.io.Serializable;
 import org.apache.geode.cache.query.QueryService;
 import org.apache.geode.internal.serialization.DataSerializableFixedID;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
-import org.apache.geode.internal.serialization.Version;
 
 /**
  * An UNDEFINED value is the result of accessing an attribute of a null-valued attribute. If you
@@ -40,12 +40,11 @@ public class Undefined implements DataSerializableFixedID, Comparable, Serializa
 
   private static final long serialVersionUID = 6643107525908324141L;
 
+  @SuppressWarnings("lgtm[java/useless-null-check]")
+  // The "useless null check" alert is suppressed here as the first time the constructor is called,
+  // QueryService.UNDEFINED is actually null, but subsequent times it is not
   public Undefined() {
     Support.assertState(QueryService.UNDEFINED == null, "UNDEFINED constant already instantiated");
-
-    // org.apache.persistence.CanonicalizationHelper
-    // .putCanonicalObj("com/gemstone/persistence/query/QueryService.UNDEFINED",
-    // this);
   }
 
   @Override
@@ -92,7 +91,7 @@ public class Undefined implements DataSerializableFixedID, Comparable, Serializa
 
 
   @Override
-  public Version[] getSerializationVersions() {
+  public KnownVersion[] getSerializationVersions() {
     return null;
   }
 

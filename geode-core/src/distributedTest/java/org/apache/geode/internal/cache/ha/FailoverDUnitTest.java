@@ -14,9 +14,11 @@
  */
 package org.apache.geode.internal.cache.ha;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.cache.client.PoolManager.find;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.apache.geode.test.dunit.Assert.assertEquals;
 import static org.apache.geode.test.dunit.Assert.assertNotNull;
 import static org.apache.geode.test.dunit.Assert.assertTrue;
@@ -42,7 +44,6 @@ import org.apache.geode.cache.server.CacheServer;
 import org.apache.geode.cache.util.CacheListenerAdapter;
 import org.apache.geode.cache30.ClientServerTestCase;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.cache.ClientServerObserverAdapter;
 import org.apache.geode.internal.cache.ClientServerObserverHolder;
 import org.apache.geode.internal.cache.tier.sockets.CacheServerTestUtil;
@@ -158,7 +159,7 @@ public class FailoverDUnitTest extends JUnit4DistributedTestCase {
     factory.setDataPolicy(DataPolicy.REPLICATE);
     RegionAttributes attrs = factory.create();
     cache.createRegion(regionName, attrs);
-    int port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    int port = getRandomAvailableTCPPort();
     CacheServer server1 = cache.addCacheServer();
     server1.setPort(port);
     server1.setNotifyBySubscription(true);
@@ -193,7 +194,7 @@ public class FailoverDUnitTest extends JUnit4DistributedTestCase {
 
   public static void registerInterestList() {
     try {
-      Region r = cache.getRegion("/" + regionName);
+      Region r = cache.getRegion(SEPARATOR + regionName);
       assertNotNull(r);
       r.registerInterest("key-1");
       r.registerInterest("key-2");
@@ -208,7 +209,7 @@ public class FailoverDUnitTest extends JUnit4DistributedTestCase {
   public static void createEntries() {
     try {
 
-      Region r = cache.getRegion("/" + regionName);
+      Region r = cache.getRegion(SEPARATOR + regionName);
       assertNotNull(r);
 
       r.create("key-1", "key-1");
@@ -235,7 +236,7 @@ public class FailoverDUnitTest extends JUnit4DistributedTestCase {
 
   public static void put() {
     try {
-      Region r = cache.getRegion("/" + regionName);
+      Region r = cache.getRegion(SEPARATOR + regionName);
       assertNotNull(r);
 
       r.put("key-1", "value-1");
@@ -248,7 +249,7 @@ public class FailoverDUnitTest extends JUnit4DistributedTestCase {
   }
 
   public void verifyEntries() {
-    final Region r = cache.getRegion("/" + regionName);
+    final Region r = cache.getRegion(SEPARATOR + regionName);
     assertNotNull(r);
     WaitCriterion ev = new WaitCriterion() {
       @Override
@@ -281,7 +282,7 @@ public class FailoverDUnitTest extends JUnit4DistributedTestCase {
 
   public static void putDuringFailover() {
     try {
-      Region r = cache.getRegion("/" + regionName);
+      Region r = cache.getRegion(SEPARATOR + regionName);
       assertNotNull(r);
       r.put("key-4", "value-4");
       r.put("key-5", "value-5");
@@ -292,7 +293,7 @@ public class FailoverDUnitTest extends JUnit4DistributedTestCase {
   }
 
   public void verifyEntriesAfterFailover() {
-    final Region r = cache.getRegion("/" + regionName);
+    final Region r = cache.getRegion(SEPARATOR + regionName);
     assertNotNull(r);
     WaitCriterion ev = new WaitCriterion() {
       @Override

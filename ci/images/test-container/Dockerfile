@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM buildpack-deps:bionic-scm
+FROM ubuntu:bionic
 ENTRYPOINT []
 
 ARG CHROME_DRIVER_VERSION=2.35
@@ -23,18 +23,25 @@ WORKDIR /tmp/work
 RUN  apt-get update \
   && apt-get install -y --no-install-recommends \
      apt-transport-https \
+     ca-certificates \
      bzip2 \
+     curl \
+     git \
+     gnupg \
      lsb-release \
      lsof \
      net-tools \
+     procps \
+     software-properties-common \
      unzip \
      xz-utils \
   && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
+  && echo "deb [arch=amd64] https://apt.bell-sw.com/ stable main" > /etc/apt/sources.list.d/bellsoft.list \
   && curl -sSL https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
+  && curl -fsSL https://download.bell-sw.com/pki/GPG-KEY-bellsoft | apt-key add - \
   && apt-get update \
   && apt-get install -y --no-install-recommends \
     aptitude \
-    ca-certificates \
     google-chrome-stable \
   && wget --no-verbose -O /tmp/chromedriver_linux64.zip https://chromedriver.storage.googleapis.com/$CHROME_DRIVER_VERSION/chromedriver_linux64.zip \
   && rm -rf /opt/selenium/chromedriver \
@@ -46,8 +53,10 @@ RUN  apt-get update \
   && useradd --shell /bin/bash -u 93043 -o -c "" -m geode \
   && cp -R /etc/alternatives /etc/keep-alternatives \
   && apt-get install -y --no-install-recommends \
-    openjdk-8-jdk \
-    openjdk-11-jdk \
+    java-common \
+    bellsoft-java11 \
+    bellsoft-java8 \
+  && update-java-alternatives -s bellsoft-java8-amd64 \
   && rm -rf /etc/alternatives \
   && mv /etc/keep-alternatives /etc/alternatives \
   && apt-get clean \

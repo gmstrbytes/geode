@@ -14,6 +14,8 @@
  */
 package org.apache.geode.management.internal.cli.functions;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
+
 import org.apache.geode.annotations.Immutable;
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.Region;
@@ -30,13 +32,19 @@ import org.apache.geode.management.internal.functions.CliFunctionResult;
  *
  * @since GemFire 7.0
  */
-public class RegionDestroyFunction implements InternalFunction {
+public class RegionDestroyFunction implements InternalFunction<String> {
   private static final long serialVersionUID = 9172773671865750685L;
 
   @Immutable
   public static final RegionDestroyFunction INSTANCE = new RegionDestroyFunction();
 
-  private static final String ID = RegionDestroyFunction.class.getName();
+  protected static final String ID =
+      "org.apache.geode.management.internal.cli.functions.RegionDestroyFunction";
+
+  @Override
+  public String getId() {
+    return ID;
+  }
 
   @Override
   public boolean hasResult() {
@@ -44,21 +52,20 @@ public class RegionDestroyFunction implements InternalFunction {
   }
 
   @Override
-  public void execute(FunctionContext context) {
-    String regionPath = null;
+  @SuppressWarnings("deprecation")
+  public void execute(FunctionContext<String> context) {
+    String regionPath = context.getArguments();
     String memberName = context.getMemberName();
 
     try {
       String functionId = context.getFunctionId();
-      Object arguments = context.getArguments();
 
-      if (!getId().equals(functionId) || arguments == null) {
+      if (!getId().equals(functionId) || regionPath == null) {
         context.getResultSender().lastResult(new CliFunctionResult("", false,
             "Function Id mismatch or arguments is not available."));
         return;
       }
 
-      regionPath = (String) arguments;
       Cache cache = ((InternalCache) context.getCache()).getCacheForProcessingClientRequests();
       Region<?, ?> region = cache.getRegion(regionPath);
       // the region is already destroyed by another member
@@ -71,7 +78,7 @@ public class RegionDestroyFunction implements InternalFunction {
       region.destroyRegion();
 
       String regionName =
-          regionPath.startsWith(Region.SEPARATOR) ? regionPath.substring(1) : regionPath;
+          regionPath.startsWith(SEPARATOR) ? regionPath.substring(1) : regionPath;
       XmlEntity xmlEntity = new XmlEntity(CacheXml.REGION, "name", regionName);
       context.getResultSender().lastResult(new CliFunctionResult(memberName, xmlEntity,
           String.format("Region '%s' destroyed successfully", regionPath)));
@@ -87,11 +94,6 @@ public class RegionDestroyFunction implements InternalFunction {
       LogService.getLogger().error(ex.getMessage(), ex);
       context.getResultSender().lastResult(new CliFunctionResult(memberName, ex, ex.getMessage()));
     }
-  }
-
-  @Override
-  public String getId() {
-    return ID;
   }
 
   @Override

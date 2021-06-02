@@ -14,6 +14,7 @@
  */
 package org.apache.geode.cache.lucene;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.cache.lucene.test.LuceneTestUtilities.INDEX_NAME;
 import static org.apache.geode.cache.lucene.test.LuceneTestUtilities.REGION_NAME;
 import static org.apache.geode.internal.Assert.fail;
@@ -516,7 +517,7 @@ public class LuceneIndexDestroyDUnitTest extends LuceneDUnitTest {
   @Test
   @Parameters(method = "getListOfRegionTestTypes")
   public void verifyCreateDestroyDefinedIndex(RegionTestableType regionType) {
-    String[] regionNames = {REGION_NAME, "/" + REGION_NAME};
+    String[] regionNames = {REGION_NAME, SEPARATOR + REGION_NAME};
     for (String regionName : regionNames) {
       dataStore1.invoke(createIndex(INDEX_NAME, regionName, "field1"));
       dataStore1.invoke(() -> verifyDefinedIndexCreated(INDEX_NAME, regionName));
@@ -726,7 +727,7 @@ public class LuceneIndexDestroyDUnitTest extends LuceneDUnitTest {
     Region region = getCache().getRegion(REGION_NAME);
     RegionSnapshotService service = region.getSnapshotService();
     service.save(getSnapshotFile(getDiskDirs()[0], regionType),
-        SnapshotOptions.SnapshotFormat.GEMFIRE);
+        SnapshotOptions.SnapshotFormat.GEODE);
   }
 
   private void importData(RegionTestableType regionType, int expectedRegionSize) throws Exception {
@@ -735,7 +736,7 @@ public class LuceneIndexDestroyDUnitTest extends LuceneDUnitTest {
     SnapshotOptions options = service.createOptions();
     options.invokeCallbacks(true);
     service.load(getSnapshotFile(getDiskDirs()[0], regionType),
-        SnapshotOptions.SnapshotFormat.GEMFIRE, options);
+        SnapshotOptions.SnapshotFormat.GEODE, options);
     assertEquals(expectedRegionSize, region.size());
   }
 

@@ -18,6 +18,8 @@ import static java.lang.Boolean.FALSE;
 import static java.lang.ThreadLocal.withInitial;
 import static org.apache.geode.distributed.ConfigurationProperties.SECURITY_PEER_AUTH_INIT;
 import static org.apache.geode.distributed.internal.DistributionConfigImpl.SECURITY_SYSTEM_PREFIX;
+import static org.apache.geode.internal.monitoring.ThreadsMonitoring.Mode.P2PReaderExecutor;
+import static org.apache.geode.internal.net.BufferPool.BufferType.TRACKED_RECEIVER;
 import static org.apache.geode.util.internal.GeodeGlossary.GEMFIRE_PREFIX;
 
 import java.io.DataInput;
@@ -38,7 +40,6 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -70,7 +71,6 @@ import org.apache.geode.distributed.internal.ReplyException;
 import org.apache.geode.distributed.internal.ReplyMessage;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
 import org.apache.geode.distributed.internal.ReplySender;
-import org.apache.geode.distributed.internal.direct.DirectChannel;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.distributed.internal.membership.api.MemberShunnedException;
 import org.apache.geode.distributed.internal.membership.api.Membership;
@@ -79,13 +79,18 @@ import org.apache.geode.internal.DSFIDFactory;
 import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.SystemTimer;
 import org.apache.geode.internal.SystemTimer.SystemTimerTask;
+import org.apache.geode.internal.monitoring.ThreadsMonitoring;
+import org.apache.geode.internal.monitoring.executor.AbstractExecutor;
 import org.apache.geode.internal.net.BufferPool;
+import org.apache.geode.internal.net.ByteBufferSharing;
+import org.apache.geode.internal.net.ByteBufferVendor;
 import org.apache.geode.internal.net.NioFilter;
 import org.apache.geode.internal.net.NioPlainEngine;
 import org.apache.geode.internal.net.SocketCreator;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
+import org.apache.geode.internal.serialization.Versioning;
+import org.apache.geode.internal.serialization.VersioningIO;
 import org.apache.geode.internal.tcp.MsgReader.Header;
-import org.apache.geode.internal.util.concurrent.ReentrantSemaphore;
 import org.apache.geode.logging.internal.executors.LoggingThread;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 
@@ -119,7 +124,7 @@ public class Connection implements Runnable {
    * Small buffer used for send socket buffer on receiver connections and receive buffer on sender
    * connections.
    */
-  static final int SMALL_BUFFER_SIZE =
+  public static final int SMALL_BUFFER_SIZE =
       Integer.getInteger(GEMFIRE_PREFIX + "SMALL_BUFFER_SIZE", 4096);
 
   /**
@@ -157,9 +162,7 @@ public class Connection implements Runnable {
   /**
    * The idle timeout timer task for this connection
    */
-  private SystemTimerTask idleTask;
-
-  private static final ThreadLocal<Boolean> isReaderThread = withInitial(() -> FALSE);
+  private volatile SystemTimerTask idleTask;
 
   /**
    * If true then readers for thread owned sockets will send all messages on thread owned senders.
@@ -190,7 +193,7 @@ public class Connection implements Runnable {
   /**
    * Identifies the version of the member on the other side of the connection.
    */
-  private Version remoteVersion;
+  private KnownVersion remoteVersion;
 
   /**
    * True if this connection was accepted by a listening socket. This makes it a receiver. False if
@@ -255,18 +258,6 @@ public class Connection implements Runnable {
   /** used for async writes */
   private Thread pusherThread;
 
-  /**
-   * The maximum number of concurrent senders sending a message to a single recipient.
-   */
-  private static final int MAX_SENDERS = Integer
-      .getInteger("p2p.maxConnectionSenders", DirectChannel.DEFAULT_CONCURRENCY_LEVEL);
-  /**
-   * This semaphore is used to throttle how many threads will try to do sends on this connection
-   * concurrently. A thread must acquire this semaphore before it is allowed to start serializing
-   * its message.
-   */
-  private final Semaphore senderSem = new ReentrantSemaphore(MAX_SENDERS);
-
   /** Set to true once the handshake has been read */
   private volatile boolean handshakeRead;
   private volatile boolean handshakeCancelled;
@@ -302,7 +293,7 @@ public class Connection implements Runnable {
   /**
    * task for detecting ack timeouts and issuing alerts
    */
-  private SystemTimer.SystemTimerTask ackTimeoutTask;
+  private volatile SystemTimer.SystemTimerTask ackTimeoutTask;
 
   /**
    * millisecond clock at the time message transmission started, if doing forced-disconnect
@@ -325,8 +316,14 @@ public class Connection implements Runnable {
   /** name of thread that we're currently performing an operation in (may be null) */
   private String ackThreadName;
 
-  /** the buffer used for message receipt */
-  private ByteBuffer inputBuffer;
+  /*
+   * This object mediates access to the input ByteBuffer and ensures its return to
+   * pool after last use. This reference couldn't be final since it is initialized
+   * in createIoFilter() not in the constructors. It had to be initialized there
+   * because in general we have to construct an SSLEngine before we know the buffer
+   * size and createIoFilter() is where we create that object.
+   */
+  private ByteBufferVendor inputBufferVendor;
 
   /** the length of the next message to be dispatched */
   private int messageLength;
@@ -356,6 +353,7 @@ public class Connection implements Runnable {
 
   private boolean directAck;
 
+  private boolean asyncMode;
 
   /** is this connection used for serial message delivery? */
   boolean preserveOrder;
@@ -484,6 +482,12 @@ public class Connection implements Runnable {
   private volatile boolean ackTimedOut;
 
   /**
+   * a Reader thread for an shared Connection will remain around in order to
+   * ensure that the socket is properly closed.
+   */
+  private volatile boolean hasResidualReaderThread;
+
+  /**
    * creates a "reader" connection that we accepted (it was initiated by an explicit connect being
    * done on the other side).
    */
@@ -500,6 +504,7 @@ public class Connection implements Runnable {
     handshakeRead = false;
     handshakeCancelled = false;
     connected = true;
+    asyncMode = false;
 
     try {
       socket.setTcpNoDelay(true);
@@ -511,22 +516,12 @@ public class Connection implements Runnable {
     }
   }
 
+  private ThreadsMonitoring getThreadMonitoring() {
+    return conduit.getDM().getThreadMonitoring();
+  }
+
   public boolean isSharedResource() {
     return sharedResource;
-  }
-
-  public static void makeReaderThread() {
-    // mark this thread as a reader thread
-    makeReaderThread(true);
-  }
-
-  private static void makeReaderThread(boolean v) {
-    isReaderThread.set(v);
-  }
-
-  // return true if this thread is a reader thread
-  private static boolean isReaderThread() {
-    return isReaderThread.get();
   }
 
   @VisibleForTesting
@@ -729,7 +724,7 @@ public class Connection implements Runnable {
       bb.putInt(cfg.getAsyncQueueTimeout());
       bb.putInt(cfg.getAsyncMaxQueueSize());
       // write own product version
-      Version.writeOrdinal(bb, Version.CURRENT.ordinal(), true);
+      VersioningIO.writeOrdinal(bb, KnownVersion.CURRENT.ordinal(), true);
       // now set the msg length into position 0
       bb.putInt(0, calcHdrSize(bb.position() - MSG_HEADER_BYTES));
       my_okHandshakeBuf = bb;
@@ -817,13 +812,28 @@ public class Connection implements Runnable {
     }
   }
 
-  private void notifyHandshakeWaiter(boolean success) {
+  @VisibleForTesting
+  void clearSSLInputBuffer() {
     if (getConduit().useSSL() && ioFilter != null) {
-      // clear out any remaining handshake bytes
-      ByteBuffer buffer = ioFilter.getUnwrappedBuffer(inputBuffer);
-      buffer.position(0).limit(0);
+      try (final ByteBufferSharing sharedBuffer = ioFilter.getUnwrappedBuffer()) {
+        // clear out any remaining handshake bytes
+        sharedBuffer.getBuffer().position(0).limit(0);
+      } catch (IOException e) {
+        // means the NioFilter was already closed
+      }
     }
+  }
+
+  @VisibleForTesting
+  void notifyHandshakeWaiter(boolean success) {
     synchronized (handshakeSync) {
+      /*
+       * Return early to avoid modifying ioFilter's buffer more than once.
+       */
+      if (handshakeRead || handshakeCancelled) {
+        return;
+      }
+      clearSSLInputBuffer();
       if (success) {
         handshakeRead = true;
       } else {
@@ -892,27 +902,28 @@ public class Connection implements Runnable {
     waitForAddressCompletion();
 
     InternalDistributedMember myAddr = owner.getConduit().getMemberId();
-    final MsgOutputStream connectHandshake = new MsgOutputStream(CONNECT_HANDSHAKE_SIZE);
-    /*
-     * Note a byte of zero is always written because old products serialized a member id with always
-     * sends an ip address. My reading of the ip-address specs indicated that the first byte of a
-     * valid address would never be 0.
-     */
-    connectHandshake.writeByte(0);
-    connectHandshake.writeByte(HANDSHAKE_VERSION);
-    // NOTE: if you add or remove code in this section bump HANDSHAKE_VERSION
-    InternalDataSerializer.invokeToData(myAddr, connectHandshake);
-    connectHandshake.writeBoolean(sharedResource);
-    connectHandshake.writeBoolean(preserveOrder);
-    connectHandshake.writeLong(uniqueId);
-    // write the product version ordinal
-    Version.CURRENT.writeOrdinal(connectHandshake, true);
-    connectHandshake.writeInt(dominoCount.get() + 1);
-    // this writes the sending member + thread name that is stored in senderName
-    // on the receiver to show the cause of reader thread creation
-    connectHandshake.setMessageHeader(NORMAL_MSG_TYPE, OperationExecutors.STANDARD_EXECUTOR,
-        MsgIdGenerator.NO_MSG_ID);
-    writeFully(getSocket().getChannel(), connectHandshake.getContentBuffer(), false, null);
+    try (final MsgOutputStream connectHandshake = new MsgOutputStream(CONNECT_HANDSHAKE_SIZE)) {
+      /*
+       * Note a byte of zero is always written because old products serialized a member id with
+       * always sends an ip address. My reading of the ip-address specs indicated that the first
+       * byte of a valid address would never be 0.
+       */
+      connectHandshake.writeByte(0);
+      connectHandshake.writeByte(HANDSHAKE_VERSION);
+      // NOTE: if you add or remove code in this section bump HANDSHAKE_VERSION
+      InternalDataSerializer.invokeToData(myAddr, connectHandshake);
+      connectHandshake.writeBoolean(sharedResource);
+      connectHandshake.writeBoolean(preserveOrder);
+      connectHandshake.writeLong(uniqueId);
+      // write the product version ordinal
+      VersioningIO.writeOrdinal(connectHandshake, KnownVersion.CURRENT.ordinal(), true);
+      connectHandshake.writeInt(dominoCount.get() + 1);
+      // this writes the sending member + thread name that is stored in senderName
+      // on the receiver to show the cause of reader thread creation
+      connectHandshake.setMessageHeader(NORMAL_MSG_TYPE, OperationExecutors.STANDARD_EXECUTOR,
+          MsgIdGenerator.NO_MSG_ID);
+      writeFully(getSocket().getChannel(), connectHandshake.getContentBuffer(), false, null);
+    }
   }
 
   /**
@@ -1152,6 +1163,7 @@ public class Connection implements Runnable {
     handshakeRead = false;
     handshakeCancelled = false;
     connected = true;
+    asyncMode = false;
 
     uniqueId = ID_COUNTER.getAndIncrement();
 
@@ -1280,7 +1292,7 @@ public class Connection implements Runnable {
    * Invoking this method ensures that the proper synchronization is done.
    */
   void requestClose(String reason) {
-    close(reason, true, true, false, false);
+    close(reason, true, false, false, false);
   }
 
   boolean isClosing() {
@@ -1336,7 +1348,6 @@ public class Connection implements Runnable {
             }
           }
           connected = false;
-          closeSenderSem();
 
           final DMStats stats = owner.getConduit().getStats();
           if (finishedConnecting) {
@@ -1352,10 +1363,10 @@ public class Connection implements Runnable {
         }
         // make sure our socket is closed
         asyncClose(false);
-        if (!isReceiver) {
+        if (!isReceiver && !hasResidualReaderThread()) {
           // receivers release the input buffer when exiting run(). Senders use the
           // inputBuffer for reading direct-reply responses
-          releaseInputBuffer();
+          inputBufferVendor.destruct();
         }
         lengthSet = false;
       }
@@ -1437,11 +1448,15 @@ public class Connection implements Runnable {
     // This cancels the idle timer task, but it also removes the tasks reference to this connection,
     // freeing up the connection (and it's buffers for GC sooner.
     if (idleTask != null) {
-      idleTask.cancel();
+      synchronized (idleTask) {
+        idleTask.cancel();
+      }
     }
 
     if (ackTimeoutTask != null) {
-      ackTimeoutTask.cancel();
+      synchronized (ackTimeoutTask) {
+        ackTimeoutTask.cancel();
+      }
     }
   }
 
@@ -1467,7 +1482,7 @@ public class Connection implements Runnable {
     readerThread = Thread.currentThread();
     readerThread.setName(p2pReaderName());
     ConnectionTable.threadWantsSharedResources();
-    makeReaderThread(isReceiver);
+
     try {
       readMessages();
     } finally {
@@ -1486,8 +1501,13 @@ public class Connection implements Runnable {
         }
         asyncClose(false);
         owner.removeAndCloseThreadOwnedSockets();
+      } else {
+        if (sharedResource && !asyncMode) {
+          asyncClose(false);
+        }
       }
-      releaseInputBuffer();
+
+      inputBufferVendor.destruct();
 
       // make sure that if the reader thread exits we notify a thread waiting for the handshake.
       notifyHandshakeWaiter(false);
@@ -1496,14 +1516,6 @@ public class Connection implements Runnable {
         isRunning = false;
         readerThread = null;
       }
-    }
-  }
-
-  private void releaseInputBuffer() {
-    ByteBuffer tmp = inputBuffer;
-    if (tmp != null) {
-      inputBuffer = null;
-      getBufferPool().releaseReceiveBuffer(tmp);
     }
   }
 
@@ -1570,11 +1582,15 @@ public class Connection implements Runnable {
         logger.debug("Starting {} on {}", p2pReaderName(), socket);
       }
     }
+
     // we should not change the state of the connection if we are a handshake reader thread
     // as there is a race between this thread and the application thread doing direct ack
-    boolean isHandShakeReader = false;
-    // if we're using SSL/TLS the input buffer may already have data to process
-    boolean skipInitialRead = getInputBuffer().position() > 0;
+    boolean handshakeHasBeenRead = false;
+    final ThreadsMonitoring threadMonitoring = getThreadMonitoring();
+    final AbstractExecutor threadMonitorExecutor =
+        threadMonitoring.createAbstractExecutor(P2PReaderExecutor);
+    threadMonitorExecutor.suspendMonitoring();
+    threadMonitoring.register(threadMonitorExecutor);
     try {
       for (boolean isInitialRead = true;;) {
         if (stopped) {
@@ -1594,8 +1610,9 @@ public class Connection implements Runnable {
           break;
         }
 
-        try {
-          ByteBuffer buff = getInputBuffer();
+        try (final ByteBufferSharing inputSharing = inputBufferVendor.open()) {
+          ByteBuffer buff = inputSharing.getBuffer();
+
           synchronized (stateLock) {
             connectionState = STATE_READING;
           }
@@ -1604,6 +1621,8 @@ public class Connection implements Runnable {
             amountRead = channel.read(buff);
           } else {
             isInitialRead = false;
+            // if we're using SSL/TLS the input buffer may already have data to process
+            final boolean skipInitialRead = buff.position() > 0;
             if (!skipInitialRead) {
               amountRead = channel.read(buff);
             } else {
@@ -1625,10 +1644,9 @@ public class Connection implements Runnable {
             }
             return;
           }
+          processInputBuffer(threadMonitorExecutor);
 
-          processInputBuffer();
-
-          if (!isReceiver && (handshakeRead || handshakeCancelled)) {
+          if (!handshakeHasBeenRead && !isReceiver && (handshakeRead || handshakeCancelled)) {
             if (logger.isDebugEnabled()) {
               if (handshakeRead) {
                 logger.debug("handshake has been read {}", this);
@@ -1636,9 +1654,18 @@ public class Connection implements Runnable {
                 logger.debug("handshake has been cancelled {}", this);
               }
             }
-            isHandShakeReader = true;
-            // Once we have read the handshake the reader can go away
-            break;
+            handshakeHasBeenRead = true;
+
+            // Once we have read the handshake for unshared connections, the reader can skip
+            // processing messages
+            if (!sharedResource || asyncMode) {
+              break;
+            } else {
+              // not exiting and not a Reader spawned from a ServerSocket.accept(), so
+              // let's set some state noting that this is happening
+              hasResidualReaderThread = true;
+            }
+
           }
         } catch (CancelException e) {
           if (logger.isDebugEnabled()) {
@@ -1660,11 +1687,11 @@ public class Connection implements Runnable {
         } catch (IOException e) {
           // "Socket closed" check needed for Solaris jdk 1.4.2_08
           if (!isSocketClosed() && !"Socket closed".equalsIgnoreCase(e.getMessage())) {
-            if (logger.isDebugEnabled() && !isIgnorableIOException(e)) {
-              logger.debug("{} io exception for {}", p2pReaderName(), this, e);
+            if (logger.isInfoEnabled() && !isIgnorableIOException(e)) {
+              logger.info("{} io exception for {}", p2pReaderName(), this, e);
             }
-            if (e.getMessage().contains("interrupted by a call to WSACancelBlockingCall")) {
-              if (logger.isDebugEnabled()) {
+            if (logger.isDebugEnabled()) {
+              if (e.getMessage().contains("interrupted by a call to WSACancelBlockingCall")) {
                 logger.debug(
                     "{} received unexpected WSACancelBlockingCall exception, which may result in a hang",
                     p2pReaderName());
@@ -1679,7 +1706,7 @@ public class Connection implements Runnable {
           return;
 
         } catch (Exception e) {
-          owner.getConduit().getCancelCriterion().checkCancelInProgress(null);
+          owner.getConduit().getCancelCriterion().checkCancelInProgress(e);
           if (!stopped && !isSocketClosed()) {
             logger.fatal(String.format("%s exception in channel read", p2pReaderName()), e);
           }
@@ -1692,14 +1719,16 @@ public class Connection implements Runnable {
         }
       }
     } finally {
-      if (!isHandShakeReader) {
+      threadMonitoring.unregister(threadMonitorExecutor);
+      hasResidualReaderThread = false;
+      if (!handshakeHasBeenRead || (sharedResource && !asyncMode)) {
         synchronized (stateLock) {
           connectionState = STATE_IDLE;
         }
       }
       if (logger.isDebugEnabled()) {
         logger.debug("readMessages terminated id={} from {} isHandshakeReader={}", conduitIdStr,
-            remoteAddr, isHandShakeReader);
+            remoteAddr, handshakeHasBeenRead);
       }
     }
   }
@@ -1707,27 +1736,55 @@ public class Connection implements Runnable {
   private void createIoFilter(SocketChannel channel, boolean clientSocket) throws IOException {
     if (getConduit().useSSL() && channel != null) {
       InetSocketAddress address = (InetSocketAddress) channel.getRemoteAddress();
-      SSLEngine engine =
-          getConduit().getSocketCreator().createSSLEngine(address.getHostName(), address.getPort());
-
-      int packetBufferSize = engine.getSession().getPacketBufferSize();
-      if (inputBuffer == null || inputBuffer.capacity() < packetBufferSize) {
-        // TLS has a minimum input buffer size constraint
-        if (inputBuffer != null) {
-          getBufferPool().releaseReceiveBuffer(inputBuffer);
-        }
-        inputBuffer = getBufferPool().acquireDirectReceiveBuffer(packetBufferSize);
+      String hostName;
+      if (remoteAddr != null) {
+        hostName = remoteAddr.getHostName();
+      } else {
+        hostName = SocketCreator.getHostName(address.getAddress());
       }
+      SSLEngine engine =
+          getConduit().getSocketCreator().createSSLEngine(hostName,
+              address.getPort(), clientSocket);
+
+      final int packetBufferSize = engine.getSession().getPacketBufferSize();
+
+      inputBufferVendor =
+          new ByteBufferVendor(
+              getBufferPool().acquireDirectReceiveBuffer(packetBufferSize),
+              TRACKED_RECEIVER,
+              getBufferPool());
+
       if (channel.socket().getReceiveBufferSize() < packetBufferSize) {
         channel.socket().setReceiveBufferSize(packetBufferSize);
       }
       if (channel.socket().getSendBufferSize() < packetBufferSize) {
         channel.socket().setSendBufferSize(packetBufferSize);
       }
-      ioFilter = getConduit().getSocketCreator().handshakeSSLSocketChannel(channel, engine,
-          getConduit().idleConnectionTimeout, clientSocket, inputBuffer,
-          getBufferPool());
+      try (final ByteBufferSharing inputSharing = inputBufferVendor.open()) {
+        final ByteBuffer inputBuffer = inputSharing.getBuffer();
+        /*
+         * It's ok to share the inputBuffer with handshakeSSLSocketChannel() since that method
+         * accesses the referenced buffer for the handshake which completes before returning
+         * control here. The NioSslEngine retains no reference to the buffer.
+         */
+        ioFilter = getConduit().getSocketCreator().handshakeSSLSocketChannel(channel, engine,
+            getConduit().idleConnectionTimeout, inputBuffer,
+            getBufferPool());
+      }
     } else {
+      final int allocSize;
+      if (recvBufferSize == -1) {
+        allocSize = owner.getConduit().tcpBufferSize;
+      } else {
+        allocSize = recvBufferSize;
+      }
+
+      inputBufferVendor =
+          new ByteBufferVendor(
+              getBufferPool().acquireDirectReceiveBuffer(allocSize),
+              TRACKED_RECEIVER,
+              getBufferPool());
+
       ioFilter = new NioPlainEngine(getBufferPool());
     }
   }
@@ -1759,9 +1816,13 @@ public class Connection implements Runnable {
     }
 
     msg = msg.toLowerCase();
-    return msg.contains("forcibly closed")
-        || msg.contains("reset by peer")
-        || msg.contains("connection reset");
+
+    if (e instanceof SSLException && msg.contains("status = closed")) {
+      return true; // engine has been closed - this is normal
+    }
+
+    return (msg.contains("forcibly closed") || msg.contains("reset by peer")
+        || msg.contains("connection reset") || msg.contains("socket is closed"));
   }
 
   private static boolean validMsgType(int msgType) {
@@ -1786,7 +1847,7 @@ public class Connection implements Runnable {
     }
   }
 
-  private MsgDestreamer obtainMsgDestreamer(short msgId, final Version v) {
+  private MsgDestreamer obtainMsgDestreamer(short msgId, final KnownVersion v) {
     synchronized (destreamerLock) {
       if (destreamerMap == null) {
         destreamerMap = new HashMap();
@@ -1920,7 +1981,13 @@ public class Connection implements Runnable {
       ackTimeoutTask = new SystemTimer.SystemTimerTask() {
         @Override
         public void run2() {
+          if (isSocketClosed()) {
+            // Connection is closing - nothing to do anymore
+            cancel();
+            return;
+          }
           if (owner.isClosed()) {
+            cancel();
             return;
           }
           byte connState;
@@ -1965,10 +2032,14 @@ public class Connection implements Runnable {
       synchronized (owner) {
         SystemTimer timer = owner.getIdleConnTimer();
         if (timer != null) {
-          if (msSA > 0) {
-            timer.scheduleAtFixedRate(ackTimeoutTask, msAW, Math.min(msAW, msSA));
-          } else {
-            timer.schedule(ackTimeoutTask, msAW);
+          synchronized (ackTimeoutTask) {
+            if (!ackTimeoutTask.isCancelled()) {
+              if (msSA > 0) {
+                timer.scheduleAtFixedRate(ackTimeoutTask, msAW, Math.min(msAW, msSA));
+              } else {
+                timer.schedule(ackTimeoutTask, msAW);
+              }
+            }
           }
         }
       }
@@ -2419,115 +2490,118 @@ public class Connection implements Runnable {
         long queueTimeoutTarget = now + asyncQueueTimeout;
         channel.configureBlocking(false);
         try {
-          ByteBuffer wrappedBuffer = ioFilter.wrap(buffer);
-          int waitTime = 1;
-          do {
-            owner.getConduit().getCancelCriterion().checkCancelInProgress(null);
-            retries++;
-            int amtWritten;
-            if (FORCE_ASYNC_QUEUE) {
-              amtWritten = 0;
-            } else {
-              amtWritten = channel.write(wrappedBuffer);
-            }
-            if (amtWritten == 0) {
-              now = System.currentTimeMillis();
-              long timeoutTarget;
-              if (!forceAsync) {
-                if (now > distributionTimeoutTarget) {
-                  if (logger.isDebugEnabled()) {
-                    if (distributionTimeoutTarget == 0) {
-                      logger.debug(
-                          "Starting async pusher to handle async queue because distribution-timeout is 1 and the last socket write would have blocked.");
-                    } else {
-                      long blockedMs = now - distributionTimeoutTarget;
-                      blockedMs += asyncDistributionTimeout;
-                      logger.debug(
-                          "Blocked for {}ms which is longer than the max of {}ms so starting async pusher to handle async queue.",
-                          blockedMs, asyncDistributionTimeout);
+          try (final ByteBufferSharing outputSharing = ioFilter.wrap(buffer)) {
+            final ByteBuffer wrappedBuffer = outputSharing.getBuffer();
+
+            int waitTime = 1;
+            do {
+              owner.getConduit().getCancelCriterion().checkCancelInProgress(null);
+              retries++;
+              int amtWritten;
+              if (FORCE_ASYNC_QUEUE) {
+                amtWritten = 0;
+              } else {
+                amtWritten = channel.write(wrappedBuffer);
+              }
+              if (amtWritten == 0) {
+                now = System.currentTimeMillis();
+                long timeoutTarget;
+                if (!forceAsync) {
+                  if (now > distributionTimeoutTarget) {
+                    if (logger.isDebugEnabled()) {
+                      if (distributionTimeoutTarget == 0) {
+                        logger.debug(
+                            "Starting async pusher to handle async queue because distribution-timeout is 1 and the last socket write would have blocked.");
+                      } else {
+                        long blockedMs = now - distributionTimeoutTarget;
+                        blockedMs += asyncDistributionTimeout;
+                        logger.debug(
+                            "Blocked for {}ms which is longer than the max of {}ms so starting async pusher to handle async queue.",
+                            blockedMs, asyncDistributionTimeout);
+                      }
+                    }
+                    stats.incAsyncDistributionTimeoutExceeded();
+                    if (totalAmtWritten > 0) {
+                      // we have written part of the msg to the socket buffer
+                      // and we are going to queue the remainder.
+                      // We set msg to null so that will not make
+                      // the partial msg a candidate for conflation.
+                      msg = null;
+                    }
+                    if (handleBlockedWrite(wrappedBuffer, msg)) {
+                      return;
                     }
                   }
-                  stats.incAsyncDistributionTimeoutExceeded();
-                  if (totalAmtWritten > 0) {
-                    // we have written part of the msg to the socket buffer
-                    // and we are going to queue the remainder.
-                    // We set msg to null so that will not make
-                    // the partial msg a candidate for conflation.
-                    msg = null;
+                  timeoutTarget = distributionTimeoutTarget;
+                } else {
+                  boolean disconnectNeeded = false;
+                  long curQueuedBytes = queuedBytes;
+                  if (curQueuedBytes > asyncMaxQueueSize) {
+                    logger.warn(
+                        "Queued bytes {} exceeds max of {}, asking slow receiver {} to disconnect.",
+                        curQueuedBytes, asyncMaxQueueSize, remoteAddr);
+                    stats.incAsyncQueueSizeExceeded(1);
+                    disconnectNeeded = true;
                   }
-                  if (handleBlockedWrite(wrappedBuffer, msg)) {
+                  if (now > queueTimeoutTarget) {
+                    // we have waited long enough the pusher has been idle too long!
+                    long blockedMs = now - queueTimeoutTarget;
+                    blockedMs += asyncQueueTimeout;
+                    logger.warn(
+                        "Blocked for {}ms which is longer than the max of {}ms, asking slow receiver {} to disconnect.",
+                        blockedMs,
+                        asyncQueueTimeout, remoteAddr);
+                    stats.incAsyncQueueTimeouts(1);
+                    disconnectNeeded = true;
+                  }
+                  if (disconnectNeeded) {
+                    disconnectSlowReceiver();
+                    synchronized (outgoingQueue) {
+                      asyncQueuingInProgress = false;
+                      outgoingQueue.notifyAll();
+                    }
                     return;
                   }
+                  timeoutTarget = queueTimeoutTarget;
                 }
-                timeoutTarget = distributionTimeoutTarget;
-              } else {
-                boolean disconnectNeeded = false;
-                long curQueuedBytes = queuedBytes;
-                if (curQueuedBytes > asyncMaxQueueSize) {
-                  logger.warn(
-                      "Queued bytes {} exceeds max of {}, asking slow receiver {} to disconnect.",
-                      curQueuedBytes, asyncMaxQueueSize, remoteAddr);
-                  stats.incAsyncQueueSizeExceeded(1);
-                  disconnectNeeded = true;
-                }
-                if (now > queueTimeoutTarget) {
-                  // we have waited long enough the pusher has been idle too long!
-                  long blockedMs = now - queueTimeoutTarget;
-                  blockedMs += asyncQueueTimeout;
-                  logger.warn(
-                      "Blocked for {}ms which is longer than the max of {}ms, asking slow receiver {} to disconnect.",
-                      blockedMs,
-                      asyncQueueTimeout, remoteAddr);
-                  stats.incAsyncQueueTimeouts(1);
-                  disconnectNeeded = true;
-                }
-                if (disconnectNeeded) {
-                  disconnectSlowReceiver();
-                  synchronized (outgoingQueue) {
-                    asyncQueuingInProgress = false;
-                    outgoingQueue.notifyAll();
+                {
+                  long msToWait = waitTime;
+                  long msRemaining = timeoutTarget - now;
+                  if (msRemaining > 0) {
+                    msRemaining /= 2;
                   }
-                  return;
-                }
-                timeoutTarget = queueTimeoutTarget;
-              }
-              {
-                long msToWait = waitTime;
-                long msRemaining = timeoutTarget - now;
-                if (msRemaining > 0) {
-                  msRemaining /= 2;
-                }
-                if (msRemaining < msToWait) {
-                  msToWait = msRemaining;
-                }
-                if (msToWait <= 0) {
-                  Thread.yield();
-                } else {
-                  boolean interrupted = Thread.interrupted();
-                  try {
-                    Thread.sleep(msToWait);
-                  } catch (InterruptedException ex) {
-                    interrupted = true;
-                    owner.getConduit().getCancelCriterion().checkCancelInProgress(ex);
-                  } finally {
-                    if (interrupted) {
-                      Thread.currentThread().interrupt();
+                  if (msRemaining < msToWait) {
+                    msToWait = msRemaining;
+                  }
+                  if (msToWait <= 0) {
+                    Thread.yield();
+                  } else {
+                    boolean interrupted = Thread.interrupted();
+                    try {
+                      Thread.sleep(msToWait);
+                    } catch (InterruptedException ex) {
+                      interrupted = true;
+                      owner.getConduit().getCancelCriterion().checkCancelInProgress(ex);
+                    } finally {
+                      if (interrupted) {
+                        Thread.currentThread().interrupt();
+                      }
                     }
                   }
                 }
+                if (waitTime < MAX_WAIT_TIME) {
+                  // double it since it is not yet the max
+                  waitTime <<= 1;
+                }
+              } // amtWritten == 0
+              else {
+                totalAmtWritten += amtWritten;
+                // reset queueTimeoutTarget since we made some progress
+                queueTimeoutTarget = System.currentTimeMillis() + asyncQueueTimeout;
+                waitTime = 1;
               }
-              if (waitTime < MAX_WAIT_TIME) {
-                // double it since it is not yet the max
-                waitTime <<= 1;
-              }
-            } // amtWritten == 0
-            else {
-              totalAmtWritten += amtWritten;
-              // reset queueTimeoutTarget since we made some progress
-              queueTimeoutTarget = System.currentTimeMillis() + asyncQueueTimeout;
-              waitTime = 1;
-            }
-          } while (wrappedBuffer.remaining() > 0);
+            } while (wrappedBuffer.remaining() > 0);
+          }
         } finally {
           channel.configureBlocking(true);
         }
@@ -2571,35 +2645,24 @@ public class Connection implements Runnable {
           }
           // fall through
         }
-        ByteBuffer wrappedBuffer = ioFilter.wrap(buffer);
-        while (wrappedBuffer.remaining() > 0) {
-          int amtWritten = 0;
-          long start = stats.startSocketWrite(true);
-          try {
-            amtWritten = channel.write(wrappedBuffer);
-          } finally {
-            stats.endSocketWrite(true, start, amtWritten, 0);
-          }
-        }
+        try (final ByteBufferSharing outputSharing = ioFilter.wrap(buffer)) {
+          final ByteBuffer wrappedBuffer = outputSharing.getBuffer();
 
+          while (wrappedBuffer.remaining() > 0) {
+            int amtWritten = 0;
+            long start = stats.startSocketWrite(true);
+            try {
+              amtWritten = channel.write(wrappedBuffer);
+            } finally {
+              stats.endSocketWrite(true, start, amtWritten, 0);
+            }
+          }
+
+        }
       }
     } else {
       writeAsync(channel, buffer, forceAsync, msg, stats);
     }
-  }
-
-  /**
-   * gets the buffer for receiving message length bytes
-   */
-  private ByteBuffer getInputBuffer() {
-    if (inputBuffer == null) {
-      int allocSize = recvBufferSize;
-      if (allocSize == -1) {
-        allocSize = owner.getConduit().tcpBufferSize;
-      }
-      inputBuffer = getBufferPool().acquireDirectReceiveBuffer(allocSize);
-    }
-    return inputBuffer;
   }
 
   /**
@@ -2619,27 +2682,31 @@ public class Connection implements Runnable {
     socketInUse = true;
     MsgReader msgReader = null;
     DMStats stats = owner.getConduit().getStats();
-    final Version version = getRemoteVersion();
+    final KnownVersion version = getRemoteVersion();
     try {
       msgReader = new MsgReader(this, ioFilter, version);
 
-      Header header = msgReader.readHeader();
-
       ReplyMessage msg;
       int len;
-      if (header.getMessageType() == NORMAL_MSG_TYPE) {
-        msg = (ReplyMessage) msgReader.readMessage(header);
-        len = header.getMessageLength();
-      } else {
-        MsgDestreamer destreamer = obtainMsgDestreamer(header.getMessageId(), version);
-        while (header.getMessageType() == CHUNKED_MSG_TYPE) {
+
+      // (we have to lock here to protect between reading header and message body)
+      try (final ByteBufferSharing _unused = ioFilter.getUnwrappedBuffer()) {
+        Header header = msgReader.readHeader();
+
+        if (header.getMessageType() == NORMAL_MSG_TYPE) {
+          msg = (ReplyMessage) msgReader.readMessage(header);
+          len = header.getMessageLength();
+        } else {
+          MsgDestreamer destreamer = obtainMsgDestreamer(header.getMessageId(), version);
+          while (header.getMessageType() == CHUNKED_MSG_TYPE) {
+            msgReader.readChunk(header, destreamer);
+            header = msgReader.readHeader();
+          }
           msgReader.readChunk(header, destreamer);
-          header = msgReader.readHeader();
+          msg = (ReplyMessage) destreamer.getMessage();
+          releaseMsgDestreamer(header.getMessageId(), destreamer);
+          len = destreamer.size();
         }
-        msgReader.readChunk(header, destreamer);
-        msg = (ReplyMessage) destreamer.getMessage();
-        releaseMsgDestreamer(header.getMessageId(), destreamer);
-        len = destreamer.size();
       }
       // I'd really just like to call dispatchMessage here. However,
       // that call goes through a bunch of checks that knock about
@@ -2704,71 +2771,96 @@ public class Connection implements Runnable {
    * processes the current NIO buffer. If there are complete messages in the buffer, they are
    * deserialized and passed to TCPConduit for further processing
    */
-  private void processInputBuffer() throws ConnectionException, IOException {
-    inputBuffer.flip();
+  private void processInputBuffer(AbstractExecutor threadMonitorExecutor)
+      throws ConnectionException, IOException {
+    try (final ByteBufferSharing inputSharing = inputBufferVendor.open()) {
+      // can't be final because in some cases we expand the buffer (resulting in a new object)
+      ByteBuffer inputBuffer = inputSharing.getBuffer();
+      inputBuffer.flip();
 
-    ByteBuffer peerDataBuffer = ioFilter.unwrap(inputBuffer);
-    peerDataBuffer.flip();
+      try (final ByteBufferSharing sharedBuffer = ioFilter.unwrap(inputBuffer)) {
+        final ByteBuffer peerDataBuffer = sharedBuffer.getBuffer();
 
-    boolean done = false;
+        peerDataBuffer.flip();
 
-    while (!done && connected) {
-      owner.getConduit().getCancelCriterion().checkCancelInProgress(null);
-      int remaining = peerDataBuffer.remaining();
-      if (lengthSet || remaining >= MSG_HEADER_BYTES) {
-        if (!lengthSet) {
-          if (readMessageHeader(peerDataBuffer)) {
-            break;
-          }
-        }
-        if (remaining >= messageLength + MSG_HEADER_BYTES) {
-          lengthSet = false;
-          peerDataBuffer.position(peerDataBuffer.position() + MSG_HEADER_BYTES);
-          // don't trust the message deserialization to leave the position in
-          // the correct spot. Some of the serialization uses buffered
-          // streams that can leave the position at the wrong spot
-          int startPos = peerDataBuffer.position();
-          int oldLimit = peerDataBuffer.limit();
-          peerDataBuffer.limit(startPos + messageLength);
+        boolean done = false;
 
-          if (handshakeRead) {
-            try {
-              readMessage(peerDataBuffer);
-            } catch (SerializationException e) {
-              logger.info("input buffer startPos {} oldLimit {}", startPos, oldLimit);
-              throw e;
+        while (!done && connected) {
+          owner.getConduit().getCancelCriterion().checkCancelInProgress(null);
+          int remaining = peerDataBuffer.remaining();
+          if (lengthSet || remaining >= MSG_HEADER_BYTES) {
+            if (!lengthSet) {
+              if (readMessageHeader(peerDataBuffer)) {
+                break;
+              }
+            }
+            if (remaining >= messageLength + MSG_HEADER_BYTES) {
+              lengthSet = false;
+              peerDataBuffer.position(peerDataBuffer.position() + MSG_HEADER_BYTES);
+              // don't trust the message deserialization to leave the position in
+              // the correct spot. Some of the serialization uses buffered
+              // streams that can leave the position at the wrong spot
+              int startPos = peerDataBuffer.position();
+              int oldLimit = peerDataBuffer.limit();
+              peerDataBuffer.limit(startPos + messageLength);
+
+              if (handshakeRead) {
+                try {
+                  readMessage(peerDataBuffer, threadMonitorExecutor);
+                } catch (SerializationException e) {
+                  logger.info("input buffer startPos {} oldLimit {}", startPos, oldLimit);
+                  throw e;
+                }
+              } else {
+                try (ByteBufferInputStream bbis = new ByteBufferInputStream(peerDataBuffer);
+                    DataInputStream dis = new DataInputStream(bbis)) {
+                  if (!isReceiver) {
+                    // we read the handshake and then stop processing since we don't want
+                    // to process the input buffer anymore in a handshake thread
+                    readHandshakeForSender(dis, peerDataBuffer);
+                    return;
+                  }
+                  if (readHandshakeForReceiver(dis)) {
+                    ioFilter.doneReading(peerDataBuffer);
+                    return;
+                  }
+                }
+              }
+              if (!connected) {
+                continue;
+              }
+              accessed();
+              peerDataBuffer.limit(oldLimit);
+              peerDataBuffer.position(startPos + messageLength);
+            } else {
+              done = true;
+              if (getConduit().useSSL()) {
+                ioFilter.doneReading(peerDataBuffer);
+              } else {
+                // compact or resize the buffer
+                final int oldBufferSize = inputBuffer.capacity();
+                final int allocSize = messageLength + MSG_HEADER_BYTES;
+                if (oldBufferSize < allocSize) {
+                  // need a bigger buffer
+                  logger.info(
+                      "Allocating larger network read buffer, new size is {} old size was {}.",
+                      allocSize, oldBufferSize);
+                  inputBuffer = inputSharing.expandReadBufferIfNeeded(allocSize);
+                } else {
+                  if (inputBuffer.position() != 0) {
+                    inputBuffer.compact();
+                  } else {
+                    inputBuffer.position(inputBuffer.limit());
+                    inputBuffer.limit(inputBuffer.capacity());
+                  }
+                }
+              }
             }
           } else {
-            ByteBufferInputStream bbis = new ByteBufferInputStream(peerDataBuffer);
-            DataInputStream dis = new DataInputStream(bbis);
-            if (!isReceiver) {
-              // we read the handshake and then stop processing since we don't want
-              // to process the input buffer anymore in a handshake thread
-              readHandshakeForSender(dis, peerDataBuffer);
-              return;
-            }
-            if (readHandshakeForReceiver(dis)) {
-              ioFilter.doneReading(peerDataBuffer);
-              return;
-            }
-          }
-          if (!connected) {
-            continue;
-          }
-          accessed();
-          peerDataBuffer.limit(oldLimit);
-          peerDataBuffer.position(startPos + messageLength);
-        } else {
-          done = true;
-          if (getConduit().useSSL()) {
             ioFilter.doneReading(peerDataBuffer);
-          } else {
-            compactOrResizeBuffer(messageLength);
+            done = true;
           }
         }
-      } else {
-        ioFilter.doneReading(peerDataBuffer);
-        done = true;
       }
     }
   }
@@ -2795,10 +2887,12 @@ public class Connection implements Runnable {
       uniqueId = dis.readLong();
       // read the product version ordinal for on-the-fly serialization
       // transformations (for rolling upgrades)
-      remoteVersion = Version.readVersion(dis, true);
+      remoteVersion = Versioning.getKnownVersionOrDefault(
+          Versioning.getVersion(VersioningIO.readOrdinal(dis)),
+          null);
       int dominoNumber = 0;
       if (remoteVersion == null
-          || remoteVersion.compareTo(Version.GFE_80) >= 0) {
+          || remoteVersion.isNotOlderThan(KnownVersion.GFE_80)) {
         dominoNumber = dis.readInt();
         if (sharedResource) {
           dominoNumber = 0;
@@ -2899,13 +2993,12 @@ public class Connection implements Runnable {
     return false;
   }
 
-  private void readMessage(ByteBuffer peerDataBuffer) {
+  private void readMessage(ByteBuffer peerDataBuffer, AbstractExecutor threadMonitorExecutor) {
     if (messageType == NORMAL_MSG_TYPE) {
       owner.getConduit().getStats().incMessagesBeingReceived(true, messageLength);
-      ByteBufferInputStream bbis =
+      try (ByteBufferInputStream bbis =
           remoteVersion == null ? new ByteBufferInputStream(peerDataBuffer)
-              : new VersionedByteBufferInputStream(peerDataBuffer, remoteVersion);
-      try {
+              : new VersionedByteBufferInputStream(peerDataBuffer, remoteVersion)) {
         ReplyProcessor21.initMessageRPId();
         // add serialization stats
         long startSer = owner.getConduit().getStats().startMsgDeserialization();
@@ -2926,7 +3019,7 @@ public class Connection implements Runnable {
               bbis.available());
         }
         try {
-          if (!dispatchMessage(msg, messageLength, directAck)) {
+          if (!dispatchMessage(msg, messageLength, directAck, threadMonitorExecutor)) {
             directAck = false;
           }
         } catch (MemberShunnedException e) {
@@ -3009,13 +3102,13 @@ public class Connection implements Runnable {
         failureMsg = "ClassNotFound deserializing message";
         failureEx = ex;
         rpId = md.getRPid();
-        logger.fatal("ClassNotFound deserializing message: {}", ex.toString());
+        logAtInfoAndFatal(failureMsg, failureEx);
       } catch (IOException ex) {
         owner.getConduit().getStats().decMessagesBeingReceived(md.size());
         failureMsg = "IOException deserializing message";
         failureEx = ex;
         rpId = md.getRPid();
-        logger.fatal("IOException deserializing message", failureEx);
+        logAtInfoAndFatal(failureMsg, failureEx);
       } catch (InterruptedException ex) {
         interrupted = true;
         owner.getConduit().getCancelCriterion().checkCancelInProgress(ex);
@@ -3036,7 +3129,7 @@ public class Connection implements Runnable {
         failureMsg = "Unexpected failure deserializing message";
         failureEx = ex;
         rpId = md.getRPid();
-        logger.fatal("Unexpected failure deserializing message", failureEx);
+        logAtInfoAndFatal(failureMsg, failureEx);
       } finally {
         msgLength = md.size();
         releaseMsgDestreamer(messageId, md);
@@ -3046,7 +3139,7 @@ public class Connection implements Runnable {
       }
       if (msg != null) {
         try {
-          if (!dispatchMessage(msg, msgLength, directAck)) {
+          if (!dispatchMessage(msg, msgLength, directAck, threadMonitorExecutor)) {
             directAck = false;
           }
         } catch (MemberShunnedException e) {
@@ -3077,6 +3170,20 @@ public class Connection implements Runnable {
     }
   }
 
+  /**
+   * For exceptions that we absolutely must see in the log files, use this method
+   * to log the problem first at "info" level and then at "fatal" level. We do this
+   * in case the "fatal" level log entry generates an alert that gets blocked in
+   * transmitting the data to an alert listener like the JMX Manager
+   */
+  private void logAtInfoAndFatal(String failureMsg, Throwable failureEx) {
+    // log at info level first in case fatal-level alert notification becomes blocked
+    logger.info(failureMsg, failureEx);
+    // log at fatal-level with toString() on the exception since this will generate an
+    // alert
+    logger.fatal(failureMsg, failureEx.toString());
+  }
+
   void readHandshakeForSender(DataInputStream dis, ByteBuffer peerDataBuffer) {
     try {
       int replyCode = dis.readUnsignedByte();
@@ -3097,9 +3204,15 @@ public class Connection implements Runnable {
           }
           // read the product version ordinal for on-the-fly serialization
           // transformations (for rolling upgrades)
-          remoteVersion = Version.readVersion(dis, true);
+          remoteVersion = Versioning.getKnownVersionOrDefault(
+              Versioning.getVersion(VersioningIO.readOrdinal(dis)),
+              null);
           ioFilter.doneReading(peerDataBuffer);
           notifyHandshakeWaiter(true);
+          if (preserveOrder && asyncDistributionTimeout != 0) {
+            asyncMode = true;
+          }
+
           return;
         default:
           String err =
@@ -3140,38 +3253,14 @@ public class Connection implements Runnable {
   private void setThreadName(int dominoNumber) {
     Thread.currentThread().setName(THREAD_KIND_IDENTIFIER + " for " + remoteAddr + " "
         + (sharedResource ? "" : "un") + "shared" + " " + (preserveOrder ? "" : "un")
-        + "ordered" + " uid=" + uniqueId + (dominoNumber > 0 ? " dom #" + dominoNumber : "")
-        + " port=" + socket.getPort());
+        + "ordered sender uid=" + uniqueId + (dominoNumber > 0 ? " dom #" + dominoNumber : "")
+        + " local port=" + socket.getLocalPort() + " remote port=" + socket.getPort());
   }
 
-  private void compactOrResizeBuffer(int messageLength) {
-    final int oldBufferSize = inputBuffer.capacity();
-    int allocSize = messageLength + MSG_HEADER_BYTES;
-    if (oldBufferSize < allocSize) {
-      // need a bigger buffer
-      logger.info("Allocating larger network read buffer, new size is {} old size was {}.",
-          allocSize, oldBufferSize);
-      ByteBuffer oldBuffer = inputBuffer;
-      inputBuffer = getBufferPool().acquireDirectReceiveBuffer(allocSize);
-
-      if (oldBuffer != null) {
-        int oldByteCount = oldBuffer.remaining();
-        inputBuffer.put(oldBuffer);
-        inputBuffer.position(oldByteCount);
-        getBufferPool().releaseReceiveBuffer(oldBuffer);
-      }
-    } else {
-      if (inputBuffer.position() != 0) {
-        inputBuffer.compact();
-      } else {
-        inputBuffer.position(inputBuffer.limit());
-        inputBuffer.limit(inputBuffer.capacity());
-      }
-    }
-  }
-
-  private boolean dispatchMessage(DistributionMessage msg, int bytesRead, boolean directAck)
+  private boolean dispatchMessage(DistributionMessage msg, int bytesRead, boolean directAck,
+      AbstractExecutor threadMonitorExecutor)
       throws MemberShunnedException {
+    threadMonitorExecutor.resumeMonitoring();
     try {
       msg.setDoDecMessagesBeingReceived(true);
       if (directAck) {
@@ -3182,6 +3271,7 @@ public class Connection implements Runnable {
       owner.getConduit().messageReceived(this, msg, bytesRead);
       return true;
     } finally {
+      threadMonitorExecutor.suspendMonitoring();
       if (msg.containsRegionContentChange()) {
         messagesReceived++;
       }
@@ -3226,14 +3316,15 @@ public class Connection implements Runnable {
   /**
    * Return the version of the member on the other side of this connection.
    */
-  Version getRemoteVersion() {
+  KnownVersion getRemoteVersion() {
     return remoteVersion;
   }
 
   @Override
   public String toString() {
-    return String.valueOf(remoteAddr) + '@' + uniqueId
-        + (remoteVersion != null ? '(' + remoteVersion.toString() + ')' : "");
+    return remoteAddr + "(uid=" + uniqueId + ")"
+        + (remoteVersion != null && remoteVersion != KnownVersion.CURRENT
+            ? "(v" + remoteVersion.toString() + ')' : "");
   }
 
   /**
@@ -3244,6 +3335,16 @@ public class Connection implements Runnable {
    */
   boolean getOriginatedHere() {
     return !isReceiver;
+  }
+
+  /**
+   * A shared sender connection will leave a reader thread around to ensure that the
+   * socket is properly closed at this end. When that is the case isResidualReaderThread
+   * will return true.
+   */
+  @VisibleForTesting
+  public boolean hasResidualReaderThread() {
+    return hasResidualReaderThread;
   }
 
   /**
@@ -3272,53 +3373,6 @@ public class Connection implements Runnable {
    */
   long getMessagesSent() {
     return messagesSent;
-  }
-
-  public void acquireSendPermission() throws ConnectionException {
-    if (!connected) {
-      throw new ConnectionException("connection is closed");
-    }
-    if (isReaderThread()) {
-      // reader threads send replies and we always want to permit those without waiting
-      return;
-    }
-    boolean interrupted = false;
-    try {
-      for (;;) {
-        owner.getConduit().getCancelCriterion().checkCancelInProgress(null);
-        try {
-          senderSem.acquire();
-          break;
-        } catch (InterruptedException ex) {
-          interrupted = true;
-        }
-      }
-    } finally {
-      if (interrupted) {
-        Thread.currentThread().interrupt();
-      }
-    }
-    if (!connected) {
-      senderSem.release();
-      owner.getConduit().getCancelCriterion().checkCancelInProgress(null);
-      throw new ConnectionException("connection is closed");
-    }
-  }
-
-  public void releaseSendPermission() {
-    if (isReaderThread()) {
-      return;
-    }
-    senderSem.release();
-  }
-
-  private void closeSenderSem() {
-    // All we need to do is increase the number of permits by one
-    // just in case 1 or more connections are currently waiting to acquire.
-    // One of them will get the permit, then find out the connection is closed
-    // and release the permit until all the connections currently waiting to acquire
-    // will complete by throwing a ConnectionException.
-    releaseSendPermission();
   }
 
   private class BatchBufferFlusher extends Thread {

@@ -42,7 +42,7 @@ import org.apache.geode.annotations.Immutable;
 import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.annotations.internal.MutableForTesting;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.internal.ClassPathLoader;
+import org.apache.geode.internal.classloader.ClassPathLoader;
 import org.apache.geode.internal.datasource.ClientConnectionFactoryWrapper;
 import org.apache.geode.internal.datasource.ConfigProperty;
 import org.apache.geode.internal.datasource.DataSourceCreateException;
@@ -51,7 +51,7 @@ import org.apache.geode.internal.datasource.GemFireTransactionDataSource;
 import org.apache.geode.internal.jta.TransactionManagerImpl;
 import org.apache.geode.internal.jta.TransactionUtils;
 import org.apache.geode.internal.jta.UserTransactionImpl;
-import org.apache.geode.internal.util.DriverJarUtil;
+import org.apache.geode.internal.util.DriverJarUtils;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.util.internal.GeodeGlossary;
 
@@ -98,7 +98,7 @@ public class JNDIInvoker {
       {"java:comp/UserTransaction", "Orion, JTOM, BEA WebLogic"},
       // not sure about the following but leaving it for backwards compat
       {"javax.transaction.TransactionManager", "BEA WebLogic"}};
-  /** ************************************************* */
+  /* ************************************************* */
   /**
    * WebSphere 5.1 TransactionManagerFactory
    */
@@ -354,7 +354,7 @@ public class JNDIInvoker {
     String driverClassName = null;
     if (map != null) {
       driverClassName = (String) map.get("jdbc-driver-class");
-      DriverJarUtil util = new DriverJarUtil();
+      DriverJarUtils util = new DriverJarUtils();
       if (driverClassName != null) {
         util.registerDriver(driverClassName);
       }

@@ -29,7 +29,7 @@ logger.debug("Using partial md5 (${thisFileIntegerHash}) of file ${thisFile} as 
 project.ext.set("spotless-file-hash", thisFileIntegerHash)
 
 
-apply plugin: "com.diffplug.gradle.spotless"
+apply plugin: "com.diffplug.spotless"
 spotless {
   lineEndings = 'unix'
   java {
@@ -132,7 +132,7 @@ spotless {
     bumpThisNumberIfACustomStepChanges(project.ext.'spotless-file-hash')
 
     custom 'Use single-quote in project directives.', {
-      it.replaceAll(/project\(":([^"]*)"\)/, 'project(\':$1\')')
+      it.replaceAll(/project\(":([^"]*)"\)$/, 'project(\':$1\')')
     }
 
     custom 'Use parenthesis in single-line gradle dependency declarations.', {

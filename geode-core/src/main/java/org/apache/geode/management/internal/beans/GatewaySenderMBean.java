@@ -124,13 +124,28 @@ public class GatewaySenderMBean extends NotificationBroadcasterSupport
   }
 
   @Override
+  public int getTotalBatchesDistributed() {
+    return bridge.getTotalBatchesDistributed();
+  }
+
+  @Override
   public int getTotalBatchesRedistributed() {
     return bridge.getTotalBatchesRedistributed();
   }
 
   @Override
+  public int getTotalBatchesWithIncompleteTransactions() {
+    return bridge.getTotalBatchesWithIncompleteTransactions();
+  }
+
+  @Override
   public int getTotalEventsConflated() {
     return bridge.getTotalEventsConflated();
+  }
+
+  @Override
+  public long getTotalQueueSizeBytesInUse() {
+    return bridge.getTotalQueueSizeBytesInUse();
   }
 
   @Override
@@ -174,6 +189,11 @@ public class GatewaySenderMBean extends NotificationBroadcasterSupport
   }
 
   @Override
+  public void startWithCleanQueue() {
+    bridge.startWithCleanQueue();
+  }
+
+  @Override
   public void stop() {
     bridge.stop();
 
@@ -207,6 +227,11 @@ public class GatewaySenderMBean extends NotificationBroadcasterSupport
   @Override
   public boolean isParallel() {
     return bridge.isParallel();
+  }
+
+  @Override
+  public boolean mustGroupTransactionEvents() {
+    return bridge.mustGroupTransactionEvents();
   }
 
   @Override

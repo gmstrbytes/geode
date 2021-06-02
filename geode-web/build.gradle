@@ -20,9 +20,13 @@ apply from: "${rootDir}/${scriptDir}/standard-subproject-configuration.gradle"
 apply plugin: 'war'
 
 apply from: "${project.projectDir}/../gradle/publish-war.gradle"
+apply from: "${project.projectDir}/../gradle/warnings.gradle"
 
 jar.enabled = false
 
+configurations {
+  war {}
+}
 dependencies {
   api(platform(project(':boms:geode-all-bom')))
 
@@ -42,6 +46,7 @@ dependencies {
   providedCompile('org.apache.logging.log4j:log4j-api')
 
   implementation('org.springframework:spring-webmvc')
+  implementation('org.apache.commons:commons-lang3')
 
   runtimeOnly('org.springframework:spring-aspects') {
     exclude module: 'aspectjweaver'
@@ -54,13 +59,13 @@ dependencies {
 
   integrationTestImplementation(project(':geode-dunit'));
 
-  integrationTestRuntimeOnly(files(war.destinationDir))
+  integrationTestRuntimeOnly(files(war.destinationDirectory))
 
   distributedTestImplementation(project(':geode-common'))
   distributedTestImplementation(project(':geode-dunit'))
   distributedTestImplementation('pl.pragmatists:JUnitParams')
 
-  distributedTestRuntimeOnly(files(war.destinationDir))
+  distributedTestRuntimeOnly(files(war.destinationDirectory))
 
   upgradeTestImplementation(project(':geode-dunit')) {
   }
@@ -72,4 +77,8 @@ integrationTest.dependsOn(war)
 war {
   enabled = true
   duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+artifacts {
+  war tasks.war
 }

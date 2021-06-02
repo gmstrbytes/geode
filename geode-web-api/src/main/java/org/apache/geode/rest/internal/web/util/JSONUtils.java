@@ -30,7 +30,7 @@ import org.springframework.util.Assert;
 
 import org.apache.geode.cache.Region;
 import org.apache.geode.internal.HeapDataOutputStream;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 
 /**
  * The JSONUtils class is a utility class for getting JSON equivalent from Java types.
@@ -52,16 +52,13 @@ public abstract class JSONUtils {
   }
 
   public static JsonGenerator enableDisableJSONGeneratorFeature(JsonGenerator generator) {
-    generator.enable(Feature.ESCAPE_NON_ASCII);
     generator.disable(Feature.AUTO_CLOSE_TARGET);
     generator.setPrettyPrinter(new DefaultPrettyPrinter());
     return generator;
   }
 
   public static String formulateJsonForListFunctionsCall(Set<String> functionIds) {
-    HeapDataOutputStream outputStream =
-        new HeapDataOutputStream(Version.CURRENT);
-    try {
+    try (HeapDataOutputStream outputStream = new HeapDataOutputStream(KnownVersion.CURRENT)) {
       JsonGenerator generator = enableDisableJSONGeneratorFeature(getObjectMapper().getFactory()
           .createGenerator((OutputStream) outputStream, JsonEncoding.UTF8));
       generator.writeStartObject();
@@ -72,16 +69,12 @@ public abstract class JSONUtils {
       return new String(outputStream.toByteArray());
     } catch (IOException e) {
       throw new RuntimeException(e.getMessage());
-    } finally {
-      outputStream.close();
     }
   }
 
   public static String formulateJsonForListKeys(Object[] keys, String fieldName) {
-    HeapDataOutputStream outputStream =
-        new HeapDataOutputStream(Version.CURRENT);
 
-    try {
+    try (HeapDataOutputStream outputStream = new HeapDataOutputStream(KnownVersion.CURRENT)) {
       JsonGenerator generator = enableDisableJSONGeneratorFeature(getObjectMapper().getFactory()
           .createGenerator((OutputStream) outputStream, JsonEncoding.UTF8));
       generator.writeStartObject();
@@ -92,16 +85,12 @@ public abstract class JSONUtils {
       return new String(outputStream.toByteArray());
     } catch (IOException e) {
       throw new RuntimeException(e.getMessage());
-    } finally {
-      outputStream.close();
     }
   }
 
   public static String formulateJsonForListRegions(Set<Region<?, ?>> regions, String fieldName) {
-    HeapDataOutputStream outputStream =
-        new HeapDataOutputStream(Version.CURRENT);
 
-    try {
+    try (HeapDataOutputStream outputStream = new HeapDataOutputStream(KnownVersion.CURRENT)) {
       JsonGenerator generator = enableDisableJSONGeneratorFeature(getObjectMapper().getFactory()
           .createGenerator((OutputStream) outputStream, JsonEncoding.UTF8));
       generator.writeStartObject();
@@ -112,16 +101,12 @@ public abstract class JSONUtils {
       return new String(outputStream.toByteArray());
     } catch (IOException e) {
       throw new RuntimeException(e.getMessage());
-    } finally {
-      outputStream.close();
     }
   }
 
 
   public static String formulateJsonForListQueriesCall(Region<String, String> queryRegion) {
-    HeapDataOutputStream outputStream =
-        new HeapDataOutputStream(Version.CURRENT);
-    try {
+    try (HeapDataOutputStream outputStream = new HeapDataOutputStream(KnownVersion.CURRENT)) {
       JsonGenerator generator = enableDisableJSONGeneratorFeature(getObjectMapper().getFactory()
           .createGenerator((OutputStream) outputStream, JsonEncoding.UTF8));
       JsonWriter.writeQueryListAsJson(generator, "queries", queryRegion);
@@ -129,16 +114,12 @@ public abstract class JSONUtils {
       return new String(outputStream.toByteArray());
     } catch (IOException e) {
       throw new RuntimeException(e.getMessage());
-    } finally {
-      outputStream.close();
     }
   }
 
   public static String formulateJsonForExistingQuery(String queryId, String oql) {
-    HeapDataOutputStream outputStream =
-        new HeapDataOutputStream(Version.CURRENT);
 
-    try {
+    try (HeapDataOutputStream outputStream = new HeapDataOutputStream(KnownVersion.CURRENT)) {
       JsonGenerator generator = enableDisableJSONGeneratorFeature(getObjectMapper().getFactory()
           .createGenerator((OutputStream) outputStream, JsonEncoding.UTF8));
       JsonWriter.writeQueryAsJson(generator, queryId, oql);
@@ -146,16 +127,12 @@ public abstract class JSONUtils {
       return new String(outputStream.toByteArray());
     } catch (IOException e) {
       throw new RuntimeException(e.getMessage());
-    } finally {
-      outputStream.close();
     }
   }
 
   public static String convertCollectionToJson(Collection<Object> collection) {
-    HeapDataOutputStream outputStream =
-        new HeapDataOutputStream(Version.CURRENT);
 
-    try {
+    try (HeapDataOutputStream outputStream = new HeapDataOutputStream(KnownVersion.CURRENT)) {
       JsonGenerator generator = enableDisableJSONGeneratorFeature(getObjectMapper().getFactory()
           .createGenerator((OutputStream) outputStream, JsonEncoding.UTF8));
       JsonWriter.writeCollectionAsJson(generator, collection);
@@ -163,8 +140,6 @@ public abstract class JSONUtils {
       return new String(outputStream.toByteArray());
     } catch (IOException e) {
       throw new RuntimeException(e.getMessage());
-    } finally {
-      outputStream.close();
     }
   }
 }

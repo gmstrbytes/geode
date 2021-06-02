@@ -15,6 +15,7 @@
 package org.apache.geode.internal.cache.xmlcache;
 
 import static java.lang.String.format;
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.internal.logging.LogWriterFactory.toSecurityLogWriter;
 import static org.apache.geode.internal.statistics.StatisticsClockFactory.disabledClock;
 import static org.apache.geode.logging.internal.spi.LogWriterLevel.ALL;
@@ -39,6 +40,7 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 import javax.naming.Context;
 import javax.transaction.TransactionManager;
@@ -134,11 +136,11 @@ import org.apache.geode.internal.cache.InternalCacheForClientAccess;
 import org.apache.geode.internal.cache.InternalCacheServer;
 import org.apache.geode.internal.cache.InternalRegion;
 import org.apache.geode.internal.cache.InternalRegionArguments;
+import org.apache.geode.internal.cache.InternalRegionFactory;
 import org.apache.geode.internal.cache.LocalRegion;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.PoolFactoryImpl;
 import org.apache.geode.internal.cache.PoolManagerImpl;
-import org.apache.geode.internal.cache.RegionFactoryImpl;
 import org.apache.geode.internal.cache.RegionListener;
 import org.apache.geode.internal.cache.TXEntryStateFactory;
 import org.apache.geode.internal.cache.TXManagerImpl;
@@ -160,6 +162,7 @@ import org.apache.geode.internal.cache.wan.AbstractGatewaySender;
 import org.apache.geode.internal.cache.wan.InternalGatewaySenderFactory;
 import org.apache.geode.internal.cache.wan.WANServiceProvider;
 import org.apache.geode.internal.jndi.JNDIInvoker;
+import org.apache.geode.internal.lang.SystemPropertyHelper;
 import org.apache.geode.internal.logging.InternalLogWriter;
 import org.apache.geode.internal.logging.LocalLogWriter;
 import org.apache.geode.internal.offheap.MemoryAllocator;
@@ -188,6 +191,10 @@ public class CacheCreation implements InternalCache {
 
   @Immutable
   private static final RegionAttributes defaults = new AttributesFactory().create();
+
+  @Immutable
+  private static final Optional<Boolean> parallelDiskStoreRecovery = SystemPropertyHelper
+      .getProductBooleanProperty(SystemPropertyHelper.PARALLEL_DISK_STORE_RECOVERY);
 
   /**
    * Store the current CacheCreation that is doing a create. Used from PoolManager to defer to
@@ -521,12 +528,7 @@ public class CacheCreation implements InternalCache {
 
     cache.initializePdxRegistry();
 
-    for (DiskStore diskStore : diskStores.values()) {
-      DiskStoreAttributesCreation creation = (DiskStoreAttributesCreation) diskStore;
-      if (creation != pdxRegDSC) {
-        createDiskStore(creation, cache);
-      }
-    }
+    createDiskStores(cache, pdxRegDSC);
 
     if (hasDynamicRegionFactory()) {
       DynamicRegionFactory.get().open(getDynamicRegionFactoryConfig());
@@ -633,6 +635,21 @@ public class CacheCreation implements InternalCache {
 
     // Create all extensions
     extensionPoint.fireCreate(cache);
+  }
+
+  private void createDiskStores(InternalCache cache, DiskStoreAttributesCreation pdxRegDSC) {
+    Stream<DiskStore> diskStoreStream;
+    if (parallelDiskStoreRecovery.orElse(true)) {
+      diskStoreStream = diskStores.values().parallelStream();
+    } else {
+      diskStoreStream = diskStores.values().stream();
+    }
+    diskStoreStream.forEach(diskStore -> {
+      DiskStoreAttributesCreation creation = (DiskStoreAttributesCreation) diskStore;
+      if (creation != pdxRegDSC) {
+        createDiskStore(creation, cache);
+      }
+    });
   }
 
   public void initializeDeclarablesMap(InternalCache cache) {
@@ -1088,6 +1105,16 @@ public class CacheCreation implements InternalCache {
     return queryService;
   }
 
+  @Override
+  public void lockDiskStore(String diskStoreName) {
+
+  }
+
+  @Override
+  public void unlockDiskStore(String diskStoreName) {
+
+  }
+
   public QueryConfigurationServiceCreation getQueryConfigurationServiceCreation() {
     return queryConfigurationServiceCreation;
   }
@@ -1111,25 +1138,25 @@ public class CacheCreation implements InternalCache {
   @Override
   public <K, V> RegionFactory<K, V> createRegionFactory(RegionShortcut shortcut) {
     throwIfClient();
-    return new RegionFactoryImpl<>(this, shortcut);
+    return new InternalRegionFactory<>(this, shortcut);
   }
 
   @Override
   public <K, V> RegionFactory<K, V> createRegionFactory() {
     throwIfClient();
-    return new RegionFactoryImpl<>(this);
+    return new InternalRegionFactory<>(this);
   }
 
   @Override
   public <K, V> RegionFactory<K, V> createRegionFactory(String regionAttributesId) {
     throwIfClient();
-    return new RegionFactoryImpl<>(this, regionAttributesId);
+    return new InternalRegionFactory<>(this, regionAttributesId);
   }
 
   @Override
   public <K, V> RegionFactory<K, V> createRegionFactory(RegionAttributes<K, V> regionAttributes) {
     throwIfClient();
-    return new RegionFactoryImpl<>(this, regionAttributes);
+    return new InternalRegionFactory<>(this, regionAttributes);
   }
 
   @Override
@@ -1161,8 +1188,9 @@ public class CacheCreation implements InternalCache {
 
   @Override
   public Region getRegion(String path) {
-    if (path.contains("/")) {
-      throw new UnsupportedOperationException("Region path '" + path + "' contains '/'");
+    if (path.contains(SEPARATOR)) {
+      throw new UnsupportedOperationException(
+          "Region path '" + path + "' contains '" + SEPARATOR + "'");
     }
     return roots.get(path);
   }
@@ -1253,7 +1281,7 @@ public class CacheCreation implements InternalCache {
 
   @Override
   public void close(final String reason, final Throwable systemFailureCause,
-      final boolean keepAlive, final boolean keepDS) {
+      final boolean keepAlive, final boolean keepDS, boolean skipAwait) {
     throw new UnsupportedOperationException("Should not be invoked");
   }
 

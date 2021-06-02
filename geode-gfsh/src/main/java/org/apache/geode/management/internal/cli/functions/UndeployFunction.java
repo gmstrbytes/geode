@@ -14,44 +14,45 @@
  */
 package org.apache.geode.management.internal.cli.functions;
 
-import java.io.IOException;
-import java.util.Arrays;
-import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.internal.ClassPathLoader;
-import org.apache.geode.internal.DeployedJar;
-import org.apache.geode.internal.JarDeployer;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.execute.InternalFunction;
+import org.apache.geode.internal.classloader.ClassPathLoader;
+import org.apache.geode.internal.deployment.JarDeploymentService;
 import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.management.configuration.Deployment;
+import org.apache.geode.management.internal.cli.domain.DeploymentInfo;
 import org.apache.geode.management.internal.functions.CliFunctionResult;
+import org.apache.geode.services.result.ServiceResult;
 
-public class UndeployFunction implements InternalFunction {
+public class UndeployFunction implements InternalFunction<Object[]> {
   private static final Logger logger = LogService.getLogger();
-
-  public static final String ID = UndeployFunction.class.getName();
-
   private static final long serialVersionUID = 1L;
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.UndeployFunction";
 
   @Override
-  public void execute(FunctionContext context) {
+  public String getId() {
+    return ID;
+  }
+
+  @Override
+  public void execute(FunctionContext<Object[]> context) {
     // Declared here so that it's available when returning a Throwable
     String memberId = "";
 
     try {
-      final Object[] args = (Object[]) context.getArguments();
+      final Object[] args = context.getArguments();
       final String[] jarFilenameList = (String[]) args[0]; // Comma separated
+      final String[] deploymentNameList = (String[]) args[1];
       InternalCache cache = (InternalCache) context.getCache();
-
-      final JarDeployer jarDeployer = ClassPathLoader.getLatest().getJarDeployer();
 
       DistributedMember member = cache.getDistributedSystem().getDistributedMember();
 
@@ -61,26 +62,14 @@ public class UndeployFunction implements InternalFunction {
         memberId = member.getName();
       }
 
-      List<String> jarNamesToUndeploy;
+      List<DeploymentInfo> undeployedJars = new LinkedList<>();
       if (ArrayUtils.isNotEmpty(jarFilenameList)) {
-        jarNamesToUndeploy = Arrays.stream(jarFilenameList).collect(Collectors.toList());
+        undeployedJars.addAll(undeployByFileNames(memberId, jarFilenameList));
+      } else if (ArrayUtils.isNotEmpty(deploymentNameList)) {
+        undeployedJars.addAll(undeployByDeploymentName(memberId, deploymentNameList));
       } else {
-        final List<DeployedJar> jarClassLoaders = jarDeployer.findDeployedJars();
-        jarNamesToUndeploy =
-            jarClassLoaders.stream().map(l -> l.getDeployedFileName()).collect(Collectors.toList());
-      }
-
-      Map<String, String> undeployedJars = new HashMap<>();
-      for (String jarName : jarNamesToUndeploy) {
-        String jarLocation;
-        try {
-          jarLocation =
-              ClassPathLoader.getLatest().getJarDeployer().undeploy(jarName);
-        } catch (IOException | IllegalArgumentException iaex) {
-          // It's okay for it to have have been undeployed from this server
-          jarLocation = iaex.getMessage();
-        }
-        undeployedJars.put(jarName, jarLocation);
+        // With no jars or deployments specified, all the deployed jars need to be removed
+        undeployedJars.addAll(undeployAll(memberId));
       }
 
       CliFunctionResult result = new CliFunctionResult(memberId, undeployedJars, null);
@@ -91,12 +80,59 @@ public class UndeployFunction implements InternalFunction {
       CliFunctionResult result = new CliFunctionResult(memberId, false, null);
       context.getResultSender().lastResult(result);
     }
-
   }
 
-  @Override
-  public String getId() {
-    return ID;
+  private List<DeploymentInfo> undeployAll(String memberId) {
+    final JarDeploymentService jarDeploymentService =
+        ClassPathLoader.getLatest().getJarDeploymentService();
+    List<DeploymentInfo> undeployedJars = new LinkedList<>();
+    jarDeploymentService.listDeployed().forEach(deployment -> undeployedJars
+        .addAll(undeployByDeploymentName(memberId, deployment.getDeploymentName())));
+    return undeployedJars;
+  }
+
+  private List<DeploymentInfo> undeployByDeploymentName(String memberId,
+      String... deploymentNames) {
+    final JarDeploymentService jarDeploymentService =
+        ClassPathLoader.getLatest().getJarDeploymentService();
+    List<DeploymentInfo> undeployedJars = new LinkedList<>();
+    for (String deploymentName : deploymentNames) {
+      logger.debug("Undeploying jar for deploymentName: {}", deploymentName);
+      ServiceResult<Deployment> serviceResult =
+          jarDeploymentService.undeployByDeploymentName(deploymentName);
+      if (serviceResult.isSuccessful()) {
+        logger.debug("Undeployed jar: {}", serviceResult.getMessage());
+        undeployedJars.add(new DeploymentInfo(memberId, serviceResult.getMessage()));
+      } else {
+        logger.debug("Failed to undeploy jar: {}", serviceResult.getMessage());
+        undeployedJars
+            .add(new DeploymentInfo(memberId, deploymentName, null,
+                serviceResult.getErrorMessage()));
+      }
+    }
+    return undeployedJars;
+  }
+
+  private List<DeploymentInfo> undeployByFileNames(String memberId, String... filesToUndeploy) {
+    final JarDeploymentService jarDeploymentService =
+        ClassPathLoader.getLatest().getJarDeploymentService();
+    List<DeploymentInfo> undeployedJars = new LinkedList<>();
+    for (String fileName : filesToUndeploy) {
+      logger.debug("Undeploying jar for fileName: {}", fileName);
+      ServiceResult<Deployment> serviceResult = jarDeploymentService.undeployByFileName(fileName);
+      DeploymentInfo deploymentInfo;
+      if (serviceResult.isSuccessful()) {
+        logger.debug("Undeployed jar: {}", serviceResult.getMessage());
+        deploymentInfo = new DeploymentInfo(memberId, serviceResult.getMessage());
+      } else {
+        logger.debug("Failed to undeploy jar: {}", serviceResult.getErrorMessage());
+        deploymentInfo =
+            new DeploymentInfo(memberId, null, fileName, serviceResult.getErrorMessage());
+      }
+      logger.debug("DeploymentInfo after undeployByFileNames {}", deploymentInfo);
+      undeployedJars.add(deploymentInfo);
+    }
+    return undeployedJars;
   }
 
   @Override

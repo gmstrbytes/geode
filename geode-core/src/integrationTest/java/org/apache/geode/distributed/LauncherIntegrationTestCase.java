@@ -17,8 +17,8 @@ package org.apache.geode.distributed;
 import static java.lang.System.lineSeparator;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
-import static org.apache.geode.internal.AvailablePort.SOCKET;
-import static org.apache.geode.internal.AvailablePort.isPortAvailable;
+import static org.apache.geode.internal.membership.utils.AvailablePort.SOCKET;
+import static org.apache.geode.internal.membership.utils.AvailablePort.isPortAvailable;
 import static org.apache.geode.internal.process.ProcessUtils.identifyPid;
 import static org.apache.geode.internal.process.ProcessUtils.isProcessAlive;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
@@ -63,7 +63,7 @@ import org.apache.geode.util.internal.GeodeGlossary;
  */
 public abstract class LauncherIntegrationTestCase {
 
-  protected static final long AWAIT_MILLIS = getTimeout().getValueInMS() * 2;
+  protected static final long AWAIT_MILLIS = getTimeout().toMillis() * 2;
 
   private static final int PREFERRED_FAKE_PID = 42;
 
@@ -293,7 +293,8 @@ public abstract class LauncherIntegrationTestCase {
     try {
       socket = SocketCreatorFactory
           .createNonDefaultInstance(false, false, null, null, System.getProperties())
-          .createServerSocket(port, 50, bindAddress, -1);
+          .forCluster()
+          .createServerSocket(port, 50, bindAddress);
       assertThat(socket.isBound()).isTrue();
       assertThat(socket.isClosed()).isFalse();
       assertThat(isPortAvailable(port, SOCKET)).isFalse();

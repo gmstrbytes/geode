@@ -77,13 +77,13 @@ function customizeUI() {
       var grabValue = $(this).attr('data-prod-custom');
       var customDisplayValue = jQuery.i18n.prop(grabValue);
       if ($(this).is("div")) {
-        $(this).html(customDisplayValue);
+        $(this).html(escapeHTML(customDisplayValue));
       } else if ($(this).is("img")) {
         $(this).attr('src', customDisplayValue);
       } else if ($(this).is("a")) {
         $(this).attr('href', customDisplayValue);
       } else if ($(this).is("span")) {
-        $(this).html(customDisplayValue);
+        $(this).html(escapeHTML(customDisplayValue));
       }
     });
 
@@ -1343,6 +1343,9 @@ function ajaxPost(pulseUrl, pulseData, pulseCallBackName) {
       console.log("The following error occurred: " + textStatus, errorThrown);
       $('#connectionStatusDiv').show();
       $('#connectionErrorMsgDiv').html("Pulse server is not connected");
+      if(errorThrown === "Unauthorized") {
+        window.location.replace("/pulse/clusterLogout");
+      }
     },
     // callback handler that will be called on completion
     // which means, either on success or error
@@ -1508,7 +1511,6 @@ function getPulseVersion() {
     $('#pulseVersion').html(pulseVersion);
     $('#pulseVer').html(data.pulseVersion);
     $('#buildId').html(data.buildId);
-    $('#buildDate').html(data.buildDate);
     $('#sourceDate').html(data.sourceDate);
     $('#sourceRevision').html(data.sourceRevision);
     $('#sourceRepository').html(data.sourceRepository);
@@ -1634,10 +1636,10 @@ function escapeHTML(htmlContent) {
 //Function to unescape html entities
 function unescapeHTML(htmlContent) {
   return unescapedHTML = htmlContent
-      .replace(/&amp;/g, '&')
       .replace(/&lt;/g, '<')
       .replace(/&gt;/g, '>')
       .replace(/&quot;/g, '"')
       .replace(/&#x27;/g, "'")
-      .replace(/&#x60;/g, '`');
+      .replace(/&#x60;/g, '`')
+      .replace(/&amp;/g, '&');
 }

@@ -14,6 +14,7 @@
  */
 package org.apache.geode.management.internal.cli.commands;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.GROUPS;
 import static org.apache.geode.distributed.ConfigurationProperties.SERIALIZABLE_OBJECT_FILTER;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -68,18 +69,19 @@ public class IndexCommandsShareConfigurationDUnitTest {
             + "--key-constraint=java.lang.String --value-constraint=org.apache.geode.management.internal.cli.domain.Stock");
 
     serverVM.invoke(() -> {
-      Region region = ClusterStartupRule.getCache().getRegion(partitionedRegionName);
+      Region<String, Stock> region = ClusterStartupRule.getCache().getRegion(partitionedRegionName);
       region.put("VMW", new Stock("VMW", 98));
     });
   }
 
   @Test
-  public void testCreateAndDestroyUpdatesSharedConfiguration() throws Exception {
+  public void testCreateAndDestroyUpdatesSharedConfiguration() {
     CommandStringBuilder createStringBuilder = new CommandStringBuilder(CliStrings.CREATE_INDEX);
     createStringBuilder.addOption(CliStrings.CREATE_INDEX__NAME, indexName);
     createStringBuilder.addOption(CliStrings.CREATE_INDEX__EXPRESSION, "key");
     createStringBuilder.addOption(CliStrings.GROUP, groupName);
-    createStringBuilder.addOption(CliStrings.CREATE_INDEX__REGION, "/" + partitionedRegionName);
+    createStringBuilder.addOption(CliStrings.CREATE_INDEX__REGION,
+        SEPARATOR + partitionedRegionName);
     gfsh.executeAndAssertThat(createStringBuilder.toString()).statusIsSuccess();
 
     gfsh.executeAndAssertThat(CliStrings.LIST_INDEX).statusIsSuccess().containsOutput(indexName);
@@ -94,7 +96,8 @@ public class IndexCommandsShareConfigurationDUnitTest {
     createStringBuilder = new CommandStringBuilder(CliStrings.DESTROY_INDEX);
     createStringBuilder.addOption(CliStrings.DESTROY_INDEX__NAME, indexName);
     createStringBuilder.addOption(CliStrings.GROUP, groupName);
-    createStringBuilder.addOption(CliStrings.DESTROY_INDEX__REGION, "/" + partitionedRegionName);
+    createStringBuilder.addOption(CliStrings.DESTROY_INDEX__REGION,
+        SEPARATOR + partitionedRegionName);
     gfsh.executeAndAssertThat(createStringBuilder.toString()).statusIsSuccess();
 
     locator.invoke(() -> {
@@ -111,7 +114,7 @@ public class IndexCommandsShareConfigurationDUnitTest {
     serverVM.invoke(() -> {
       InternalCache restartedCache = ClusterStartupRule.getCache();
       assertNotNull(restartedCache);
-      Region region = restartedCache.getRegion(partitionedRegionName);
+      Region<?, ?> region = restartedCache.getRegion(partitionedRegionName);
       assertNotNull(region);
       Index index = restartedCache.getQueryService().getIndex(region, indexName);
       assertNull(index);

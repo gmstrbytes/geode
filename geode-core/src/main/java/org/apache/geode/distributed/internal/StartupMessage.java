@@ -35,9 +35,10 @@ import org.apache.geode.internal.InternalDataSerializer.SerializerAttributesHold
 import org.apache.geode.internal.InternalInstantiator;
 import org.apache.geode.internal.InternalInstantiator.InstantiatorAttributesHolder;
 import org.apache.geode.internal.inet.LocalHostUtil;
+import org.apache.geode.internal.serialization.DataSerializableFixedID;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
-import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.util.internal.GeodeGlossary;
 
@@ -320,7 +321,7 @@ public class StartupMessage extends DistributionMessage implements AdminMessageT
   }
 
   @Override
-  public Version[] getSerializationVersions() {
+  public KnownVersion[] getSerializationVersions() {
     return null;
   }
 
@@ -377,7 +378,8 @@ public class StartupMessage extends DistributionMessage implements AdminMessageT
   }
 
   /**
-   * Notes a problem that occurs while invoking {@link DataSerializableFixedID#fromData}.
+   * Notes a problem that occurs while invoking
+   * {@link DataSerializableFixedID#fromData(DataInput, DeserializationContext)}.
    */
   private void recordFromDataProblem(String s) {
     if (this.fromDataProblems == null) {

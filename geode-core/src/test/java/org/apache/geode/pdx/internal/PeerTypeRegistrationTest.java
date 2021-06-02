@@ -30,23 +30,24 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
 
 import org.junit.Before;
 import org.junit.Test;
-import org.mockito.internal.util.reflection.FieldSetter;
 
 import org.apache.geode.CancelCriterion;
 import org.apache.geode.Statistics;
 import org.apache.geode.StatisticsType;
-import org.apache.geode.cache.AttributesFactory;
 import org.apache.geode.cache.DataPolicy;
 import org.apache.geode.cache.Region;
+import org.apache.geode.cache.RegionExistsException;
 import org.apache.geode.distributed.DistributedLockService;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.internal.cache.CacheConfig;
 import org.apache.geode.internal.cache.DiskStoreImpl;
 import org.apache.geode.internal.cache.InternalCache;
+import org.apache.geode.internal.cache.InternalRegionFactory;
 import org.apache.geode.internal.cache.TXManagerImpl;
 import org.apache.geode.internal.cache.TXStateProxy;
 import org.apache.geode.internal.statistics.StatisticsManager;
@@ -64,8 +65,7 @@ public class PeerTypeRegistrationTest {
   @SuppressWarnings("unchecked")
   private final Region<Object, Object> region = mock(Region.class);
   private final TXManagerImpl txManager = mock(TXManagerImpl.class);
-  @SuppressWarnings("deprecation")
-  private final AttributesFactory factory = mock(AttributesFactory.class);
+  private final InternalRegionFactory factory = mock(InternalRegionFactory.class);
 
   @Before
   public void setUp() throws IOException, ClassNotFoundException {
@@ -74,8 +74,8 @@ public class PeerTypeRegistrationTest {
     when(statisticsManager.createAtomicStatistics(any(), any())).thenReturn(statistics);
     when(internalDistributedSystem.getStatisticsManager()).thenReturn(statisticsManager);
     when(internalCache.getInternalDistributedSystem()).thenReturn(internalDistributedSystem);
-    when(internalCache.createVMRegion(eq(PeerTypeRegistration.REGION_NAME), any(), any()))
-        .thenReturn(region);
+    when(internalCache.createInternalRegionFactory()).thenReturn(factory);
+    when(factory.create(eq(PeerTypeRegistration.REGION_NAME))).thenReturn(region);
     when(region.getRegionService()).thenReturn(internalCache);
     when(internalCache.getCacheTransactionManager()).thenReturn(txManager);
   }
@@ -122,14 +122,16 @@ public class PeerTypeRegistrationTest {
   }
 
   @Test
-  public void pdxPersistenceIsSetWithUserDefinedDiskStore() throws NoSuchFieldException {
+  public void pdxPersistenceIsSetWithUserDefinedDiskStore()
+      throws NoSuchFieldException, IllegalAccessException {
     PeerTypeRegistration peerTypeRegistration = spy(new PeerTypeRegistration(internalCache));
-    doReturn(factory).when(peerTypeRegistration).getAttributesFactory();
+    doReturn(factory).when(internalCache).createRegionFactory();
     when(internalCache.getPdxPersistent()).thenReturn(true);
     CacheConfig config = mock(CacheConfig.class);
     when(internalCache.getCacheConfig()).thenReturn(config);
 
-    FieldSetter.setField(config, config.getClass().getField("pdxDiskStoreUserSet"), true);
+    Field field = config.getClass().getField("pdxDiskStoreUserSet");
+    field.setBoolean(config, Boolean.TRUE);
     final String diskStoreName = "userDiskStore";
     when(internalCache.getPdxDiskStore()).thenReturn(diskStoreName);
 
@@ -142,7 +144,7 @@ public class PeerTypeRegistrationTest {
   @Test
   public void pdxPersistenceIsSetWithDefaultDiskStore() {
     PeerTypeRegistration peerTypeRegistration = spy(new PeerTypeRegistration(internalCache));
-    doReturn(factory).when(peerTypeRegistration).getAttributesFactory();
+    doReturn(factory).when(internalCache).createRegionFactory();
     when(internalCache.getPdxPersistent()).thenReturn(true);
     CacheConfig config = mock(CacheConfig.class);
     when(internalCache.getCacheConfig()).thenReturn(config);
@@ -161,7 +163,7 @@ public class PeerTypeRegistrationTest {
   @Test
   public void pdxPersistenceIsNotSetWhenPdxPersistenceIsFalse() {
     PeerTypeRegistration peerTypeRegistration = spy(new PeerTypeRegistration(internalCache));
-    doReturn(factory).when(peerTypeRegistration).getAttributesFactory();
+    doReturn(factory).when(internalCache).createRegionFactory();
 
     peerTypeRegistration.initialize();
 
@@ -172,7 +174,7 @@ public class PeerTypeRegistrationTest {
   @Test(expected = PdxInitializationException.class)
   public void pdxInitializationExceptionIsThrownInInitializeWhenRegionCreationFails()
       throws IOException, ClassNotFoundException {
-    doThrow(new IOException()).when(internalCache).createVMRegion(any(), any(), any());
+    doThrow(new RegionExistsException(region)).when(factory).create(any());
     PeerTypeRegistration peerTypeRegistration = new PeerTypeRegistration(internalCache);
     peerTypeRegistration.initialize();
   }

@@ -15,6 +15,7 @@
 
 package org.apache.geode.management.internal.rest;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.lang.Identifiable.find;
 import static org.apache.geode.test.junit.assertions.ClusterManagementRealizationResultAssert.assertManagementResult;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -36,46 +37,47 @@ import org.apache.geode.cache.configuration.CacheConfig;
 import org.apache.geode.cache.configuration.EnumActionDestroyOverflow;
 import org.apache.geode.cache.configuration.RegionAttributesType;
 import org.apache.geode.cache.configuration.RegionConfig;
-import org.apache.geode.management.api.BaseConnectionConfig;
 import org.apache.geode.management.api.ClusterManagementRealizationResult;
 import org.apache.geode.management.api.ClusterManagementResult;
 import org.apache.geode.management.api.ClusterManagementService;
 import org.apache.geode.management.api.RealizationResult;
-import org.apache.geode.management.client.ClusterManagementServiceBuilder;
+import org.apache.geode.management.cluster.client.ClusterManagementServiceBuilder;
 import org.apache.geode.management.configuration.Region;
 import org.apache.geode.management.configuration.RegionType;
 import org.apache.geode.test.dunit.IgnoredException;
 import org.apache.geode.test.dunit.rules.ClusterStartupRule;
 import org.apache.geode.test.dunit.rules.MemberVM;
 import org.apache.geode.test.junit.rules.GeodeDevRestClient;
+import org.apache.geode.test.junit.rules.MemberStarterRule;
 
 public class RegionManagementDunitTest {
 
   @ClassRule
   public static ClusterStartupRule cluster = new ClusterStartupRule();
 
-  private static MemberVM locator, server1, server2, server3;
+  private static MemberVM locator;
+  private static MemberVM server1;
 
   private static GeodeDevRestClient restClient;
   private static ClusterManagementService cms;
 
   @BeforeClass
-  public static void beforeClass() throws Exception {
-    locator = cluster.startLocatorVM(0, l -> l.withHttpService());
+  public static void beforeClass() {
+    locator = cluster.startLocatorVM(0, MemberStarterRule::withHttpService);
     server1 = cluster.startServerVM(1, "group1", locator.getPort());
-    server2 = cluster.startServerVM(2, "group2", locator.getPort());
-    server3 = cluster.startServerVM(3, "group2,group3", locator.getPort());
+    cluster.startServerVM(2, "group2", locator.getPort());
+    cluster.startServerVM(3, "group2,group3", locator.getPort());
 
     restClient =
         new GeodeDevRestClient("/management/v1", "localhost", locator.getHttpPort(),
             false);
-    cms = new ClusterManagementServiceBuilder().setConnectionConfig(
-        new BaseConnectionConfig("localhost", locator.getHttpPort()))
+    cms = new ClusterManagementServiceBuilder()
+        .setPort(locator.getHttpPort())
         .build();
   }
 
   @Test
-  public void createsRegion() throws Exception {
+  public void createsRegion() {
     Region regionConfig = new Region();
     regionConfig.setName("customers");
     regionConfig.setGroup("group1");
@@ -95,7 +97,7 @@ public class RegionManagementDunitTest {
   }
 
   @Test
-  public void createRegionWithKeyValueConstraint() throws Exception {
+  public void createRegionWithKeyValueConstraint() {
     Region config = new Region();
     config.setName("customers2");
     config.setGroup("group1");
@@ -111,8 +113,9 @@ public class RegionManagementDunitTest {
     assertThat(config1.getKeyConstraint()).isEqualTo("java.lang.Boolean");
 
     server1.invoke(() -> {
-      org.apache.geode.cache.Region customers2 =
-          ClusterStartupRule.getCache().getInternalRegionByPath("/customers2");
+      @SuppressWarnings("unchecked")
+      org.apache.geode.cache.Region<Object, Object> customers2 =
+          ClusterStartupRule.getCache().getInternalRegionByPath(SEPARATOR + "customers2");
       assertThatThrownBy(() -> customers2.put("key", 2)).isInstanceOf(ClassCastException.class)
           .hasMessageContaining("does not satisfy keyConstraint");
       assertThatThrownBy(() -> customers2.put(Boolean.TRUE, "2"))
@@ -170,13 +173,13 @@ public class RegionManagementDunitTest {
 
   static void verifyRegionCreated(String regionName, String type) {
     Cache cache = ClusterStartupRule.getCache();
-    org.apache.geode.cache.Region region = cache.getRegion(regionName);
+    org.apache.geode.cache.Region<?, ?> region = cache.getRegion(regionName);
     assertThat(region).isNotNull();
     assertThat(region.getAttributes().getDataPolicy().toString()).isEqualTo(type);
   }
 
   @Test
-  public void createSameRegionOnDisjointGroups() throws Exception {
+  public void createSameRegionOnDisjointGroups() {
     Region regionConfig = new Region();
     regionConfig.setName("disJoint");
     regionConfig.setGroup("group1");
@@ -190,7 +193,7 @@ public class RegionManagementDunitTest {
   }
 
   @Test
-  public void createSameRegionOnGroupsWithCommonMember() throws Exception {
+  public void createSameRegionOnGroupsWithCommonMember() {
     Region regionConfig = new Region();
     regionConfig.setName("commonMember");
     regionConfig.setGroup("group2");
@@ -206,7 +209,7 @@ public class RegionManagementDunitTest {
   }
 
   @Test
-  public void createIncompatibleRegionOnDisjointGroups() throws Exception {
+  public void createIncompatibleRegionOnDisjointGroups() {
     Region regionConfig = new Region();
     regionConfig.setName("incompatible");
     regionConfig.setGroup("group4");
@@ -226,7 +229,7 @@ public class RegionManagementDunitTest {
   }
 
   @Test
-  public void createRegionWithExpiration() throws Exception {
+  public void createRegionWithExpiration() {
     Region region = new Region();
     String regionName = "createRegionWithExpiration";
     region.setName(regionName);
@@ -258,8 +261,8 @@ public class RegionManagementDunitTest {
 
     server1.invoke(() -> {
       Cache cache = ClusterStartupRule.getCache();
-      org.apache.geode.cache.Region actualRegion = cache.getRegion(regionName);
-      RegionAttributes attributes = actualRegion.getAttributes();
+      org.apache.geode.cache.Region<?, ?> actualRegion = cache.getRegion(regionName);
+      RegionAttributes<?, ?> attributes = actualRegion.getAttributes();
       assertThat(attributes.getStatisticsEnabled()).isTrue();
       assertThat(attributes.getEntryIdleTimeout().getTimeout()).isEqualTo(10000);
       assertThat(attributes.getEntryIdleTimeout().getAction()).isEqualTo(ExpirationAction.DESTROY);
@@ -313,8 +316,8 @@ public class RegionManagementDunitTest {
 
     server1.invoke(() -> {
       Cache cache = ClusterStartupRule.getCache();
-      org.apache.geode.cache.Region actualRegion = cache.getRegion(regionName);
-      RegionAttributes attributes = actualRegion.getAttributes();
+      org.apache.geode.cache.Region<?, ?> actualRegion = cache.getRegion(regionName);
+      RegionAttributes<?, ?> attributes = actualRegion.getAttributes();
       EvictionAttributes evictionAttributes = attributes.getEvictionAttributes();
       assertThat(evictionAttributes).isNotNull();
       assertThat(evictionAttributes.getAlgorithm()).isEqualTo(EvictionAlgorithm.LRU_ENTRY);

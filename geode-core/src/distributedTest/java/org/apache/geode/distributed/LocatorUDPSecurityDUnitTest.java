@@ -36,6 +36,7 @@ public class LocatorUDPSecurityDUnitTest extends LocatorDUnitTest {
     p.setProperty(SECURITY_UDP_DHALGO, "AES:128");
   }
 
+
   @Test
   public void testLocatorWithUDPSecurityButServer() {
     String locators = hostName + "[" + port1 + "]";
@@ -48,7 +49,7 @@ public class LocatorUDPSecurityDUnitTest extends LocatorDUnitTest {
       system = getConnectedDistributedSystem(props);
       fail("Should not have reached this line, it should have caught the exception.");
     } catch (GemFireConfigException e) {
-      assertThat(e.getMessage()).contains("Rejecting findCoordinatorRequest");
+      assertThat(e.getCause().getMessage()).contains("Rejecting findCoordinatorRequest");
     }
   }
 }

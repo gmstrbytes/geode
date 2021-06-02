@@ -53,8 +53,8 @@ import org.apache.geode.internal.cache.versions.VersionSource;
 import org.apache.geode.internal.logging.log4j.LogMarker;
 import org.apache.geode.internal.serialization.DataSerializableFixedID;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
-import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.internal.util.ArrayUtils;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 
@@ -174,6 +174,12 @@ public class DistributionAdvisor {
   private int numActiveProfiles;
 
   /**
+   * Profiles version number
+   */
+  protected volatile long profilesVersion = 0;
+
+
+  /**
    * A collection of MembershipListeners that want to be notified when a profile is added to or
    * removed from this DistributionAdvisor. The keys are membership listeners and the values are
    * Boolean.TRUE.
@@ -289,6 +295,11 @@ public class DistributionAdvisor {
         .mapToLong(CacheServer::getMaximumTimeBetweenPings).max().orElse(0L);
   }
 
+  @VisibleForTesting
+  MembershipListener getMembershipListener() {
+    return membershipListener;
+  }
+
   /**
    * find the region for a delta-gii operation (synch)
    */
@@ -368,7 +379,7 @@ public class DistributionAdvisor {
         membershipClosed = true;
         operationMonitor.close();
       }
-      getDistributionManager().removeMembershipListener(membershipListener);
+      getDistributionManagerWithNoCheck().removeMembershipListener(membershipListener);
     } catch (CancelException e) {
       // if distribution has stopped, above is a no-op.
     } catch (IllegalArgumentException ignore) {
@@ -1281,13 +1292,12 @@ public class DistributionAdvisor {
     // must synchronize when modifying profile array
 
     // don't add more than once, but replace existing profile
-    // try {
-
     int index = indexOfMemberId(p.getId());
     if (index >= 0) {
       Profile[] oldProfiles = profiles; // volatile read
       oldProfiles[index] = p;
       profiles = oldProfiles; // volatile write
+      profilesVersion++;
       return false;
     }
 
@@ -1297,6 +1307,7 @@ public class DistributionAdvisor {
     Objects.requireNonNull(newProfiles);
 
     profiles = newProfiles; // volatile write
+    profilesVersion++;
     setNumActiveProfiles(newProfiles.length);
 
     return true;
@@ -1315,6 +1326,7 @@ public class DistributionAdvisor {
       return profileRemoved;
     }
     return null;
+
   }
 
   private int indexOfMemberId(ProfileId id) {
@@ -1341,6 +1353,7 @@ public class DistributionAdvisor {
     System.arraycopy(oldProfiles, 0, newProfiles, 0, index);
     System.arraycopy(oldProfiles, index + 1, newProfiles, index, newProfiles.length - index);
     profiles = newProfiles; // volatile write
+    profilesVersion++;
     if (numActiveProfiles > 0) {
       numActiveProfiles--;
     }
@@ -1564,7 +1577,7 @@ public class DistributionAdvisor {
     }
 
     @Override
-    public Version[] getSerializationVersions() {
+    public KnownVersion[] getSerializationVersions() {
       return null;
     }
   }

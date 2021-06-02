@@ -15,6 +15,7 @@
 
 package org.apache.geode.management.internal.cli.commands;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.BeforeClass;
@@ -44,42 +45,47 @@ public class AlterRegionCommandIntegrationTest {
   }
 
   @Test
-  public void validateGroup() throws Exception {
-    gfsh.executeAndAssertThat("alter region --name=/REPLICATED --group=unknown").statusIsError()
+  public void validateGroup() {
+    gfsh.executeAndAssertThat("alter region --name=" + SEPARATOR + "REPLICATED --group=unknown")
+        .statusIsError()
         .containsOutput("No Members Found");
   }
 
   @Test
-  public void invalidCacheListener() throws Exception {
-    gfsh.executeAndAssertThat("alter region --name=/REPLICATED --cache-listener=abc-def")
+  public void invalidCacheListener() {
+    gfsh.executeAndAssertThat(
+        "alter region --name=" + SEPARATOR + "REPLICATED --cache-listener=abc-def")
         .statusIsError().containsOutput(
             "java.lang.IllegalArgumentException: Failed to convert 'abc-def' to type ClassName[] for option 'cache-listener'");
   }
 
   @Test
-  public void invalidCacheLoader() throws Exception {
-    gfsh.executeAndAssertThat("alter region --name=/REPLICATED --cache-loader=abc-def")
+  public void invalidCacheLoader() {
+    gfsh.executeAndAssertThat(
+        "alter region --name=" + SEPARATOR + "REPLICATED --cache-loader=abc-def")
         .statusIsError().containsOutput(
             "java.lang.IllegalArgumentException: Failed to convert 'abc-def' to type ClassName for option 'cache-loader'");
   }
 
   @Test
-  public void invalidCacheWriter() throws Exception {
-    gfsh.executeAndAssertThat("alter region --name=/REPLICATED --cache-writer=abc-def")
+  public void invalidCacheWriter() {
+    gfsh.executeAndAssertThat(
+        "alter region --name=" + SEPARATOR + "REPLICATED --cache-writer=abc-def")
         .statusIsError().containsOutput(
             "java.lang.IllegalArgumentException: Failed to convert 'abc-def' to type ClassName for option 'cache-writer'");
   }
 
   @Test
-  public void invalidEvictionMax() throws Exception {
-    gfsh.executeAndAssertThat("alter region --name=/REPLICATED --eviction-max=-1").statusIsError()
+  public void invalidEvictionMax() {
+    gfsh.executeAndAssertThat("alter region --name=" + SEPARATOR + "REPLICATED --eviction-max=-1")
+        .statusIsError()
         .containsOutput("Specify 0 or a positive integer value for eviction-max");
   }
 
 
   @Test
-  public void alterRegionWithGatewaySender() throws Exception {
-    Region region = server.getCache().getRegion("/REPLICATED");
+  public void alterRegionWithGatewaySender() {
+    Region<?, ?> region = server.getCache().getRegion(SEPARATOR + "REPLICATED");
     region.getAttributesMutator().addGatewaySenderId("1");
     gfsh.executeAndAssertThat("alter region --name=REPLICATED --gateway-sender-id='1,2'")
         .statusIsSuccess();
@@ -91,8 +97,8 @@ public class AlterRegionCommandIntegrationTest {
   }
 
   @Test
-  public void alterRegionWithAsyncEventQueue() throws Exception {
-    Region region = server.getCache().getRegion("/REPLICATED");
+  public void alterRegionWithAsyncEventQueue() {
+    Region<?, ?> region = server.getCache().getRegion(SEPARATOR + "REPLICATED");
     region.getAttributesMutator().addAsyncEventQueueId("1");
     gfsh.executeAndAssertThat("alter region --name=REPLICATED --async-event-queue-id='1,2'")
         .statusIsSuccess();

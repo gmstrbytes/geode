@@ -94,7 +94,10 @@ public abstract class AbstractJSONFormatter {
 
     // register the custom module
     mapper.registerModule(mapperModule);
+    // to support jdk8 java.time if jackson-datatype-jsr310 is included in the classpath
+    mapper.findAndRegisterModules();
 
+    mapper.disable(MapperFeature.USE_ANNOTATIONS);
     // allow objects with no content
     mapper.disable(SerializationFeature.FAIL_ON_EMPTY_BEANS);
     // use toString on Enums

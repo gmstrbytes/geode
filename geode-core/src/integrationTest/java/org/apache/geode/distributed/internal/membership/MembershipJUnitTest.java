@@ -31,7 +31,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.io.File;
-import java.net.InetAddress;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Properties;
@@ -66,8 +65,10 @@ import org.apache.geode.distributed.internal.membership.api.MembershipListener;
 import org.apache.geode.distributed.internal.membership.api.MembershipLocator;
 import org.apache.geode.distributed.internal.membership.api.MembershipView;
 import org.apache.geode.distributed.internal.membership.api.MessageListener;
+import org.apache.geode.distributed.internal.tcpserver.HostAddress;
 import org.apache.geode.distributed.internal.tcpserver.TcpClient;
 import org.apache.geode.distributed.internal.tcpserver.TcpSocketCreator;
+import org.apache.geode.distributed.internal.tcpserver.TcpSocketFactory;
 import org.apache.geode.internal.AvailablePortHelper;
 import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.admin.remote.RemoteTransportConfig;
@@ -136,7 +137,7 @@ public class MembershipJUnitTest {
 
       // boot up a locator
       int port = AvailablePortHelper.getRandomAvailableTCPPort();
-      InetAddress localHost = LocalHostUtil.getLocalHost();
+      HostAddress localHost = new HostAddress(LocalHostUtil.getLocalHost());
 
       // this locator will hook itself up with the first Membership
       // to be created
@@ -284,7 +285,8 @@ public class MembershipJUnitTest {
     final TcpClient locatorClient = new TcpClient(SocketCreatorFactory
         .getSocketCreatorForComponent(SecurableCommunicationChannel.LOCATOR),
         InternalDataSerializer.getDSFIDSerializer().getObjectSerializer(),
-        InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer());
+        InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer(),
+        TcpSocketFactory.DEFAULT);
     final TcpSocketCreator socketCreator = SocketCreatorFactory
         .getSocketCreatorForComponent(SecurableCommunicationChannel.CLUSTER);
     final GMSAuthenticator authenticator =
@@ -326,13 +328,14 @@ public class MembershipJUnitTest {
 
       // boot up a locator
       int port = AvailablePortHelper.getRandomAvailableTCPPort();
-      InetAddress localHost = LocalHostUtil.getLocalHost();
+      HostAddress localHost = new HostAddress(LocalHostUtil.getLocalHost());
       Properties p = new Properties();
       p.setProperty(ConfigurationProperties.SECURITY_UDP_DHALGO, "AES:128");
       // this locator will hook itself up with the first Membership
       // to be created
       internalLocator =
-          InternalLocator.startLocator(port, new File(""), null, null, localHost, false, p, null,
+          InternalLocator.startLocator(port, new File(""), null, null, localHost, false, p,
+              null,
               temporaryFolder.getRoot().toPath());
 
       // create configuration objects

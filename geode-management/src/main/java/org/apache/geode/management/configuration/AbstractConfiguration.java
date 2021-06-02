@@ -22,6 +22,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.apache.geode.annotations.Experimental;
 import org.apache.geode.lang.Identifiable;
 import org.apache.geode.management.api.ClusterManagementService;
+import org.apache.geode.management.api.CommandType;
 import org.apache.geode.management.api.JsonSerializable;
 import org.apache.geode.management.runtime.RuntimeInfo;
 
@@ -46,7 +47,7 @@ import org.apache.geode.management.runtime.RuntimeInfo;
 @Experimental
 public abstract class AbstractConfiguration<R extends RuntimeInfo>
     implements Identifiable<String>, JsonSerializable {
-
+  private static final long serialVersionUID = -6612840641128145954L;
   /**
    * The reserved group name that represents the predefined "cluster" group.
    * Every member of a cluster automatically belongs to this group.
@@ -93,5 +94,10 @@ public abstract class AbstractConfiguration<R extends RuntimeInfo>
   @JsonIgnore
   public boolean isGlobalRuntime() {
     return false;
+  }
+
+  @JsonIgnore
+  public CommandType getCreationCommandType() {
+    return CommandType.CREATE;
   }
 }

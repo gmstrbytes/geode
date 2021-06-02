@@ -140,7 +140,6 @@ import org.apache.geode.cache.wan.GatewaySender;
 import org.apache.geode.distributed.DistributedLockService;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.LockServiceDestroyedException;
-import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DistributionAdvisee;
 import org.apache.geode.distributed.internal.DistributionAdvisor;
 import org.apache.geode.distributed.internal.DistributionAdvisor.Profile;
@@ -154,6 +153,7 @@ import org.apache.geode.distributed.internal.OperationExecutors;
 import org.apache.geode.distributed.internal.ProfileListener;
 import org.apache.geode.distributed.internal.ReplyException;
 import org.apache.geode.distributed.internal.ReplyProcessor21;
+import org.apache.geode.distributed.internal.ResourceEvent;
 import org.apache.geode.distributed.internal.locks.DLockRemoteToken;
 import org.apache.geode.distributed.internal.locks.DLockService;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
@@ -169,6 +169,7 @@ import org.apache.geode.internal.cache.control.MemoryEvent;
 import org.apache.geode.internal.cache.eviction.EvictionController;
 import org.apache.geode.internal.cache.eviction.HeapEvictor;
 import org.apache.geode.internal.cache.execute.AbstractExecution;
+import org.apache.geode.internal.cache.execute.BucketMovedException;
 import org.apache.geode.internal.cache.execute.FunctionExecutionNodePruner;
 import org.apache.geode.internal.cache.execute.FunctionRemoteContext;
 import org.apache.geode.internal.cache.execute.InternalFunctionInvocationTargetException;
@@ -231,7 +232,6 @@ import org.apache.geode.internal.cache.tier.sockets.BaseCommand;
 import org.apache.geode.internal.cache.tier.sockets.ClientProxyMembershipID;
 import org.apache.geode.internal.cache.tier.sockets.ServerConnection;
 import org.apache.geode.internal.cache.tier.sockets.VersionedObjectList;
-import org.apache.geode.internal.cache.tier.sockets.command.Get70;
 import org.apache.geode.internal.cache.versions.ConcurrentCacheModificationException;
 import org.apache.geode.internal.cache.versions.RegionVersionVector;
 import org.apache.geode.internal.cache.versions.VersionStamp;
@@ -247,7 +247,7 @@ import org.apache.geode.internal.logging.log4j.LogMarker;
 import org.apache.geode.internal.offheap.annotations.Released;
 import org.apache.geode.internal.offheap.annotations.Unretained;
 import org.apache.geode.internal.sequencelog.RegionLogger;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.size.Sizeable;
 import org.apache.geode.internal.statistics.StatisticsClock;
 import org.apache.geode.internal.util.TransformUtils;
@@ -609,6 +609,29 @@ public class PartitionedRegion extends LocalRegion
     return redundancyTracker;
   }
 
+  public void computeWithPrimaryLocked(Object key, Runnable r) throws PrimaryBucketLockException {
+    int bucketId = PartitionedRegionHelper.getHashKey(this, null, key, null, null);
+
+    BucketRegion br;
+    try {
+      br = this.dataStore.getInitializedBucketForId(key, bucketId);
+    } catch (ForceReattemptException e) {
+      throw new BucketMovedException(e);
+    }
+
+    try {
+      br.doLockForPrimary(false);
+    } catch (PrimaryBucketException e) {
+      throw new PrimaryBucketLockException("retry since primary lock failed: " + e);
+    }
+
+    try {
+      r.run();
+    } finally {
+      br.doUnlockForPrimary();
+    }
+  }
+
 
   public static class PRIdMap extends HashMap {
     private static final long serialVersionUID = 3667357372967498179L;
@@ -744,6 +767,8 @@ public class PartitionedRegion extends LocalRegion
 
   private final PartitionedRegionRedundancyTracker redundancyTracker;
 
+  private boolean regionCreationNotified;
+
   /**
    * Constructor for a PartitionedRegion. This has an accessor (Region API) functionality and
    * contains a datastore for actual storage. An accessor can act as a local cache by having a local
@@ -764,7 +789,7 @@ public class PartitionedRegion extends LocalRegion
     this.node = initializeNode();
     this.prStats = new PartitionedRegionStats(cache.getDistributedSystem(), getFullPath(),
         statisticsClock);
-    this.regionIdentifier = getFullPath().replace('/', '#');
+    this.regionIdentifier = getFullPath().replace(Region.SEPARATOR_CHAR, '#');
 
     if (logger.isDebugEnabled()) {
       logger.debug("Constructing Partitioned Region {}", regionName);
@@ -840,7 +865,7 @@ public class PartitionedRegion extends LocalRegion
     if (this.getEvictionAttributes() != null
         && this.getEvictionAttributes().getAlgorithm().isLRUHeap()) {
       this.sortedBuckets = new ArrayList<BucketRegion>();
-      this.bucketSorter = LoggingExecutors.newScheduledThreadPool("BucketSorterThread", 1);
+      this.bucketSorter = LoggingExecutors.newScheduledThreadPool(1, "BucketSorterThread");
     }
     // If eviction is on, Create an instance of PartitionedRegionLRUStatistics
     if ((this.getEvictionAttributes() != null
@@ -856,7 +881,7 @@ public class PartitionedRegion extends LocalRegion
       this.isShadowPR = true;
       this.parallelGatewaySender = internalRegionArgs.getParallelGatewaySender();
     }
-
+    this.regionCreationNotified = false;
 
     /*
      * Start persistent profile logging if we are a persistent region.
@@ -884,9 +909,8 @@ public class PartitionedRegion extends LocalRegion
          * Don't bother logging membership activity if our region isn't ready.
          */
         if (isInitialized()) {
-          CacheProfile cacheProfile =
-              ((profile instanceof CacheProfile) ? (CacheProfile) profile : null);
-          Set<String> onlineMembers = new HashSet<String>();
+          CacheProfile cacheProfile = (CacheProfile) profile;
+          Set<String> onlineMembers = new HashSet<>();
 
           TransformUtils.transform(
               PartitionedRegion.this.distAdvisor.advisePersistentMembers().values(), onlineMembers,
@@ -1227,7 +1251,7 @@ public class PartitionedRegion extends LocalRegion
   void distributeUpdatedProfileOnSenderCreation() {
     if (!(this.isClosed || this.isLocallyDestroyed)) {
       // tell others of the change in status
-      this.requiresNotification = true;
+      requiresNotification = true;
       new UpdateAttributesProcessor(this).distribute(false);
     }
   }
@@ -1236,8 +1260,10 @@ public class PartitionedRegion extends LocalRegion
   public void addGatewaySenderId(String gatewaySenderId) {
     super.addGatewaySenderId(gatewaySenderId);
     new UpdateAttributesProcessor(this).distribute();
-    ((PartitionedRegion) this).distributeUpdatedProfileOnSenderCreation();
     GatewaySender sender = getCache().getGatewaySender(gatewaySenderId);
+    if (sender != null && !sender.isParallel()) {
+      distributeUpdatedProfileOnSenderCreation();
+    }
     if (sender != null && sender.isParallel() && sender.isRunning()) {
       AbstractGatewaySender senderImpl = (AbstractGatewaySender) sender;
       ((ConcurrentParallelGatewaySenderQueue) senderImpl.getQueues().toArray(new RegionQueue[1])[0])
@@ -1282,10 +1308,11 @@ public class PartitionedRegion extends LocalRegion
   @Override
   public void addAsyncEventQueueId(String asyncEventQueueId, boolean isInternal) {
     super.addAsyncEventQueueId(asyncEventQueueId, isInternal);
-    new UpdateAttributesProcessor(this).distribute();
-    ((PartitionedRegion) this).distributeUpdatedProfileOnSenderCreation();
     GatewaySender sender = getCache()
         .getGatewaySender(AsyncEventQueueImpl.getSenderIdFromAsyncEventQueueId(asyncEventQueueId));
+    if (sender != null && !sender.isParallel()) {
+      distributeUpdatedProfileOnSenderCreation();
+    }
     if (sender != null && sender.isParallel() && sender.isRunning()) {
       AbstractGatewaySender senderImpl = (AbstractGatewaySender) sender;
       ((ConcurrentParallelGatewaySenderQueue) senderImpl.getQueues().toArray(new RegionQueue[1])[0])
@@ -1874,7 +1901,7 @@ public class PartitionedRegion extends LocalRegion
   }
 
   @Override
-  public long getLastModifiedTime() {
+  public synchronized long getLastModifiedTime() {
     if (!this.canStoreDataLocally()) {
       return 0;
     }
@@ -1885,7 +1912,7 @@ public class PartitionedRegion extends LocalRegion
   }
 
   @Override
-  public long getLastAccessedTime() {
+  public synchronized long getLastAccessedTime() {
     if (!this.canStoreDataLocally()) {
       return 0;
     }
@@ -2487,8 +2514,8 @@ public class PartitionedRegion extends LocalRegion
     }
     this.prStats.endRemoveAll(startTime);
     if (!keyToVersionMap.isEmpty()) {
-      for (Iterator it = successfulOps.getKeys().iterator(); it.hasNext();) {
-        successfulOps.addVersion(keyToVersionMap.get(it.next()));
+      for (Object o : successfulOps.getKeys()) {
+        successfulOps.addVersion(keyToVersionMap.get(o));
       }
       keyToVersionMap.clear();
     }
@@ -2614,9 +2641,7 @@ public class PartitionedRegion extends LocalRegion
             retryTime.waitToRetryNode();
           }
           event.setPossibleDuplicate(true);
-          if (prMsg != null) {
-            prMsg.setPossibleDuplicate(true);
-          }
+          prMsg.setPossibleDuplicate(true);
         } catch (PrimaryBucketException notPrimary) {
           if (isDebugEnabled) {
             logger.debug("Bucket {} on Node {} not primnary", notPrimary.getLocalizedMessage(),
@@ -3578,7 +3603,7 @@ public class PartitionedRegion extends LocalRegion
       boolean isBucketSetAsFilter) {
     final Set routingKeys = execution.getFilter();
     final boolean primaryMembersNeeded = function.optimizeForWrite();
-    HashMap<Integer, HashSet> bucketToKeysMap = FunctionExecutionNodePruner.groupByBucket(this,
+    Map<Integer, Set> bucketToKeysMap = FunctionExecutionNodePruner.groupByBucket(this,
         routingKeys, primaryMembersNeeded, false, isBucketSetAsFilter);
     HashMap<InternalDistributedMember, HashSet> memberToKeysMap =
         new HashMap<InternalDistributedMember, HashSet>();
@@ -3713,7 +3738,7 @@ public class PartitionedRegion extends LocalRegion
         FunctionRemoteContext context = new FunctionRemoteContext(function,
             execution.getArgumentsForMember(recip.getId()), memKeys,
             FunctionExecutionNodePruner.getBucketSet(this, memKeys, false, isBucketSetAsFilter),
-            execution.isReExecute(), execution.isFnSerializationReqd());
+            execution.isReExecute(), execution.isFnSerializationReqd(), getPrincipal());
         recipMap.put(recip, context);
       }
       if (logger.isDebugEnabled()) {
@@ -3726,6 +3751,10 @@ public class PartitionedRegion extends LocalRegion
       return resultReceiver.getPartitionedDataFrom(recipMap, this, execution);
     }
     return localResultCollector;
+  }
+
+  private Object getPrincipal() {
+    return cache.getSecurityService().getPrincipal();
   }
 
   /**
@@ -3931,7 +3960,7 @@ public class PartitionedRegion extends LocalRegion
     for (InternalDistributedMember recip : dest) {
       FunctionRemoteContext context = new FunctionRemoteContext(function,
           execution.getArgumentsForMember(recip.getId()), null, memberToBuckets.get(recip),
-          execution.isReExecute(), execution.isFnSerializationReqd());
+          execution.isReExecute(), execution.isFnSerializationReqd(), getPrincipal());
       recipMap.put(recip, context);
     }
     final LocalResultCollector<?, ?> localRC = execution.getLocalResultCollector(function, rc);
@@ -4025,7 +4054,7 @@ public class PartitionedRegion extends LocalRegion
     for (InternalDistributedMember recip : memberToBuckets.keySet()) {
       FunctionRemoteContext context = new FunctionRemoteContext(function,
           execution.getArgumentsForMember(recip.getId()), null, memberToBuckets.get(recip),
-          execution.isReExecute(), execution.isFnSerializationReqd());
+          execution.isReExecute(), execution.isFnSerializationReqd(), getPrincipal());
       recipMap.put(recip, context);
     }
     final LocalResultCollector<?, ?> localResultCollector =
@@ -4503,7 +4532,7 @@ public class PartitionedRegion extends LocalRegion
   /**
    * Fetches entries from local and remote nodes and appends these to register-interest response.
    */
-  public void fetchEntries(HashMap<Integer, HashSet> bucketKeys, VersionedObjectList values,
+  public void fetchEntries(HashMap<Integer, HashSet<Object>> bucketKeys, VersionedObjectList values,
       ServerConnection servConn) throws IOException {
     int retryAttempts = calcRetry();
     RetryTimeKeeper retryTime = null;
@@ -4526,18 +4555,6 @@ public class PartitionedRegion extends LocalRegion
           BaseCommand.appendNewRegisterInterestResponseChunkFromLocal(this, values, "keyList", keys,
               servConn);
         }
-      }
-
-      // Handle old nodes for Rolling Upgrade support
-      Set<Integer> failedSet = handleOldNodes(nodeToBuckets, values, servConn);
-      // Add failed buckets to nodeToBuckets map so that these will be tried on
-      // remote nodes.
-      if (!failedSet.isEmpty()) {
-        for (Integer bId : failedSet) {
-          failures.put(bId, bucketKeys.get(bId));
-        }
-        updateNodeToBucketMap(nodeToBuckets, failures);
-        failures.clear();
       }
 
       fetchRemoteEntries(nodeToBuckets, failures, values, servConn);
@@ -4571,87 +4588,6 @@ public class PartitionedRegion extends LocalRegion
     }
   }
 
-  /**
-   * @return set of bucket-ids that could not be read from.
-   */
-  private Set<Integer> handleOldNodes(HashMap nodeToBuckets, VersionedObjectList values,
-      ServerConnection servConn) throws IOException {
-    Set<Integer> failures = new HashSet<Integer>();
-    HashMap oldFellas = filterOldMembers(nodeToBuckets);
-    for (Iterator it = oldFellas.entrySet().iterator(); it.hasNext();) {
-      Map.Entry e = (Map.Entry) it.next();
-      InternalDistributedMember member = (InternalDistributedMember) e.getKey();
-      Object bucketInfo = e.getValue();
-
-      HashMap<Integer, HashSet> bucketKeys = null;
-      Set<Integer> buckets = null;
-
-      if (bucketInfo instanceof Set) {
-        buckets = (Set<Integer>) bucketInfo;
-      } else {
-        bucketKeys = (HashMap<Integer, HashSet>) bucketInfo;
-        buckets = bucketKeys.keySet();
-      }
-
-      for (Integer bucket : buckets) {
-        Set keys = null;
-        if (bucketKeys == null) {
-          try {
-            FetchKeysResponse fkr = FetchKeysMessage.send(member, this, bucket, true);
-            keys = fkr.waitForKeys();
-          } catch (ForceReattemptException ignore) {
-            failures.add(bucket);
-          }
-        } else {
-          keys = bucketKeys.get(bucket);
-        }
-
-        // TODO (ashetkar) Use single Get70 instance for all?
-        for (Object key : keys) {
-          Get70 command = (Get70) Get70.getCommand();
-          Get70.Entry ge = command.getValueAndIsObject(this, key, null, servConn);
-
-          if (ge.keyNotPresent) {
-            values.addObjectPartForAbsentKey(key, ge.value, ge.versionTag);
-          } else {
-            values.addObjectPart(key, ge.value, ge.isObject, ge.versionTag);
-          }
-
-          if (values.size() == BaseCommand.MAXIMUM_CHUNK_SIZE) {
-            BaseCommand.sendNewRegisterInterestResponseChunk(this, "keyList", values, false,
-                servConn);
-            values.clear();
-          }
-        }
-      }
-    }
-    return failures;
-  }
-
-  /**
-   * @param nodeToBuckets A map with InternalDistributedSystem as key and either HashSet or
-   *        HashMap<Integer, HashSet> as value.
-   * @return Map of <old members, set/map of bucket ids they host>.
-   */
-  private HashMap filterOldMembers(HashMap nodeToBuckets) {
-    ClusterDistributionManager dm = (ClusterDistributionManager) getDistributionManager();
-    HashMap oldGuys = new HashMap();
-
-    Set<InternalDistributedMember> oldMembers =
-        new HashSet<InternalDistributedMember>(nodeToBuckets.keySet());
-    dm.removeMembersWithSameOrNewerVersion(oldMembers, Version.CURRENT);
-    Iterator<InternalDistributedMember> oldies = oldMembers.iterator();
-    while (oldies.hasNext()) {
-      InternalDistributedMember old = oldies.next();
-      if (nodeToBuckets.containsKey(old)) {
-        oldGuys.put(old, nodeToBuckets.remove(old));
-      } else {
-        oldies.remove();
-      }
-    }
-
-    return oldGuys;
-  }
 
   /**
    * Fetches entries from local and remote nodes and appends these to register-interest response.
@@ -4684,14 +4620,6 @@ public class PartitionedRegion extends LocalRegion
       // remote nodes.
       updateNodeToBucketMap(nodeToBuckets, failures);
       failures.clear();
-
-      // Handle old nodes for Rolling Upgrade support
-      Set<Integer> ret = handleOldNodes(nodeToBuckets, values, servConn);
-      if (!ret.isEmpty()) {
-        failures.addAll(ret);
-        updateNodeToBucketMap(nodeToBuckets, failures);
-        failures.clear();
-      }
 
       localBuckets = nodeToBuckets.remove(getMyId());
       if (localBuckets != null && !localBuckets.isEmpty()) {
@@ -4784,7 +4712,7 @@ public class PartitionedRegion extends LocalRegion
         oneBucketKeys.clear();
         oneBucketKeys.put(e.getKey(), e.getValue());
         try {
-          if (entry.getKey().getVersionObject().compareTo(Version.GFE_80) < 0) {
+          if (entry.getKey().getVersion().isOlderThan(KnownVersion.GFE_80)) {
             failures.putAll(nodeToBuckets.get(entry.getKey()));
             continue;
           }
@@ -4836,7 +4764,7 @@ public class PartitionedRegion extends LocalRegion
         bucketId.clear();
         bucketId.add(bucket);
         try {
-          if (entry.getKey().getVersionObject().compareTo(Version.GFE_80) < 0) {
+          if (entry.getKey().getVersion().isOlderThan(KnownVersion.GFE_80)) {
             failures.addAll(nodeToBuckets.get(entry.getKey()));
             continue;
           }
@@ -4938,7 +4866,7 @@ public class PartitionedRegion extends LocalRegion
             resultSender);
 
     FunctionRemoteContext context = new FunctionRemoteContext(function, object, routingKeys,
-        bucketArray, execution.isReExecute(), execution.isFnSerializationReqd());
+        bucketArray, execution.isReExecute(), execution.isFnSerializationReqd(), getPrincipal());
 
     HashMap<InternalDistributedMember, FunctionRemoteContext> recipMap =
         new HashMap<InternalDistributedMember, FunctionRemoteContext>();
@@ -7013,8 +6941,8 @@ public class PartitionedRegion extends LocalRegion
       DLockService ls1 = lockService;
       DLockService ls2 = other.lockService;
       if (ls1 == null || ls2 == null) {
-        if (ls1 != ls2)
-          return false;
+        // If both are null, return true, if only one is null, return false
+        return ls1 == ls2;
       }
       return ls1.equals(ls2);
     }
@@ -8099,8 +8027,8 @@ public class PartitionedRegion extends LocalRegion
    * A test method to get the list of all the bucket ids for the partitioned region in the data
    * Store.
    */
-  public List getLocalBucketsListTestOnly() {
-    List localBucketList = null;
+  public List<Integer> getLocalBucketsListTestOnly() {
+    List<Integer> localBucketList = null;
     if (this.dataStore != null) {
       localBucketList = this.dataStore.getLocalBucketsListTestOnly();
     }
@@ -8111,8 +8039,8 @@ public class PartitionedRegion extends LocalRegion
    * A test method to get the list of all the primary bucket ids for the partitioned region in the
    * data Store.
    */
-  public List getLocalPrimaryBucketsListTestOnly() {
-    List localPrimaryList = null;
+  public List<Integer> getLocalPrimaryBucketsListTestOnly() {
+    List<Integer> localPrimaryList = null;
     if (this.dataStore != null) {
       localPrimaryList = this.dataStore.getLocalPrimaryBucketsListTestOnly();
     }
@@ -9010,20 +8938,21 @@ public class PartitionedRegion extends LocalRegion
    *         is the primary
    * @throws ForceReattemptException if the caller should reattempt this request
    */
-  public List getBucketOwnersForValidation(int bucketId) throws ForceReattemptException {
+  public List<Object[]> getBucketOwnersForValidation(int bucketId) throws ForceReattemptException {
     // bucketid 1 => "vm A", false | "vm B", false | "vm C", true | "vm D", false
     // bucketid 2 => List< Tuple(MemberId mem, Boolean isPrimary) >
 
     // remotely fetch each VM's bucket meta-data (versus looking at the bucket
     // advisor's data
     RuntimeException rte = null;
-    List remoteInfos = null;
+    List<Object[]> remoteInfos = new LinkedList<>();
     for (int i = 0; i < 3; i++) {
       rte = null;
       DumpB2NResponse response =
           DumpB2NRegion.send(getRegionAdvisor().adviseDataStore(), this, bucketId, true);
       try {
-        remoteInfos = new LinkedList(response.waitForPrimaryInfos());
+        remoteInfos.addAll(response.waitForPrimaryInfos());
+        break;
       } catch (TimeoutException e) {
         rte = e;
         logger.info("DumpB2NRegion failed to get PR {}, bucket id {}'s info due to {}, retrying...",
@@ -9315,8 +9244,10 @@ public class PartitionedRegion extends LocalRegion
      * updatePRConfig(...) to make changes that cause bucket creation to live lock
      */
     PartitionRegionHelper.assignBucketsToPartitions(this);
-    dataStore.lockBucketCreationAndVisit(
-        (bucketId, r) -> r.getAttributesMutator().setEntryTimeToLive(timeToLive));
+    if (dataStore != null) {
+      dataStore.lockBucketCreationAndVisit(
+          (bucketId, r) -> r.getAttributesMutator().setEntryTimeToLive(timeToLive));
+    }
     updatePartitionRegionConfig(config -> config.setEntryTimeToLive(timeToLive));
     return attr;
   }
@@ -9331,8 +9262,10 @@ public class PartitionedRegion extends LocalRegion
   public CustomExpiry setCustomEntryTimeToLive(CustomExpiry custom) {
     CustomExpiry expiry = super.setCustomEntryTimeToLive(custom);
     // Set to Bucket regions as well
-    dataStore.lockBucketCreationAndVisit(
-        (bucketId, r) -> r.getAttributesMutator().setCustomEntryTimeToLive(custom));
+    if (dataStore != null) {
+      dataStore.lockBucketCreationAndVisit(
+          (bucketId, r) -> r.getAttributesMutator().setCustomEntryTimeToLive(custom));
+    }
     return expiry;
   }
 
@@ -9357,9 +9290,10 @@ public class PartitionedRegion extends LocalRegion
      */
     PartitionRegionHelper.assignBucketsToPartitions(this);
     // Set to Bucket regions as well
-    dataStore.lockBucketCreationAndVisit(
-        (bucketId, r) -> r.getAttributesMutator().setEntryIdleTimeout(idleTimeout));
-
+    if (dataStore != null) {
+      dataStore.lockBucketCreationAndVisit(
+          (bucketId, r) -> r.getAttributesMutator().setEntryIdleTimeout(idleTimeout));
+    }
     updatePartitionRegionConfig(config -> config.setEntryIdleTimeout(idleTimeout));
     return attr;
   }
@@ -9374,8 +9308,10 @@ public class PartitionedRegion extends LocalRegion
   public CustomExpiry setCustomEntryIdleTimeout(CustomExpiry custom) {
     CustomExpiry expiry = super.setCustomEntryIdleTimeout(custom);
     // Set to Bucket regions as well
-    dataStore.lockBucketCreationAndVisit(
-        (bucketId, r) -> r.getAttributesMutator().setCustomEntryIdleTimeout(custom));
+    if (dataStore != null) {
+      dataStore.lockBucketCreationAndVisit(
+          (bucketId, r) -> r.getAttributesMutator().setCustomEntryIdleTimeout(custom));
+    }
     return expiry;
   }
 
@@ -9546,7 +9482,7 @@ public class PartitionedRegion extends LocalRegion
           count++;
         }
       }
-      Assert.assertTrue(br != null, "Could not create storage for Entry");
+      Assert.assertNotNull(br, "Could not create storage for Entry");
       if (keyInfo.isCheckPrimary()) {
         br.checkForPrimary();
       }
@@ -10168,5 +10104,26 @@ public class PartitionedRegion extends LocalRegion
   @VisibleForTesting
   public SenderIdMonitor getSenderIdMonitor() {
     return senderIdMonitor;
+  }
+
+  @Override
+  public boolean isRegionCreateNotified() {
+    return this.regionCreationNotified;
+  }
+
+  @Override
+  public void setRegionCreateNotified(boolean notified) {
+    this.regionCreationNotified = notified;
+  };
+
+  void notifyRegionCreated() {
+    if (regionCreationNotified)
+      return;
+    this.getSystem().handleResourceEvent(ResourceEvent.REGION_CREATE, this);
+    this.regionCreationNotified = true;
+  }
+
+  public boolean areRecoveriesInProgress() {
+    return prStats.getRecoveriesInProgress() > 0;
   }
 }

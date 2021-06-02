@@ -15,6 +15,7 @@
 
 package org.apache.geode.management.internal.cli.commands;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
@@ -61,7 +62,8 @@ public class DestroyRegionCommandTest {
   private List<CacheElement> cacheElementList = Collections.singletonList(cacheElement);
 
   @Before
-  public void before() throws Exception {
+  @SuppressWarnings("unchecked")
+  public void before() {
     xmlEntity = mock(XmlEntity.class);
     command = spy(DestroyRegionCommand.class);
     ccService = mock(InternalConfigurationPersistenceService.class);
@@ -69,6 +71,7 @@ public class DestroyRegionCommandTest {
     doReturn(mock(InternalCache.class)).when(command).getCache();
 
     List<CliFunctionResult> functionResults = new ArrayList<>();
+
     doReturn(functionResults).when(command).executeAndGetFunctionResult(any(), any(),
         any(Set.class));
     result1 = mock(CliFunctionResult.class);
@@ -87,14 +90,14 @@ public class DestroyRegionCommandTest {
     parser.executeAndAssertThat(command, "destroy region --name=").statusIsError()
         .containsOutput("Invalid command");
 
-    parser.executeAndAssertThat(command, "destroy region --name=/").statusIsError()
+    parser.executeAndAssertThat(command, "destroy region --name=" + SEPARATOR).statusIsError()
         .containsOutput("Invalid command");
   }
 
   @Test
   public void regionConverterApplied() {
     GfshParseResult parseResult = parser.parse("destroy region --name=test");
-    assertThat(parseResult.getParamValue("name")).isEqualTo("/test");
+    assertThat(parseResult.getParamValue("name")).isEqualTo(SEPARATOR + "test");
   }
 
   @Test
@@ -108,6 +111,7 @@ public class DestroyRegionCommandTest {
   }
 
   @Test
+  @SuppressWarnings("deprecation")
   public void multipleResultReturned_oneSucess_oneFailed() {
     // mock this to pass the member search call
     doReturn(Collections.singleton(DistributedMember.class)).when(command)
@@ -127,6 +131,7 @@ public class DestroyRegionCommandTest {
   }
 
   @Test
+  @SuppressWarnings("deprecation")
   public void multipleResultReturned_oneSuccess_oneException() {
     // mock this to pass the member search call
     doReturn(Collections.singleton(DistributedMember.class)).when(command)
@@ -178,7 +183,7 @@ public class DestroyRegionCommandTest {
   public void checkForJDBCMappingWithRegionPathThrowsIllegalStateException() {
     setupJDBCMappingOnRegion("regionName");
 
-    command.checkForJDBCMapping("/regionName");
+    command.checkForJDBCMapping(SEPARATOR + "regionName");
   }
 
   @Test(expected = IllegalStateException.class)
@@ -190,7 +195,7 @@ public class DestroyRegionCommandTest {
 
   @Test(expected = IllegalStateException.class)
   public void checkForJDBCMappingWithRegionNameThrowsIllegalStateExceptionForGroup() {
-    Set<String> groups = new HashSet<String>();
+    Set<String> groups = new HashSet<>();
     groups.add("Group1");
     doReturn(groups).when(ccService).getGroups();
     setupJDBCMappingOnRegion("regionName");

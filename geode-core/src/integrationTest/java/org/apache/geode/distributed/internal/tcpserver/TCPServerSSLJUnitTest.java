@@ -109,7 +109,7 @@ public class TCPServerSSLJUnitTest {
      */
     socketCreator.setFailTLSHandshake(false);
 
-    getTcpClient().stop(localhost, port);
+    getTcpClient().stop(new HostAndPort(localhost.getHostAddress(), port));
 
     server.join(60 * 1000);
 
@@ -121,7 +121,8 @@ public class TCPServerSSLJUnitTest {
 
     try {
 
-      getTcpClient().requestToServer(localhost, port, Boolean.valueOf(false), 5 * 1000);
+      getTcpClient().requestToServer(new HostAndPort(localhost.getHostAddress(), port),
+          Boolean.valueOf(false), 5 * 1000);
       throw new AssertionError("expected to get an exception but didn't");
 
     } catch (final IllegalStateException | IOException t) {
@@ -159,7 +160,8 @@ public class TCPServerSSLJUnitTest {
             new DistributionConfigImpl(getSSLConfigurationProperties()),
             SecurableCommunicationChannel.LOCATOR),
         InternalDataSerializer.getDSFIDSerializer().getObjectSerializer(),
-        InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer());
+        InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer(),
+        TcpSocketFactory.DEFAULT);
   }
 
 }

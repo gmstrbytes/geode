@@ -25,7 +25,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
-import java.util.concurrent.Semaphore;
 
 import org.apache.logging.log4j.Logger;
 
@@ -36,7 +35,6 @@ import org.apache.geode.SystemFailure;
 import org.apache.geode.alerting.internal.spi.AlertingAction;
 import org.apache.geode.cache.TimeoutException;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.distributed.DistributedSystemDisconnectedException;
 import org.apache.geode.distributed.internal.ClusterDistributionManager;
 import org.apache.geode.distributed.internal.DMStats;
 import org.apache.geode.distributed.internal.DirectReplyProcessor;
@@ -51,6 +49,7 @@ import org.apache.geode.distributed.internal.membership.api.MessageListener;
 import org.apache.geode.internal.cache.DirectReplyMessage;
 import org.apache.geode.internal.inet.LocalHostUtil;
 import org.apache.geode.internal.logging.log4j.LogMarker;
+import org.apache.geode.internal.net.BufferPool;
 import org.apache.geode.internal.tcp.BaseMsgStreamer;
 import org.apache.geode.internal.tcp.ConnectExceptions;
 import org.apache.geode.internal.tcp.Connection;
@@ -58,7 +57,6 @@ import org.apache.geode.internal.tcp.ConnectionException;
 import org.apache.geode.internal.tcp.MsgStreamer;
 import org.apache.geode.internal.tcp.TCPConduit;
 import org.apache.geode.internal.util.Breadcrumbs;
-import org.apache.geode.internal.util.concurrent.ReentrantSemaphore;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
@@ -74,6 +72,8 @@ public class DirectChannel {
   /** this is the conduit used for communications */
   private final transient TCPConduit conduit;
   private final ClusterDistributionManager dm;
+  private final DMStats stats;
+  private final BufferPool bufferPool;
 
   private volatile boolean disconnected = true;
 
@@ -98,8 +98,6 @@ public class DirectChannel {
     if (disconnected) {
       disconnected = false;
       disconnectCompleted = false;
-      this.groupOrderedSenderSem = new ReentrantSemaphore(MAX_GROUP_SENDERS);
-      this.groupUnorderedSenderSem = new ReentrantSemaphore(MAX_GROUP_SENDERS);
     }
   }
 
@@ -117,6 +115,8 @@ public class DirectChannel {
       throws ConnectionException {
     this.receiver = listener;
     this.dm = dm;
+    this.stats = dm.getStats();
+    this.bufferPool = new BufferPool(stats);
 
     DistributionConfig dc = dm.getConfig();
     this.address = initAddress(dc);
@@ -142,11 +142,9 @@ public class DirectChannel {
       props.setProperty("membership_port_range_start", "" + range[0]);
       props.setProperty("membership_port_range_end", "" + range[1]);
 
-      this.conduit = new TCPConduit(mgr, port, address, isBindAddress, this, props);
+      this.conduit = new TCPConduit(mgr, port, address, isBindAddress, this, bufferPool, props);
       disconnected = false;
       disconnectCompleted = false;
-      this.groupOrderedSenderSem = new ReentrantSemaphore(MAX_GROUP_SENDERS);
-      this.groupUnorderedSenderSem = new ReentrantSemaphore(MAX_GROUP_SENDERS);
       logger.info("GemFire P2P Listener started on {}",
           conduit.getSocketId());
 
@@ -156,65 +154,6 @@ public class DirectChannel {
           ce);
       throw ce; // fix for bug 31973
     }
-  }
-
-
-  /**
-   * Return how many concurrent operations should be allowed by default. since 6.6, this has been
-   * raised to Integer.MAX value from the number of available processors. Setting this to a lower
-   * value raises the possibility of a deadlock when serializing a message with PDX objects, because
-   * the PDX serialization can trigger further distribution.
-   */
-  public static final int DEFAULT_CONCURRENCY_LEVEL =
-      Integer.getInteger("p2p.defaultConcurrencyLevel", Integer.MAX_VALUE / 2).intValue();
-
-  /**
-   * The maximum number of concurrent senders sending a message to a group of recipients.
-   */
-  private static final int MAX_GROUP_SENDERS =
-      Integer.getInteger("p2p.maxGroupSenders", DEFAULT_CONCURRENCY_LEVEL).intValue();
-  private Semaphore groupUnorderedSenderSem;
-  private Semaphore groupOrderedSenderSem;
-
-  private Semaphore getGroupSem(boolean ordered) {
-    if (ordered) {
-      return this.groupOrderedSenderSem;
-    } else {
-      return this.groupUnorderedSenderSem;
-    }
-  }
-
-  private void acquireGroupSendPermission(boolean ordered) {
-    if (this.disconnected) {
-      throw new org.apache.geode.distributed.DistributedSystemDisconnectedException(
-          "Direct channel has been stopped");
-    }
-    // @todo darrel: add some stats
-    final Semaphore s = getGroupSem(ordered);
-    for (;;) {
-      this.conduit.getCancelCriterion().checkCancelInProgress(null);
-      boolean interrupted = Thread.interrupted();
-      try {
-        s.acquire();
-        break;
-      } catch (InterruptedException ex) {
-        interrupted = true;
-      } finally {
-        if (interrupted) {
-          Thread.currentThread().interrupt();
-        }
-      }
-    } // for
-    if (this.disconnected) {
-      s.release();
-      throw new DistributedSystemDisconnectedException(
-          "communications disconnected");
-    }
-  }
-
-  private void releaseGroupSendPermission(boolean ordered) {
-    final Semaphore s = getGroupSem(ordered);
-    s.release();
   }
 
   /**
@@ -250,6 +189,13 @@ public class DirectChannel {
 
 
   /**
+   * Returns the buffer pool used for direct-memory byte buffers in this DirectChannel
+   */
+  public BufferPool getBufferPool() {
+    return bufferPool;
+  }
+
+  /**
    * Sends a msg to a list of destinations. This code does some special optimizations to stream
    * large messages
    *
@@ -265,7 +211,7 @@ public class DirectChannel {
       InternalDistributedMember[] p_destinations,
       final DistributionMessage msg, long ackWaitThreshold, long ackSAThreshold)
       throws ConnectExceptions, NotSerializableException {
-    InternalDistributedMember destinations[] = p_destinations;
+    InternalDistributedMember[] destinations = p_destinations;
 
     // Collects connect exceptions that happened during previous attempts to send.
     // These represent members we are not able to distribute to.
@@ -317,7 +263,7 @@ public class DirectChannel {
     try {
       do {
         interrupted = Thread.interrupted() || interrupted;
-        /**
+        /*
          * Exceptions that happened during one attempt to send
          */
         if (retryInfo != null) {
@@ -330,9 +276,10 @@ public class DirectChannel {
           retryInfo = null;
           retry = true;
         }
-        final List cons = new ArrayList(destinations.length);
+        final List<Connection> cons = new ArrayList<>(destinations.length);
         ConnectExceptions ce = getConnections(mgr, msg, destinations, orderedMsg, retry, ackTimeout,
             ackSDTimeout, cons);
+
         if (directReply && msg.getProcessorId() > 0) { // no longer a direct-reply message?
           directReply = false;
         }
@@ -352,95 +299,67 @@ public class DirectChannel {
           return bytesWritten;
         }
 
-        boolean sendingToGroup = cons.size() > 1;
-        Connection permissionCon = null;
-        if (sendingToGroup) {
-          acquireGroupSendPermission(orderedMsg);
-        } else {
-          // sending over just one connection
-          permissionCon = (Connection) cons.get(0);
-          if (permissionCon != null) {
-            try {
-              permissionCon.acquireSendPermission();
-            } catch (ConnectionException conEx) {
-              // Set retryInfo and then retry.
-              // We want to keep calling TCPConduit.getConnection until it doesn't
-              // return a connection.
-              retryInfo = new ConnectExceptions();
-              retryInfo.addFailure(permissionCon.getRemoteAddress(), conEx);
-              continue;
-            }
-          }
+        if (logger.isDebugEnabled()) {
+          logger.debug("{} on these {} connections: {}",
+              (retry ? "Retrying send" : "Sending"), cons.size(), cons);
         }
+        DMStats stats = getDMStats();
+        List<?> sentCons; // used for cons we sent to this time
 
+        final BaseMsgStreamer ms =
+            MsgStreamer.create(cons, msg, directReply, stats, bufferPool);
         try {
-          if (retry && logger.isDebugEnabled()) {
-            logger.debug("Retrying send ({}{}) to {} peers ({}) via tcp/ip",
-                msg, cons.size(), cons);
+          startTime = 0;
+          if (ackTimeout > 0) {
+            startTime = System.currentTimeMillis();
           }
-          DMStats stats = getDMStats();
-          List<?> sentCons; // used for cons we sent to this time
+          ms.reserveConnections(startTime, ackTimeout, ackSDTimeout);
 
-          final BaseMsgStreamer ms =
-              MsgStreamer.create(cons, msg, directReply, stats, getConduit().getBufferPool());
-          try {
-            startTime = 0;
-            if (ackTimeout > 0) {
-              startTime = System.currentTimeMillis();
-            }
-            ms.reserveConnections(startTime, ackTimeout, ackSDTimeout);
-
-            int result = ms.writeMessage();
-            if (bytesWritten == 0) {
-              // bytesWritten only needs to be set once.
-              // if we have to do a retry we don't want to count
-              // each one's bytes.
-              bytesWritten = result;
-            }
-            ce = ms.getConnectExceptions();
-            sentCons = ms.getSentConnections();
-
-            totalSentCons.addAll(sentCons);
-          } catch (NotSerializableException e) {
-            throw e;
-          } catch (IOException ex) {
-            throw new InternalGemFireException(
-                "Unknown error serializing message",
-                ex);
-          } finally {
-            try {
-              ms.close();
-            } catch (IOException e) {
-              throw new InternalGemFireException("Unknown error serializing message", e);
-            }
+          int result = ms.writeMessage();
+          if (bytesWritten == 0) {
+            // bytesWritten only needs to be set once.
+            // if we have to do a retry we don't want to count
+            // each one's bytes.
+            bytesWritten = result;
           }
+          ce = ms.getConnectExceptions();
+          sentCons = ms.getSentConnections();
 
-          if (ce != null) {
-            retryInfo = ce;
-            ce = null;
-          }
-
-          if (directReply && !sentCons.isEmpty()) {
-            long readAckStart = 0;
-            if (stats != null) {
-              readAckStart = stats.startReplyWait();
-            }
-            try {
-              ce = readAcks(sentCons, startTime, ackTimeout, ackSDTimeout, ce,
-                  directMsg.getDirectReplyProcessor());
-            } finally {
-              if (stats != null) {
-                stats.endReplyWait(readAckStart, startTime);
-              }
-            }
-          }
+          totalSentCons.addAll(sentCons);
+        } catch (NotSerializableException e) {
+          throw e;
+        } catch (IOException ex) {
+          throw new InternalGemFireException(
+              "Unknown error serializing message",
+              ex);
         } finally {
-          if (sendingToGroup) {
-            releaseGroupSendPermission(orderedMsg);
-          } else if (permissionCon != null) {
-            permissionCon.releaseSendPermission();
+          try {
+            ms.close();
+          } catch (IOException e) {
+            throw new InternalGemFireException("Unknown error serializing message", e);
           }
         }
+
+        if (ce != null) {
+          retryInfo = ce;
+          ce = null;
+        }
+
+        if (directReply && !sentCons.isEmpty()) {
+          long readAckStart = 0;
+          if (stats != null) {
+            readAckStart = stats.startReplyWait();
+          }
+          try {
+            ce = readAcks(sentCons, startTime, ackTimeout, ackSDTimeout, ce,
+                directMsg.getDirectReplyProcessor());
+          } finally {
+            if (stats != null) {
+              stats.endReplyWait(readAckStart, startTime);
+            }
+          }
+        }
+
         if (ce != null) {
           if (retryInfo != null) {
             retryInfo.getMembers().addAll(ce.getMembers());
@@ -613,11 +532,7 @@ public class DirectChannel {
    * Returns null if no stats available.
    */
   public DMStats getDMStats() {
-    if (dm != null) {
-      return dm.getStats(); // fix for bug#34004
-    } else {
-      return null;
-    }
+    return stats;
   }
 
   /**
@@ -734,16 +649,6 @@ public class DirectChannel {
   public synchronized void disconnect(Exception cause) {
     this.disconnected = true;
     this.disconnectCompleted = false;
-    try {
-      groupOrderedSenderSem.release();
-    } catch (Error e) {
-      // GEODE-1076 - already released
-    }
-    try {
-      groupUnorderedSenderSem.release();
-    } catch (Error e) {
-      // GEODE-1076 - already released
-    }
     this.conduit.stop(cause);
     this.disconnectCompleted = true;
   }
@@ -793,11 +698,6 @@ public class DirectChannel {
 
     }
   }
-
-  public void closeEndpoint(InternalDistributedMember member, String reason) {
-    closeEndpoint(member, reason, true);
-  }
-
 
   /**
    * Closes any connections used to communicate with the given jgroupsAddress.

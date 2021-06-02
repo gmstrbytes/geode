@@ -14,9 +14,8 @@
  */
 package org.apache.geode.admin.internal;
 
+import static org.apache.geode.admin.internal.InetAddressUtilsWithLogging.validateHost;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
-import static org.apache.geode.internal.net.InetAddressUtilsWithLogging.toInetAddress;
-import static org.apache.geode.internal.net.InetAddressUtilsWithLogging.validateHost;
 
 import java.net.InetAddress;
 import java.util.Properties;
@@ -24,7 +23,9 @@ import java.util.Properties;
 import org.apache.geode.GemFireConfigException;
 import org.apache.geode.admin.DistributionLocator;
 import org.apache.geode.admin.DistributionLocatorConfig;
+import org.apache.geode.distributed.internal.tcpserver.HostAndPort;
 import org.apache.geode.distributed.internal.tcpserver.TcpClient;
+import org.apache.geode.distributed.internal.tcpserver.TcpSocketFactory;
 import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.net.SocketCreatorFactory;
 import org.apache.geode.internal.security.SecurableCommunicationChannel;
@@ -65,8 +66,6 @@ public class DistributionLocatorConfigImpl extends ManagedEntityConfigImpl
    * Contacts a distribution locator on the given host and port and creates a
    * <code>DistributionLocatorConfig</code> for it.
    *
-   * @see TcpClient#getLocatorInfo
-   *
    * @return <code>null</code> if the locator cannot be contacted
    */
   static DistributionLocatorConfig createConfigFor(String host, int port, InetAddress bindAddress) {
@@ -76,11 +75,12 @@ public class DistributionLocatorConfigImpl extends ManagedEntityConfigImpl
       TcpClient client = new TcpClient(SocketCreatorFactory
           .getSocketCreatorForComponent(SecurableCommunicationChannel.LOCATOR),
           InternalDataSerializer.getDSFIDSerializer().getObjectSerializer(),
-          InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer());
+          InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer(),
+          TcpSocketFactory.DEFAULT);
       if (bindAddress != null) {
-        info = client.getInfo(bindAddress, port);
+        info = client.getInfo(new HostAndPort(bindAddress.getHostAddress(), port));
       } else {
-        info = client.getInfo(toInetAddress(host), port);
+        info = client.getInfo(new HostAndPort(host, port));
       }
       if (info == null) {
         return null;

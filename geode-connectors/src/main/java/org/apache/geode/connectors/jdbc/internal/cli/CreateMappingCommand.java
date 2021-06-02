@@ -15,6 +15,8 @@
 package org.apache.geode.connectors.jdbc.internal.cli;
 
 
+import static org.apache.geode.cache.Region.SEPARATOR;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -36,7 +38,6 @@ import org.apache.geode.annotations.Experimental;
 import org.apache.geode.cache.configuration.CacheConfig;
 import org.apache.geode.cache.configuration.CacheConfig.AsyncEventQueue;
 import org.apache.geode.cache.configuration.DeclarableType;
-import org.apache.geode.cache.configuration.RegionAttributesDataPolicy;
 import org.apache.geode.cache.configuration.RegionAttributesType;
 import org.apache.geode.cache.configuration.RegionConfig;
 import org.apache.geode.connectors.jdbc.JdbcAsyncWriter;
@@ -90,7 +91,6 @@ public class CreateMappingCommand extends SingleGfshCommand {
   private static final String CREATE_MAPPING__SCHEMA_NAME = MappingConstants.SCHEMA_NAME;
   private static final String CREATE_MAPPING__SCHEMA_NAME__HELP =
       "The schema that contains the database table. By default, the schema is the empty string causing the table to be referenced without a schema prefix.";
-  private static final String CREATE_MAPPING__GROUPS_NAME = "groups";
   private static final String CREATE_MAPPING__GROUPS_NAME__HELP =
       "The names of the server groups on which this mapping should be created.";
   private static final String CREATE_MAPPING__PDX_CLASS_FILE = MappingConstants.PDX_CLASS_FILE;
@@ -132,7 +132,7 @@ public class CreateMappingCommand extends SingleGfshCommand {
           optionContext = ConverterHint.MEMBERGROUP,
           help = CREATE_MAPPING__GROUPS_NAME__HELP) String[] groups)
       throws IOException {
-    if (regionName.startsWith("/")) {
+    if (regionName.startsWith(SEPARATOR)) {
       regionName = regionName.substring(1);
     }
 
@@ -187,7 +187,7 @@ public class CreateMappingCommand extends SingleGfshCommand {
           exporter.export(createSimpleRemoteInputStream(tempPdxClassFilePath));
     }
 
-    CliFunctionResult preconditionCheckResult = null;
+    CliFunctionResult preconditionCheckResult;
     try {
       preconditionCheckResult =
           executeFunctionAndGetFunctionResult(new CreateMappingPreconditionCheckFunction(),
@@ -208,6 +208,7 @@ public class CreateMappingCommand extends SingleGfshCommand {
       if (computedIds != null) {
         mapping.setIds(computedIds);
       }
+      @SuppressWarnings("unchecked")
       ArrayList<FieldMapping> fieldMappings = (ArrayList<FieldMapping>) preconditionOutput[1];
       for (FieldMapping fieldMapping : fieldMappings) {
         mapping.addFieldMapping(fieldMapping);
@@ -302,9 +303,7 @@ public class CreateMappingCommand extends SingleGfshCommand {
     RegionAttributesType regionAttributesType = regionConfig.getRegionAttributes();
     if (!synchronous && regionAttributesType != null) {
       boolean isAccessor = MappingCommandUtils.isAccessor(regionAttributesType);
-      if (!isAccessor) {
-        return;
-      } else {
+      if (isAccessor) {
         String queueName = MappingCommandUtils.createAsyncEventQueueName(regionName);
         if (regionAttributesType.getAsyncEventQueueIds() != null && regionAttributesType
             .getAsyncEventQueueIds().contains(queueName)) {
@@ -352,6 +351,7 @@ public class CreateMappingCommand extends SingleGfshCommand {
   }
 
   @CliAvailabilityIndicator({CREATE_MAPPING})
+  @SuppressWarnings("unused")
   public boolean commandAvailable() {
     return isOnlineCommandAvailable();
   }
@@ -386,8 +386,7 @@ public class CreateMappingCommand extends SingleGfshCommand {
       String queueName) {
     AsyncEventQueue asyncEventQueue = new AsyncEventQueue();
     asyncEventQueue.setId(queueName);
-    boolean isPartitioned = attributes.getDataPolicy().equals(RegionAttributesDataPolicy.PARTITION)
-        || attributes.getDataPolicy().equals(RegionAttributesDataPolicy.PERSISTENT_PARTITION);
+    boolean isPartitioned = MappingCommandUtils.isPartition(attributes);
     asyncEventQueue.setParallel(isPartitioned);
     DeclarableType listener = new DeclarableType();
     listener.setClassName(JdbcAsyncWriter.class.getName());

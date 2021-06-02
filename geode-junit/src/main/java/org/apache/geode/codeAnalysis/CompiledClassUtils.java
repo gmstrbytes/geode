@@ -40,7 +40,7 @@ import java.util.jar.JarFile;
 import org.apache.geode.codeAnalysis.decode.CompiledClass;
 import org.apache.geode.codeAnalysis.decode.CompiledField;
 import org.apache.geode.codeAnalysis.decode.CompiledMethod;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 
 public class CompiledClassUtils {
 
@@ -48,7 +48,7 @@ public class CompiledClassUtils {
 
   static {
     allowedDataSerializerMethods = new HashSet<>();
-    Version.getAllVersions().iterator().forEachRemaining((version) -> {
+    KnownVersion.getAllVersions().iterator().forEachRemaining((version) -> {
       allowedDataSerializerMethods.add("toDataPre_" + version.getMethodSuffix());
       allowedDataSerializerMethods.add("fromDataPre_" + version.getMethodSuffix());
     });
@@ -84,8 +84,7 @@ public class CompiledClassUtils {
    */
   public static Map<String, CompiledClass> parseClassFilesInJar(File jar) {
     Map<String, CompiledClass> result = new HashMap<String, CompiledClass>();
-    try {
-      JarFile jarfile = new JarFile(jar);
+    try (JarFile jarfile = new JarFile(jar)) {
       for (Enumeration<JarEntry> entries = jarfile.entries(); entries.hasMoreElements();) {
         JarEntry entry = entries.nextElement();
         if (entry.getName().endsWith(".class")) {
@@ -117,8 +116,8 @@ public class CompiledClassUtils {
       if (entry.isDirectory()) {
         result.putAll(parseClassFilesInDir(entry));
       } else if (entry.getName().endsWith(".class")) {
-        try {
-          CompiledClass parsed = CompiledClass.getInstance(new FileInputStream(entry));
+        try (FileInputStream fis = new FileInputStream(entry)) {
+          CompiledClass parsed = CompiledClass.getInstance(fis);
           if (!parsed.isInterface()) {
             result.put(parsed.fullyQualifiedName(), parsed);
           }

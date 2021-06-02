@@ -14,13 +14,13 @@
  */
 package org.apache.geode.management.internal.cli.functions;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.mockito.MockitoAnnotations.initMocks;
 
 import java.util.Collections;
 
@@ -28,6 +28,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.DataPolicy;
@@ -59,7 +60,7 @@ public class GetRegionsFunctionTest {
 
   @Before
   public void setUp() {
-    initMocks(this);
+    MockitoAnnotations.openMocks(this);
 
     when(functionContext.<RegionInformation[]>getResultSender()).thenReturn(resultSender);
   }
@@ -103,7 +104,7 @@ public class GetRegionsFunctionTest {
     Cache cache = mock(Cache.class);
     when(regionAttributes.getDataPolicy()).thenReturn(mock(DataPolicy.class));
     when(regionAttributes.getScope()).thenReturn(mock(Scope.class));
-    when(region.getFullPath()).thenReturn(Region.SEPARATOR + regionName);
+    when(region.getFullPath()).thenReturn(SEPARATOR + regionName);
     when(region.subregions(anyBoolean())).thenReturn(Collections.emptySet());
     when(region.getAttributes()).thenReturn(regionAttributes);
     when(cache.rootRegions()).thenReturn(Collections.singleton(region));

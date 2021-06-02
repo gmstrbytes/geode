@@ -49,8 +49,6 @@ public interface MemberData {
 
   String getUniqueTag();
 
-  void setVersionOrdinal(short versionOrdinal);
-
   void setUUID(UUID u);
 
   UUID getUUID();
@@ -91,7 +89,7 @@ public interface MemberData {
 
   void setVmKind(int vmKind);
 
-  void setVersion(org.apache.geode.internal.serialization.Version v);
+  void setVersion(Version v);
 
   void setDirectChannelPort(int directPort);
 

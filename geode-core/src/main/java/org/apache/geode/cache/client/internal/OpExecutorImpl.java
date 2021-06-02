@@ -49,6 +49,7 @@ import org.apache.geode.cache.client.internal.pooling.ConnectionManager;
 import org.apache.geode.cache.execute.FunctionException;
 import org.apache.geode.cache.execute.FunctionInvocationTargetException;
 import org.apache.geode.distributed.internal.ServerLocation;
+import org.apache.geode.distributed.internal.ServerLocationAndMemberId;
 import org.apache.geode.internal.cache.PoolManagerImpl;
 import org.apache.geode.internal.cache.PutAllPartialResultException;
 import org.apache.geode.internal.cache.execute.InternalFunctionInvocationTargetException;
@@ -78,6 +79,8 @@ public class OpExecutorImpl implements ExecutablePool {
   private final ConnectionManager connectionManager;
   private final int retryAttempts;
   private final long serverTimeout;
+  private final long singleServerTimeout;
+
   private final EndpointManager endpointManager;
   private final RegisterInterestTracker riTracker;
   private final QueueManager queueManager;
@@ -91,7 +94,7 @@ public class OpExecutorImpl implements ExecutablePool {
 
   public OpExecutorImpl(ConnectionManager connectionManager, QueueManager queueManager,
       EndpointManager endpointManager, RegisterInterestTracker riTracker, int retryAttempts,
-      long serverTimeout, CancelCriterion cancelCriterion,
+      long serverTimeout, long singleServerTimeout, CancelCriterion cancelCriterion,
       PoolImpl pool) {
     this.connectionManager = connectionManager;
     this.queueManager = queueManager;
@@ -99,6 +102,7 @@ public class OpExecutorImpl implements ExecutablePool {
     this.riTracker = riTracker;
     this.retryAttempts = retryAttempts;
     this.serverTimeout = serverTimeout;
+    this.singleServerTimeout = singleServerTimeout;
     this.cancelCriterion = cancelCriterion;
     this.pool = pool;
   }
@@ -311,7 +315,9 @@ public class OpExecutorImpl implements ExecutablePool {
       if (queueManager != null) {
         // see if our QueueManager has a connection to this server that we can send
         // the ping on.
-        Endpoint ep = endpointManager.getEndpointMap().get(p_server);
+        ServerLocationAndMemberId slAndMId = new ServerLocationAndMemberId(p_server,
+            ((PingOp.PingOpImpl) op).getServerID().getUniqueId());
+        Endpoint ep = endpointManager.getEndpointMap().get(slAndMId);
         if (ep != null) {
           QueueConnections qcs = queueManager.getAllConnectionsNoWait();
           conn = qcs.getConnection(ep);
@@ -323,7 +329,7 @@ public class OpExecutorImpl implements ExecutablePool {
       }
     }
     if (conn == null) {
-      conn = connectionManager.borrowConnection(p_server, onlyUseExistingCnx);
+      conn = connectionManager.borrowConnection(p_server, singleServerTimeout, onlyUseExistingCnx);
     }
     try {
       return executeWithPossibleReAuthentication(conn, op);

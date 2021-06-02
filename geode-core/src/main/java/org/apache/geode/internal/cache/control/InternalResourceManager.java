@@ -19,12 +19,12 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -36,31 +36,32 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.CancelCriterion;
 import org.apache.geode.InternalGemFireError;
+import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.annotations.internal.MutableForTesting;
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.control.RebalanceFactory;
 import org.apache.geode.cache.control.RebalanceOperation;
 import org.apache.geode.cache.control.ResourceManager;
+import org.apache.geode.cache.control.RestoreRedundancyOperation;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.internal.DistributionAdvisor.Profile;
 import org.apache.geode.distributed.internal.DistributionManager;
-import org.apache.geode.internal.ClassPathLoader;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.control.ResourceAdvisor.ResourceManagerProfile;
 import org.apache.geode.internal.cache.partitioned.LoadProbe;
 import org.apache.geode.internal.cache.partitioned.SizedBasedLoadProbe;
+import org.apache.geode.internal.classloader.ClassPathLoader;
 import org.apache.geode.internal.logging.CoreLoggingExecutors;
 import org.apache.geode.internal.monitoring.ThreadsMonitoring;
 import org.apache.geode.logging.internal.executors.LoggingExecutors;
 import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.management.runtime.RestoreRedundancyResults;
 import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
  * Implementation of ResourceManager with additional internal-only methods.
- * <p>
- * TODO: cleanup raw and typed collections
  */
 public class InternalResourceManager implements ResourceManager {
   private static final Logger logger = LogService.getLogger();
@@ -80,15 +81,20 @@ public class InternalResourceManager implements ResourceManager {
     }
   }
 
-  private Map<ResourceType, Set<ResourceListener>> listeners =
-      new HashMap<ResourceType, Set<ResourceListener>>();
+  private final Map<ResourceType, Set<ResourceListener<?>>> listeners = new HashMap<>();
 
   private final ScheduledExecutorService scheduledExecutor;
   private final ExecutorService notifyExecutor;
 
-  // The set of in progress rebalance operations.
-  private final Set<RebalanceOperation> inProgressOperations = new HashSet<RebalanceOperation>();
-  private final Object inProgressOperationsLock = new Object();
+  // A map of in progress rebalance operations. The value is Boolean because ConcurrentHashMap does
+  // not support null values.
+  private final Map<RebalanceOperation, Boolean> inProgressRebalanceOperations =
+      new ConcurrentHashMap<>();
+
+  // A map of in progress restore redundancy completable futures. The value is Boolean because
+  // ConcurrentHashMap does not support null values.
+  private final Map<CompletableFuture<RestoreRedundancyResults>, Boolean> inProgressRedundancyOperations =
+      new ConcurrentHashMap<>();
 
   final InternalCache cache;
 
@@ -96,7 +102,7 @@ public class InternalResourceManager implements ResourceManager {
 
   private final ResourceManagerStats stats;
   private final ResourceAdvisor resourceAdvisor;
-  private boolean closed = true;
+  private boolean closed;
 
   private final Map<ResourceType, ResourceMonitor> resourceMonitors;
 
@@ -117,99 +123,98 @@ public class InternalResourceManager implements ResourceManager {
 
   private InternalResourceManager(InternalCache cache) {
     this.cache = cache;
-    this.resourceAdvisor = (ResourceAdvisor) cache.getDistributionAdvisor();
-    this.stats = new ResourceManagerStats(cache.getDistributedSystem());
+    resourceAdvisor = (ResourceAdvisor) cache.getDistributionAdvisor();
+    stats = new ResourceManagerStats(cache.getDistributedSystem());
 
     // Create a new executor that other classes may use for handling resource
     // related tasks
-    this.scheduledExecutor = LoggingExecutors
-        .newScheduledThreadPool("ResourceManagerRecoveryThread ", MAX_RESOURCE_MANAGER_EXE_THREADS);
+    scheduledExecutor = LoggingExecutors
+        .newScheduledThreadPool(MAX_RESOURCE_MANAGER_EXE_THREADS, "ResourceManagerRecoveryThread ");
 
     // Initialize the load probe
     try {
-      Class loadProbeClass = ClassPathLoader.getLatest().forName(PR_LOAD_PROBE_CLASS);
-      this.loadProbe = (LoadProbe) loadProbeClass.newInstance();
+      Class<?> loadProbeClass = ClassPathLoader.getLatest().forName(PR_LOAD_PROBE_CLASS);
+      loadProbe = (LoadProbe) loadProbeClass.newInstance();
     } catch (Exception e) {
       throw new InternalGemFireError("Unable to instantiate " + PR_LOAD_PROBE_CLASS, e);
     }
 
     // Create a new executor the resource manager and the monitors it creates
     // can use to handle dispatching of notifications.
-    this.notifyExecutor =
-        CoreLoggingExecutors.newSerialThreadPoolWithFeedStatistics("Notification Handler",
+    notifyExecutor =
+        CoreLoggingExecutors.newSerialThreadPoolWithFeedStatistics(0,
+            stats.getResourceEventQueueStatHelper(), "Notification Handler",
             thread -> thread.setPriority(Thread.MAX_PRIORITY), null,
-            this.stats.getResourceEventPoolStatHelper(), getThreadMonitorObj(),
-            0, this.stats.getResourceEventQueueStatHelper());
+            stats.getResourceEventPoolStatHelper(), getThreadMonitorObj());
 
     // Create the monitors
-    Map<ResourceType, ResourceMonitor> tempMonitors = new HashMap<ResourceType, ResourceMonitor>();
-    tempMonitors.put(ResourceType.HEAP_MEMORY, new HeapMemoryMonitor(this, cache, this.stats));
+    Map<ResourceType, ResourceMonitor> tempMonitors = new HashMap<>();
+    tempMonitors.put(ResourceType.HEAP_MEMORY,
+        new HeapMemoryMonitor(this, cache, stats, new TenuredHeapConsumptionMonitor()));
     tempMonitors.put(ResourceType.OFFHEAP_MEMORY,
-        new OffHeapMemoryMonitor(this, cache, cache.getOffHeapStore(), this.stats));
-    this.resourceMonitors = Collections.unmodifiableMap(tempMonitors);
+        new OffHeapMemoryMonitor(this, cache, cache.getOffHeapStore(), stats));
+    resourceMonitors = Collections.unmodifiableMap(tempMonitors);
 
     // Initialize the listener sets so that it only needs to be done once
     for (ResourceType resourceType : new ResourceType[] {ResourceType.HEAP_MEMORY,
         ResourceType.OFFHEAP_MEMORY}) {
-      Set<ResourceListener> emptySet = new CopyOnWriteArraySet<ResourceListener>();
-      this.listeners.put(resourceType, emptySet);
+      Set<ResourceListener<?>> emptySet = new CopyOnWriteArraySet<>();
+      listeners.put(resourceType, emptySet);
     }
-
-    this.closed = false;
   }
 
   public void close() {
-    for (ResourceMonitor monitor : this.resourceMonitors.values()) {
+    for (ResourceMonitor monitor : resourceMonitors.values()) {
       monitor.stopMonitoring();
     }
 
-    stopExecutor(this.scheduledExecutor);
-    stopExecutor(this.notifyExecutor);
+    stopExecutor(scheduledExecutor);
+    stopExecutor(notifyExecutor);
 
-    this.stats.close();
-    this.closed = true;
+    stats.close();
+    closed = true;
   }
 
   boolean isClosed() {
-    return this.closed;
+    return closed;
   }
 
   public void fillInProfile(final Profile profile) {
     assert profile instanceof ResourceManagerProfile;
 
-    for (ResourceMonitor monitor : this.resourceMonitors.values()) {
+    for (ResourceMonitor monitor : resourceMonitors.values()) {
       monitor.fillInProfile((ResourceManagerProfile) profile);
     }
   }
 
-  public void addResourceListener(final ResourceListener listener) {
+  public void addResourceListener(final ResourceListener<?> listener) {
     addResourceListener(ResourceType.ALL, listener);
   }
 
   public void addResourceListener(final ResourceType resourceType,
-      final ResourceListener listener) {
-    for (Map.Entry<ResourceType, Set<ResourceListener>> mapEntry : this.listeners.entrySet()) {
+      final ResourceListener<?> listener) {
+    for (Map.Entry<ResourceType, Set<ResourceListener<?>>> mapEntry : listeners.entrySet()) {
       if ((mapEntry.getKey().id & resourceType.id) != 0) {
         mapEntry.getValue().add(listener);
       }
     }
   }
 
-  public void removeResourceListener(final ResourceListener listener) {
+  public void removeResourceListener(final ResourceListener<?> listener) {
     removeResourceListener(ResourceType.ALL, listener);
   }
 
   public void removeResourceListener(final ResourceType resourceType,
-      final ResourceListener listener) {
-    for (Map.Entry<ResourceType, Set<ResourceListener>> mapEntry : this.listeners.entrySet()) {
+      final ResourceListener<?> listener) {
+    for (Map.Entry<ResourceType, Set<ResourceListener<?>>> mapEntry : listeners.entrySet()) {
       if ((mapEntry.getKey().id & resourceType.id) != 0) {
         mapEntry.getValue().remove(listener);
       }
     }
   }
 
-  public Set<ResourceListener> getResourceListeners(final ResourceType resourceType) {
-    return this.listeners.get(resourceType);
+  public Set<ResourceListener<?>> getResourceListeners(final ResourceType resourceType) {
+    return listeners.get(resourceType);
   }
 
   /**
@@ -220,41 +225,29 @@ public class InternalResourceManager implements ResourceManager {
   public void deliverEventFromRemote(final ResourceEvent event) {
     assert !event.isLocal();
 
-    if (this.cache.getLogger().fineEnabled()) {
-      this.cache.getLogger()
-          .fine("New remote event to deliver for member " + event.getMember() + ": event=" + event);
+    if (logger.isTraceEnabled()) {
+      logger.trace(
+          "New remote event to deliver for member " + event.getMember() + ": event=" + event);
     }
 
-    if (this.cache.getLogger().fineEnabled()) {
-      this.cache.getLogger()
-          .fine("Remote event to deliver for member " + event.getMember() + ":" + event);
-    }
-
-    runWithNotifyExecutor(new Runnable() {
-      @Override
-      public void run() {
-        deliverLocalEvent(event);
-      }
-    });
-    return;
+    runWithNotifyExecutor(() -> deliverLocalEvent(event));
   }
 
   void deliverLocalEvent(ResourceEvent event) {
     // Wait for an event to be handled by all listeners before starting to send another event
-    synchronized (this.listeners) {
-      this.resourceMonitors.get(event.getType())
-          .notifyListeners(this.listeners.get(event.getType()), event);
+    synchronized (listeners) {
+      resourceMonitors.get(event.getType()).notifyListeners(listeners.get(event.getType()), event);
     }
 
-    this.stats.incResourceEventsDelivered();
+    stats.incResourceEventsDelivered();
   }
 
   public HeapMemoryMonitor getHeapMonitor() {
-    return (HeapMemoryMonitor) this.resourceMonitors.get(ResourceType.HEAP_MEMORY);
+    return (HeapMemoryMonitor) resourceMonitors.get(ResourceType.HEAP_MEMORY);
   }
 
   public OffHeapMemoryMonitor getOffHeapMonitor() {
-    return (OffHeapMemoryMonitor) this.resourceMonitors.get(ResourceType.OFFHEAP_MEMORY);
+    return (OffHeapMemoryMonitor) resourceMonitors.get(ResourceType.OFFHEAP_MEMORY);
   }
 
   public MemoryMonitor getMemoryMonitor(boolean offheap) {
@@ -272,11 +265,10 @@ public class InternalResourceManager implements ResourceManager {
    */
   void runWithNotifyExecutor(Runnable runnable) {
     try {
-      this.notifyExecutor.execute(runnable);
+      notifyExecutor.execute(runnable);
     } catch (RejectedExecutionException ignore) {
-      if (!isClosed()) {
-        this.cache.getLogger()
-            .warning("No memory events will be delivered because of RejectedExecutionException");
+      if (!closed) {
+        logger.warn("No memory events will be delivered because of RejectedExecutionException");
       }
     }
   }
@@ -288,21 +280,15 @@ public class InternalResourceManager implements ResourceManager {
 
   @Override
   public Set<RebalanceOperation> getRebalanceOperations() {
-    synchronized (this.inProgressOperationsLock) {
-      return new HashSet<RebalanceOperation>(this.inProgressOperations);
-    }
+    return Collections.unmodifiableSet(inProgressRebalanceOperations.keySet());
   }
 
   void addInProgressRebalance(RebalanceOperation op) {
-    synchronized (this.inProgressOperationsLock) {
-      this.inProgressOperations.add(op);
-    }
+    inProgressRebalanceOperations.put(op, Boolean.TRUE);
   }
 
   void removeInProgressRebalance(RebalanceOperation op) {
-    synchronized (this.inProgressOperationsLock) {
-      this.inProgressOperations.remove(op);
-    }
+    inProgressRebalanceOperations.remove(op);
   }
 
   class RebalanceFactoryImpl implements RebalanceFactory {
@@ -312,34 +298,51 @@ public class InternalResourceManager implements ResourceManager {
 
     @Override
     public RebalanceOperation simulate() {
-      RegionFilter filter = new FilterByPath(this.includedRegions, this.excludedRegions);
-      RebalanceOperationImpl op =
-          new RebalanceOperationImpl(InternalResourceManager.this.cache, true, filter);
+      RegionFilter filter = new FilterByPath(includedRegions, excludedRegions);
+      RebalanceOperationImpl op = new RebalanceOperationImpl(cache, true, filter);
       op.start();
       return op;
     }
 
     @Override
     public RebalanceOperation start() {
-      RegionFilter filter = new FilterByPath(this.includedRegions, this.excludedRegions);
-      RebalanceOperationImpl op =
-          new RebalanceOperationImpl(InternalResourceManager.this.cache, false, filter);
+      RegionFilter filter = new FilterByPath(includedRegions, excludedRegions);
+      RebalanceOperationImpl op = new RebalanceOperationImpl(cache, false, filter);
       op.start();
       return op;
     }
 
     @Override
     public RebalanceFactory excludeRegions(Set<String> regions) {
-      this.excludedRegions = regions;
+      excludedRegions = regions;
       return this;
     }
 
     @Override
     public RebalanceFactory includeRegions(Set<String> regions) {
-      this.includedRegions = regions;
+      includedRegions = regions;
       return this;
     }
+  }
 
+  @Override
+  public RestoreRedundancyOperation createRestoreRedundancyOperation() {
+    return new RestoreRedundancyOperationImpl(cache);
+  }
+
+  @Override
+  public Set<CompletableFuture<RestoreRedundancyResults>> getRestoreRedundancyFutures() {
+    return Collections.unmodifiableSet(inProgressRedundancyOperations.keySet());
+  }
+
+  void addInProgressRestoreRedundancy(
+      CompletableFuture<RestoreRedundancyResults> completableFuture) {
+    inProgressRedundancyOperations.put(completableFuture, Boolean.TRUE);
+  }
+
+  void removeInProgressRestoreRedundancy(
+      CompletableFuture<RestoreRedundancyResults> completableFuture) {
+    inProgressRedundancyOperations.remove(completableFuture);
   }
 
   void stopExecutor(ExecutorService executor) {
@@ -347,8 +350,8 @@ public class InternalResourceManager implements ResourceManager {
       return;
     }
     executor.shutdown();
-    final int secToWait = Integer
-        .getInteger(GeodeGlossary.GEMFIRE_PREFIX + "prrecovery-close-timeout", 5).intValue();
+    final int secToWait =
+        Integer.getInteger(GeodeGlossary.GEMFIRE_PREFIX + "prrecovery-close-timeout", 5);
     try {
       executor.awaitTermination(secToWait, TimeUnit.SECONDS);
     } catch (InterruptedException x) {
@@ -361,25 +364,24 @@ public class InternalResourceManager implements ResourceManager {
       List<Runnable> remainingTasks = executor.shutdownNow();
       remainingTasks.forEach(runnable -> {
         if (runnable instanceof Future) {
-          ((Future) runnable).cancel(true);
+          ((Future<?>) runnable).cancel(true);
         }
       });
     }
   }
 
   public ScheduledExecutorService getExecutor() {
-    return this.scheduledExecutor;
+    return scheduledExecutor;
   }
 
   public ResourceManagerStats getStats() {
-    return this.stats;
+    return stats;
   }
 
   /**
    * For testing only, an observer which is called when rebalancing is started and finished for a
    * particular region. This observer is called even the "rebalancing" is actually redundancy
    * recovery for a particular region.
-   *
    */
   public static void setResourceObserver(ResourceObserver observer) {
     if (observer == null) {
@@ -402,33 +404,28 @@ public class InternalResourceManager implements ResourceManager {
   public interface ResourceObserver {
     /**
      * Indicates that rebalancing has started on a given region.
-     *
      */
-    void rebalancingStarted(Region region);
+    void rebalancingStarted(Region<?, ?> region);
 
     /**
      * Indicates that rebalancing has finished on a given region.
-     *
      */
-    void rebalancingFinished(Region region);
+    void rebalancingFinished(Region<?, ?> region);
 
     /**
      * Indicates that recovery has started on a given region.
-     *
      */
-    void recoveryStarted(Region region);
+    void recoveryStarted(Region<?, ?> region);
 
     /**
      * Indicates that recovery has finished on a given region.
-     *
      */
-    void recoveryFinished(Region region);
+    void recoveryFinished(Region<?, ?> region);
 
     /**
      * Indicated that a membership event triggered a recovery operation, but the recovery operation
      * will not be executed because there is already an existing recovery operation waiting to
      * happen on this region.
-     *
      */
     void recoveryConflated(PartitionedRegion region);
 
@@ -440,7 +437,7 @@ public class InternalResourceManager implements ResourceManager {
      * @param source the member the bucket is moving from
      * @param target the member the bucket is moving to
      */
-    void movingBucket(Region region, int bucketId, DistributedMember source,
+    void movingBucket(Region<?, ?> region, int bucketId, DistributedMember source,
         DistributedMember target);
 
     /**
@@ -451,49 +448,43 @@ public class InternalResourceManager implements ResourceManager {
      * @param source the member the bucket primary is moving from
      * @param target the member the bucket primary is moving to
      */
-    void movingPrimary(Region region, int bucketId, DistributedMember source,
+    void movingPrimary(Region<?, ?> region, int bucketId, DistributedMember source,
         DistributedMember target);
   }
 
   public static class ResourceObserverAdapter implements ResourceObserver {
 
-
     @Override
-    public void rebalancingFinished(Region region) {
+    public void rebalancingFinished(Region<?, ?> region) {
       rebalancingOrRecoveryFinished(region);
-
     }
 
     @Override
-    public void rebalancingStarted(Region region) {
+    public void rebalancingStarted(Region<?, ?> region) {
       rebalancingOrRecoveryStarted(region);
-
     }
 
     @Override
-    public void recoveryFinished(Region region) {
+    public void recoveryFinished(Region<?, ?> region) {
       rebalancingOrRecoveryFinished(region);
-
     }
 
     @Override
-    public void recoveryStarted(Region region) {
+    public void recoveryStarted(Region<?, ?> region) {
       rebalancingOrRecoveryStarted(region);
     }
 
     /**
      * Indicated the a rebalance or a recovery has started.
      */
-    @SuppressWarnings("unused")
-    public void rebalancingOrRecoveryStarted(Region region) {
+    public void rebalancingOrRecoveryStarted(Region<?, ?> region) {
       // do nothing
     }
 
     /**
      * Indicated the a rebalance or a recovery has finished.
      */
-    @SuppressWarnings("unused")
-    public void rebalancingOrRecoveryFinished(Region region) {
+    public void rebalancingOrRecoveryFinished(Region<?, ?> region) {
       // do nothing
     }
 
@@ -503,13 +494,13 @@ public class InternalResourceManager implements ResourceManager {
     }
 
     @Override
-    public void movingBucket(Region region, int bucketId, DistributedMember source,
+    public void movingBucket(Region<?, ?> region, int bucketId, DistributedMember source,
         DistributedMember target) {
       // do nothing
     }
 
     @Override
-    public void movingPrimary(Region region, int bucketId, DistributedMember source,
+    public void movingPrimary(Region<?, ?> region, int bucketId, DistributedMember source,
         DistributedMember target) {
       // do nothing
     }
@@ -521,23 +512,23 @@ public class InternalResourceManager implements ResourceManager {
    * @see org.apache.geode.distributed.internal.DistributionAdvisee#getCancelCriterion()
    */
   public CancelCriterion getCancelCriterion() {
-    return this.cache.getCancelCriterion();
+    return cache.getCancelCriterion();
   }
 
   public ResourceAdvisor getResourceAdvisor() {
-    return this.resourceAdvisor;
+    return resourceAdvisor;
   }
 
   public LoadProbe getLoadProbe() {
-    return this.loadProbe;
+    return loadProbe;
   }
 
   /**
    * This method is test purposes only.
    */
   public LoadProbe setLoadProbe(LoadProbe probe) {
-    LoadProbe old = this.loadProbe;
-    this.loadProbe = probe;
+    LoadProbe old = loadProbe;
+    loadProbe = probe;
     return old;
   }
 
@@ -608,7 +599,7 @@ public class InternalResourceManager implements ResourceManager {
   }
 
   private ThreadsMonitoring getThreadMonitorObj() {
-    DistributionManager distributionManager = this.cache.getDistributionManager();
+    DistributionManager distributionManager = cache.getDistributionManager();
     if (distributionManager != null) {
       return distributionManager.getThreadMonitoring();
     } else {
@@ -623,7 +614,9 @@ public class InternalResourceManager implements ResourceManager {
    */
   public void addStartupTask(CompletableFuture<Void> startupTask) {
     Objects.requireNonNull(startupTask);
-    startupTasks.add(startupTask);
+    synchronized (startupTasks) {
+      startupTasks.add(startupTask);
+    }
   }
 
   /**
@@ -633,8 +626,15 @@ public class InternalResourceManager implements ResourceManager {
    * @return a CompletableFuture that completes when all of the startup tasks complete
    */
   public CompletableFuture<Void> allOfStartupTasks() {
-    CompletableFuture[] completableFutures = startupTasks.toArray(new CompletableFuture[0]);
-    startupTasks.clear();
-    return CompletableFuture.allOf(completableFutures);
+    synchronized (startupTasks) {
+      CompletableFuture<?>[] completableFutures = startupTasks.toArray(new CompletableFuture[0]);
+      startupTasks.clear();
+      return CompletableFuture.allOf(completableFutures);
+    }
+  }
+
+  @VisibleForTesting
+  Collection<CompletableFuture<Void>> getStartupTasks() {
+    return startupTasks;
   }
 }

@@ -29,39 +29,44 @@ import org.apache.geode.cache.wan.GatewaySenderFactory;
 import org.apache.geode.cache.wan.GatewayTransportFilter;
 import org.apache.geode.internal.cache.execute.InternalFunction;
 import org.apache.geode.logging.internal.log4j.api.LogService;
-import org.apache.geode.management.internal.cli.CliUtil;
+import org.apache.geode.management.internal.cli.CliUtils;
 import org.apache.geode.management.internal.functions.CliFunctionResult;
 import org.apache.geode.management.internal.i18n.CliStrings;
 import org.apache.geode.management.internal.util.ManagementUtils;
 
-public class GatewaySenderCreateFunction implements InternalFunction {
+public class GatewaySenderCreateFunction implements InternalFunction<GatewaySenderFunctionArgs> {
 
   private static final Logger logger = LogService.getLogger();
 
   private static final long serialVersionUID = 8746830191680509335L;
 
-  private static final String ID = GatewaySenderCreateFunction.class.getName();
-
   @Immutable
   public static final GatewaySenderCreateFunction INSTANCE = new GatewaySenderCreateFunction();
 
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.GatewaySenderCreateFunction";
 
   @Override
-  public void execute(FunctionContext context) {
+  public String getId() {
+    return ID;
+  }
+
+  @Override
+  public void execute(FunctionContext<GatewaySenderFunctionArgs> context) {
     ResultSender<Object> resultSender = context.getResultSender();
 
     Cache cache = context.getCache();
     String memberNameOrId = context.getMemberName();
 
     GatewaySenderFunctionArgs gatewaySenderCreateArgs =
-        (GatewaySenderFunctionArgs) context.getArguments();
+        context.getArguments();
 
     try {
       GatewaySender createdGatewaySender = createGatewaySender(cache, gatewaySenderCreateArgs);
       resultSender.lastResult(new CliFunctionResult(memberNameOrId,
           CliFunctionResult.StatusState.OK, CliStrings.format(
               CliStrings.CREATE_GATEWAYSENDER__MSG__GATEWAYSENDER_0_CREATED_ON_1,
-              new Object[] {createdGatewaySender.getId(), memberNameOrId})));
+              createdGatewaySender.getId(), memberNameOrId)));
     } catch (Exception e) {
       logger.error(e.getMessage(), e);
       resultSender.lastResult(new CliFunctionResult(memberNameOrId, e, null));
@@ -72,6 +77,7 @@ public class GatewaySenderCreateFunction implements InternalFunction {
    * Creates the GatewaySender with given configuration.
    *
    */
+  @SuppressWarnings("deprecation")
   private GatewaySender createGatewaySender(Cache cache,
       GatewaySenderFunctionArgs gatewaySenderCreateArgs) {
     GatewaySenderFactory gateway = cache.createGatewaySenderFactory();
@@ -79,6 +85,11 @@ public class GatewaySenderCreateFunction implements InternalFunction {
     Boolean isParallel = gatewaySenderCreateArgs.isParallel();
     if (isParallel != null) {
       gateway.setParallel(isParallel);
+    }
+
+    Boolean groupTransactionEvents = gatewaySenderCreateArgs.mustGroupTransactionEvents();
+    if (groupTransactionEvents != null) {
+      gateway.setGroupTransactionEvents(groupTransactionEvents);
     }
 
     Boolean manualStart = gatewaySenderCreateArgs.isManualStart();
@@ -149,11 +160,11 @@ public class GatewaySenderCreateFunction implements InternalFunction {
     List<String> gatewayEventFilters = gatewaySenderCreateArgs.getGatewayEventFilter();
     if (gatewayEventFilters != null) {
       for (String gatewayEventFilter : gatewayEventFilters) {
-        Class gatewayEventFilterKlass =
+        Class<?> gatewayEventFilterKlass =
             ManagementUtils.forName(gatewayEventFilter,
                 CliStrings.CREATE_GATEWAYSENDER__GATEWAYEVENTFILTER);
         gateway.addGatewayEventFilter(
-            (GatewayEventFilter) CliUtil.newInstance(gatewayEventFilterKlass,
+            (GatewayEventFilter) CliUtils.newInstance(gatewayEventFilterKlass,
                 CliStrings.CREATE_GATEWAYSENDER__GATEWAYEVENTFILTER));
       }
     }
@@ -161,19 +172,20 @@ public class GatewaySenderCreateFunction implements InternalFunction {
     List<String> gatewayTransportFilters = gatewaySenderCreateArgs.getGatewayTransportFilter();
     if (gatewayTransportFilters != null) {
       for (String gatewayTransportFilter : gatewayTransportFilters) {
-        Class gatewayTransportFilterKlass = ManagementUtils.forName(gatewayTransportFilter,
+        Class<?> gatewayTransportFilterKlass = ManagementUtils.forName(gatewayTransportFilter,
             CliStrings.CREATE_GATEWAYSENDER__GATEWAYTRANSPORTFILTER);
-        gateway.addGatewayTransportFilter((GatewayTransportFilter) CliUtil.newInstance(
+        gateway.addGatewayTransportFilter((GatewayTransportFilter) CliUtils.newInstance(
             gatewayTransportFilterKlass, CliStrings.CREATE_GATEWAYSENDER__GATEWAYTRANSPORTFILTER));
       }
     }
+
+    Boolean enforceThreadsConnectSameReceiver =
+        gatewaySenderCreateArgs.getEnforceThreadsConnectSameReceiver();
+    if (enforceThreadsConnectSameReceiver != null) {
+      gateway.setEnforceThreadsConnectSameReceiver(enforceThreadsConnectSameReceiver);
+    }
+
     return gateway.create(gatewaySenderCreateArgs.getId(),
         gatewaySenderCreateArgs.getRemoteDistributedSystemId());
   }
-
-  @Override
-  public String getId() {
-    return ID;
-  }
-
 }

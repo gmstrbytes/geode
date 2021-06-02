@@ -18,6 +18,7 @@ import static com.jayway.jsonpath.matchers.JsonPathMatchers.hasJsonPath;
 import static com.jayway.jsonpath.matchers.JsonPathMatchers.isJson;
 import static com.jayway.jsonpath.matchers.JsonPathMatchers.withJsonPath;
 import static org.apache.geode.cache.FixedPartitionAttributes.createFixedPartition;
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.cache.query.Utils.createPortfoliosAndPositions;
 import static org.apache.geode.management.internal.ManagementConstants.DEFAULT_QUERY_LIMIT;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
@@ -113,27 +114,36 @@ public class QueryDataDUnitTest implements Serializable {
   private static final String BIG_COLLECTION_ = "BIG_COLLECTION_";
 
   private static final String[] QUERIES =
-      new String[] {"SELECT * FROM /" + PARTITIONED_REGION_NAME1 + " WHERE ID >= 0",
-          "SELECT * FROM /" + PARTITIONED_REGION_NAME1 + " r1, /" + PARTITIONED_REGION_NAME2
+      new String[] {"SELECT * FROM " + SEPARATOR + PARTITIONED_REGION_NAME1 + " WHERE ID >= 0",
+          "SELECT * FROM " + SEPARATOR + PARTITIONED_REGION_NAME1 + " r1, " + SEPARATOR
+              + PARTITIONED_REGION_NAME2
               + " r2 WHERE r1.ID = r2.ID",
-          "SELECT * FROM /" + PARTITIONED_REGION_NAME1 + " r1, /" + PARTITIONED_REGION_NAME2
+          "SELECT * FROM " + SEPARATOR + PARTITIONED_REGION_NAME1 + " r1, " + SEPARATOR
+              + PARTITIONED_REGION_NAME2
               + " r2 WHERE r1.ID = r2.ID AND r1.status = r2.status",
-          "SELECT * FROM /" + PARTITIONED_REGION_NAME1 + " r1, /" + PARTITIONED_REGION_NAME2
-              + " r2, /" + PARTITIONED_REGION_NAME3 + " r3 WHERE r1.ID = r2.ID AND r2.ID = r3.ID",
-          "SELECT * FROM /" + PARTITIONED_REGION_NAME1 + " r1, /" + PARTITIONED_REGION_NAME2
-              + " r2, /" + PARTITIONED_REGION_NAME3 + " r3, /" + REPLICATE_REGION_NAME1
+          "SELECT * FROM " + SEPARATOR + PARTITIONED_REGION_NAME1 + " r1, " + SEPARATOR
+              + PARTITIONED_REGION_NAME2
+              + " r2, " + SEPARATOR + PARTITIONED_REGION_NAME3
+              + " r3 WHERE r1.ID = r2.ID AND r2.ID = r3.ID",
+          "SELECT * FROM " + SEPARATOR + PARTITIONED_REGION_NAME1 + " r1, " + SEPARATOR
+              + PARTITIONED_REGION_NAME2
+              + " r2, " + SEPARATOR + PARTITIONED_REGION_NAME3 + " r3, " + SEPARATOR
+              + REPLICATE_REGION_NAME1
               + " r4 WHERE r1.ID = r2.ID AND r2.ID = r3.ID AND r3.ID = r4.ID",
-          "SELECT * FROM /" + PARTITIONED_REGION_NAME4 + " r4, /" + PARTITIONED_REGION_NAME5
+          "SELECT * FROM " + SEPARATOR + PARTITIONED_REGION_NAME4 + " r4, " + SEPARATOR
+              + PARTITIONED_REGION_NAME5
               + " r5 WHERE r4.ID = r5.ID"};
 
   private static final String[] QUERIES_FOR_REPLICATED =
-      new String[] {"<TRACE> SELECT * FROM /" + REPLICATE_REGION_NAME1 + " WHERE ID >= 0",
-          "SELECT * FROM /" + REPLICATE_REGION_NAME1 + " r1, /" + REPLICATE_REGION_NAME2
+      new String[] {
+          "<TRACE> SELECT * FROM " + SEPARATOR + REPLICATE_REGION_NAME1 + " WHERE ID >= 0",
+          "SELECT * FROM " + SEPARATOR + REPLICATE_REGION_NAME1 + " r1, " + SEPARATOR
+              + REPLICATE_REGION_NAME2
               + " r2 WHERE r1.ID = r2.ID",
-          "SELECT * FROM /" + REPLICATE_REGION_NAME3 + " WHERE ID >= 0"};
+          "SELECT * FROM " + SEPARATOR + REPLICATE_REGION_NAME3 + " WHERE ID >= 0"};
 
   private static final String[] QUERIES_FOR_LIMIT =
-      new String[] {"SELECT * FROM /" + REPLICATE_REGION_NAME4};
+      new String[] {"SELECT * FROM " + SEPARATOR + REPLICATE_REGION_NAME4};
 
   private DistributedMember member1;
   private DistributedMember member2;
@@ -291,19 +301,19 @@ public class QueryDataDUnitTest implements Serializable {
       assertThat(invalidQueryResult,
           isJson(
               withJsonPath("$.message", equalTo(String.format("Query is invalid due to error : %s",
-                  "Region mentioned in query probably missing /")))));
+                  "Region mentioned in query probably missing " + SEPARATOR)))));
 
       String nonexistentRegionName = testName.getMethodName() + "_NONEXISTENT_REGION";
-      String regionsNotFoundQuery = "SELECT * FROM /" + nonexistentRegionName
+      String regionsNotFoundQuery = "SELECT * FROM " + SEPARATOR + nonexistentRegionName
           + " r1, PARTITIONED_REGION_NAME2 r2 WHERE r1.ID = r2.ID";
       String regionsNotFoundResult =
           distributedSystemMXBean.queryData(regionsNotFoundQuery, null, 2);
       assertThat(regionsNotFoundResult, isJson(withJsonPath("$.message",
           equalTo(String.format("Cannot find regions %s in any of the members",
-              "/" + nonexistentRegionName)))));
+              SEPARATOR + nonexistentRegionName)))));
 
       String regionName = testName.getMethodName() + "_REGION";
-      String regionsNotFoundOnMembersQuery = "SELECT * FROM /" + regionName;
+      String regionsNotFoundOnMembersQuery = "SELECT * FROM " + SEPARATOR + regionName;
 
       RegionFactory regionFactory =
           managementTestRule.getCache().createRegionFactory(RegionShortcut.REPLICATE);
@@ -313,7 +323,8 @@ public class QueryDataDUnitTest implements Serializable {
           distributedSystemMXBean.queryData(regionsNotFoundOnMembersQuery, member1.getId(), 2);
       assertThat(regionsNotFoundOnMembersResult, isJson(withJsonPath("$.message",
           equalTo(
-              String.format("Cannot find regions %s in specified members", "/" + regionName)))));
+              String.format("Cannot find regions %s in specified members",
+                  SEPARATOR + regionName)))));
 
       String joinMissingMembersQuery = QUERIES[1];
       String joinMissingMembersResult =
@@ -343,18 +354,20 @@ public class QueryDataDUnitTest implements Serializable {
       regionFactory.create(normalRegionName1);
       regionFactory.create(normalRegionName2);
 
-      Region region = cache.getRegion("/" + normalRegionName1);
+      Region region = cache.getRegion(SEPARATOR + normalRegionName1);
       assertThat(region.getAttributes().getDataPolicy()).isEqualTo(DataPolicy.NORMAL);
 
       RegionFactory regionFactory1 = cache.createRegionFactory(RegionShortcut.REPLICATE);
       regionFactory1.create(tempRegionName1);
       regionFactory1.create(tempRegionName2);
 
-      String query1 = "SELECT * FROM /" + tempRegionName1 + " r1, /" + normalRegionName1
-          + " r2 WHERE r1.ID = r2.ID";
-      String query2 = "SELECT * FROM /" + normalRegionName2 + " r1, /" + tempRegionName2
-          + " r2 WHERE r1.ID = r2.ID";
-      String query3 = "SELECT * FROM /" + normalRegionName2;
+      String query1 =
+          "SELECT * FROM " + SEPARATOR + tempRegionName1 + " r1, " + SEPARATOR + normalRegionName1
+              + " r2 WHERE r1.ID = r2.ID";
+      String query2 =
+          "SELECT * FROM " + SEPARATOR + normalRegionName2 + " r1, " + SEPARATOR + tempRegionName2
+              + " r2 WHERE r1.ID = r2.ID";
+      String query3 = "SELECT * FROM " + SEPARATOR + normalRegionName2;
 
       distributedSystemMXBean.queryDataForCompressedResult(query1, null, 2);
       distributedSystemMXBean.queryDataForCompressedResult(query2, null, 2);
@@ -439,7 +452,7 @@ public class QueryDataDUnitTest implements Serializable {
       DistributedSystemMXBean distributedSystemMXBean =
           managementTestRule.getSystemManagementService().getDistributedSystemMXBean();
       DistributedRegionMXBean distributedRegionMXBean =
-          awaitDistributedRegionMXBean("/" + partitionedRegionName, 3);
+          awaitDistributedRegionMXBean(SEPARATOR + partitionedRegionName, 3);
 
       String alias = "Waiting for all entries to get reflected at managing node";
       int expectedEntryCount = values1.length + values2.length;
@@ -447,7 +460,7 @@ public class QueryDataDUnitTest implements Serializable {
           .untilAsserted(() -> assertThat(distributedRegionMXBean.getSystemRegionEntryCount())
               .isEqualTo(expectedEntryCount));
 
-      String query = "Select * from /" + partitionedRegionName;
+      String query = "Select * from " + SEPARATOR + partitionedRegionName;
 
       String member1Result = distributedSystemMXBean.queryData(query, member1.getId(), 0);
       verifyJsonIsValid(member1Result);
@@ -635,15 +648,15 @@ public class QueryDataDUnitTest implements Serializable {
     memberVMs[2].invoke(this::createColocatedPR);
 
     managerVM.invoke("Wait for all Region Proxies to get replicated", () -> {
-      awaitDistributedRegionMXBean("/" + PARTITIONED_REGION_NAME1, 3);
-      awaitDistributedRegionMXBean("/" + PARTITIONED_REGION_NAME2, 3);
-      awaitDistributedRegionMXBean("/" + PARTITIONED_REGION_NAME3, 3);
-      awaitDistributedRegionMXBean("/" + PARTITIONED_REGION_NAME4, 3);
-      awaitDistributedRegionMXBean("/" + PARTITIONED_REGION_NAME5, 3);
-      awaitDistributedRegionMXBean("/" + REPLICATE_REGION_NAME1, 3);
-      awaitDistributedRegionMXBean("/" + REPLICATE_REGION_NAME2, 1);
-      awaitDistributedRegionMXBean("/" + REPLICATE_REGION_NAME3, 1);
-      awaitDistributedRegionMXBean("/" + REPLICATE_REGION_NAME4, 1);
+      awaitDistributedRegionMXBean(SEPARATOR + PARTITIONED_REGION_NAME1, 3);
+      awaitDistributedRegionMXBean(SEPARATOR + PARTITIONED_REGION_NAME2, 3);
+      awaitDistributedRegionMXBean(SEPARATOR + PARTITIONED_REGION_NAME3, 3);
+      awaitDistributedRegionMXBean(SEPARATOR + PARTITIONED_REGION_NAME4, 3);
+      awaitDistributedRegionMXBean(SEPARATOR + PARTITIONED_REGION_NAME5, 3);
+      awaitDistributedRegionMXBean(SEPARATOR + REPLICATE_REGION_NAME1, 3);
+      awaitDistributedRegionMXBean(SEPARATOR + REPLICATE_REGION_NAME2, 1);
+      awaitDistributedRegionMXBean(SEPARATOR + REPLICATE_REGION_NAME3, 1);
+      awaitDistributedRegionMXBean(SEPARATOR + REPLICATE_REGION_NAME4, 1);
     });
   }
 

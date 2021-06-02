@@ -112,6 +112,7 @@ import static org.apache.geode.distributed.ConfigurationProperties.MEMCACHED_PRO
 import static org.apache.geode.distributed.ConfigurationProperties.NAME;
 import static org.apache.geode.distributed.ConfigurationProperties.OFF_HEAP_MEMORY_SIZE;
 import static org.apache.geode.distributed.ConfigurationProperties.REDIS_BIND_ADDRESS;
+import static org.apache.geode.distributed.ConfigurationProperties.REDIS_ENABLED;
 import static org.apache.geode.distributed.ConfigurationProperties.REDIS_PASSWORD;
 import static org.apache.geode.distributed.ConfigurationProperties.REDIS_PORT;
 import static org.apache.geode.distributed.ConfigurationProperties.REDUNDANCY_ZONE;
@@ -672,7 +673,7 @@ public abstract class AbstractDistributionConfig extends AbstractConfig
     if (value != null && value.length() > 0 && !LocalHostUtil.isLocalHost(value)) {
       throw new IllegalArgumentException(
           String.format(
-              "The redis-bind-address %s is not a valid address for this machine.  These are the valid addresses for this machine: %s",
+              "The compatible-with-redis-bind-address %s is not a valid address for this machine.  These are the valid addresses for this machine: %s",
               value, LocalHostUtil.getMyAddresses()));
     }
     return value;
@@ -1014,9 +1015,7 @@ public abstract class AbstractDistributionConfig extends AbstractConfig
         "Sets the number of milliseconds to wait for ping responses when determining whether another member is still alive. Defaults to %s.",
         DEFAULT_MEMBER_TIMEOUT));
 
-    // for some reason the default port range is null under some circumstances
-    int[] range = DEFAULT_MEMBERSHIP_PORT_RANGE;
-    String srange = range == null ? "not available" : "" + range[0] + "-" + range[1];
+    String srange = "" + DEFAULT_MEMBERSHIP_PORT_RANGE[0] + "-" + DEFAULT_MEMBERSHIP_PORT_RANGE[1];
     String msg = String.format(
         "Sets the range of datagram socket ports that can be used for membership ID purposes and unicast datagram messaging. Defaults to %s.",
         srange);
@@ -1313,12 +1312,14 @@ public abstract class AbstractDistributionConfig extends AbstractConfig
         "The protocol that GemFireMemcachedServer understands. Default is ASCII. Values may be ASCII or BINARY");
     m.put(MEMCACHED_BIND_ADDRESS,
         "The address the GemFireMemcachedServer will listen on for remote connections. Default is \"\" which causes the GemFireMemcachedServer to listen on the host's default address. This property is ignored if memcached-port is \"0\".");
-    m.put(REDIS_PORT,
-        "The port GeodeRedisServer will listen on. Default is 0. Set to zero to disable GeodeRedisServer.");
     m.put(REDIS_BIND_ADDRESS,
-        "The address the GeodeRedisServer will listen on for remote connections. Default is \"\" which causes the GeodeRedisServer to listen on the host's default address. This property is ignored if redis-port is \"0\".");
+        "Specifies the address on which the Redis API for Geode is listening. If set to the empty string or this property is not specified, localhost is requested from the operating system.");
+    m.put(REDIS_ENABLED,
+        "When the default value of false, the Redis API for Geode is not available.  Set to true to enable the Redis API for Geode.");
     m.put(REDIS_PASSWORD,
-        "The password which client of GeodeRedisServer must use to authenticate themselves. The default is none and no authentication will be required.");
+        "Specifies the password that the server uses when a client attempts to authenticate. The default is none and no authentication will be required.");
+    m.put(REDIS_PORT,
+        "Specifies the port on which the server listens for Redis API for Geode connections. A value of 0 selects a random port.  Default is 6379.");
     m.put(ENABLE_CLUSTER_CONFIGURATION,
         "Enables cluster configuration support in dedicated locators.  This allows the locator to share configuration information amongst members and save configuration changes made using GFSH.");
     m.put(ENABLE_MANAGEMENT_REST_SERVICE,

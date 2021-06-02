@@ -19,37 +19,39 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.Socket;
 import java.net.SocketAddress;
+import java.util.Map;
 
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.annotations.Immutable;
-import org.apache.geode.cache.IncompatibleVersionException;
 import org.apache.geode.cache.UnsupportedVersionException;
 import org.apache.geode.cache.VersionException;
 import org.apache.geode.distributed.DistributedSystem;
+import org.apache.geode.internal.cache.tier.Command;
 import org.apache.geode.internal.cache.tier.CommunicationMode;
 import org.apache.geode.internal.cache.tier.ServerSideHandshake;
 import org.apache.geode.internal.security.SecurityService;
-import org.apache.geode.internal.serialization.UnsupportedSerializationVersionException;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
+import org.apache.geode.internal.serialization.Versioning;
+import org.apache.geode.internal.serialization.VersioningIO;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 
 class ServerSideHandshakeFactory {
   private static final Logger logger = LogService.getLogger();
 
   @Immutable
-  static final Version currentServerVersion = Version.CURRENT;
+  static final KnownVersion currentServerVersion = KnownVersion.CURRENT;
 
   ServerSideHandshake readHandshake(Socket socket, int timeout, CommunicationMode communicationMode,
       DistributedSystem system, SecurityService securityService) throws Exception {
     // Read the version byte from the socket
-    Version clientVersion = readClientVersion(socket, timeout, communicationMode.isWAN());
+    KnownVersion clientVersion = readClientVersion(socket, timeout, communicationMode.isWAN());
 
     if (logger.isDebugEnabled()) {
       logger.debug("Client version: {}", clientVersion);
     }
 
-    if (clientVersion.compareTo(Version.GFE_57) < 0) {
+    if (clientVersion.isOlderThan(KnownVersion.OLDEST)) {
       throw new UnsupportedVersionException("Unsupported version " + clientVersion
           + "Server's current version " + currentServerVersion);
     }
@@ -58,42 +60,38 @@ class ServerSideHandshakeFactory {
         securityService);
   }
 
-  private Version readClientVersion(Socket socket, int timeout, boolean isWan)
+  private KnownVersion readClientVersion(Socket socket, int timeout, boolean isWan)
       throws IOException, VersionException {
     int soTimeout = -1;
     try {
       soTimeout = socket.getSoTimeout();
       socket.setSoTimeout(timeout);
       InputStream is = socket.getInputStream();
-      short clientVersionOrdinal = Version.readOrdinalFromInputStream(is);
+      short clientVersionOrdinal = VersioningIO.readOrdinalFromInputStream(is);
       if (clientVersionOrdinal == -1) {
         throw new EOFException(
             "HandShakeReader: EOF reached before client version could be read");
       }
-      Version clientVersion = null;
-      try {
-        clientVersion = Version.fromOrdinal(clientVersionOrdinal);
-        if (CommandInitializer.getCommands(clientVersion) == null) {
-          throw new UnsupportedVersionException("Client version {} is not supported");
-        }
-      } catch (UnsupportedSerializationVersionException uve) {
-        // Allows higher version of wan site to connect to server
-        if (isWan) {
-          return currentServerVersion;
-        } else {
-          SocketAddress sa = socket.getRemoteSocketAddress();
-          String sInfo = "";
-          if (sa != null) {
-            sInfo = " Client: " + sa.toString() + ".";
-          }
-          throw new UnsupportedVersionException(uve.getMessage() + sInfo);
+      // don't do this check until after we've read the ordinal off the wire
+      if (isWan) {
+        return currentServerVersion;
+      }
+      final KnownVersion clientVersion = Versioning.getKnownVersionOrDefault(
+          Versioning.getVersion(clientVersionOrdinal), KnownVersion.TEST_VERSION);
+      if (clientVersion != KnownVersion.TEST_VERSION) {
+        final Map<Integer, Command> commands =
+            CommandInitializer.getDefaultInstance().get(clientVersion);
+        if (commands != null) {
+          return clientVersion;
         }
       }
-
-      if (!clientVersion.compatibleWith(currentServerVersion)) {
-        throw new IncompatibleVersionException(clientVersion, currentServerVersion);
+      SocketAddress sa = socket.getRemoteSocketAddress();
+      String sInfo = "";
+      if (sa != null) {
+        sInfo = " Client: " + sa.toString() + ".";
       }
-      return clientVersion;
+      throw new UnsupportedVersionException(
+          KnownVersion.unsupportedVersionMessage(clientVersionOrdinal) + sInfo);
     } finally {
       if (soTimeout != -1) {
         try {

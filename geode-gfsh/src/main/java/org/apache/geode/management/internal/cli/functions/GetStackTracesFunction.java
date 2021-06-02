@@ -23,12 +23,18 @@ import org.apache.geode.internal.cache.execute.InternalFunction;
 import org.apache.geode.logging.internal.OSProcess;
 import org.apache.geode.management.internal.cli.domain.StackTracesPerMember;
 
-public class GetStackTracesFunction implements InternalFunction {
-
+public class GetStackTracesFunction implements InternalFunction<Void> {
   private static final long serialVersionUID = 1L;
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.GetStackTracesFunction";
 
   @Override
-  public void execute(FunctionContext context) {
+  public String getId() {
+    return ID;
+  }
+
+  @Override
+  public void execute(FunctionContext<Void> context) {
     try {
       Cache cache = context.getCache();
       String memberNameOrId = cache.getDistributedSystem().getDistributedMember().getName();
@@ -43,11 +49,5 @@ public class GetStackTracesFunction implements InternalFunction {
     } catch (Exception e) {
       context.getResultSender().sendException(e);
     }
-  }
-
-  @Override
-  public String getId() {
-    // TODO Auto-generated method stub
-    return GetStackTracesFunction.class.getName();
   }
 }

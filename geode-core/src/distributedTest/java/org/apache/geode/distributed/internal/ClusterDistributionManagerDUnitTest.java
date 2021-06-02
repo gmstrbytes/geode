@@ -21,6 +21,7 @@ import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
 import static org.apache.geode.distributed.ConfigurationProperties.NAME;
 import static org.apache.geode.distributed.internal.membership.gms.membership.GMSJoinLeave.BYPASS_DISCOVERY_PROPERTY;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
+import static org.apache.geode.test.awaitility.GeodeAwaitility.getTimeout;
 import static org.apache.geode.test.dunit.IgnoredException.addIgnoredException;
 import static org.apache.geode.test.dunit.Invoke.invokeInEveryVM;
 import static org.apache.geode.test.dunit.NetworkUtils.getIPLiteral;
@@ -32,9 +33,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.File;
 import java.net.InetAddress;
+import java.util.HashSet;
 import java.util.Properties;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.logging.log4j.Logger;
@@ -59,19 +67,21 @@ import org.apache.geode.cache.RegionFactory;
 import org.apache.geode.cache.Scope;
 import org.apache.geode.cache.util.CacheListenerAdapter;
 import org.apache.geode.distributed.ConfigurationProperties;
+import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.Locator;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
 import org.apache.geode.distributed.internal.membership.api.MemberDisconnectedException;
 import org.apache.geode.distributed.internal.membership.api.MembershipManagerHelper;
 import org.apache.geode.distributed.internal.membership.api.MembershipView;
 import org.apache.geode.distributed.internal.membership.gms.GMSMembership;
+import org.apache.geode.internal.cache.StateFlushOperation;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.test.dunit.Invoke;
 import org.apache.geode.test.dunit.SerializableRunnable;
 import org.apache.geode.test.dunit.VM;
 import org.apache.geode.test.dunit.cache.CacheTestCase;
+import org.apache.geode.test.dunit.rules.DistributedErrorCollector;
 import org.apache.geode.test.dunit.rules.DistributedRestoreSystemProperties;
-import org.apache.geode.test.dunit.rules.SharedErrorCollector;
 import org.apache.geode.test.junit.categories.MembershipTest;
 
 /**
@@ -95,7 +105,7 @@ public class ClusterDistributionManagerDUnitTest extends CacheTestCase {
       new DistributedRestoreSystemProperties();
 
   @Rule
-  public SharedErrorCollector errorCollector = new SharedErrorCollector();
+  public DistributedErrorCollector errorCollector = new DistributedErrorCollector();
   private int locatorPort;
 
   @Before
@@ -204,6 +214,61 @@ public class ClusterDistributionManagerDUnitTest extends CacheTestCase {
         .until(() -> !membershipManager.isSurpriseMember(member));
   }
 
+  @Test
+  public void shutdownMessageCausesListenerInvocation() {
+    final AtomicBoolean listenerInvoked = new AtomicBoolean();
+    vm1.invoke("join the cluster", () -> getSystem().getDistributedMember()); // lead member
+    system = getSystem(); // non-lead member
+    // this membership listener will be invoked when the shutdown message is received
+    system.getDistributionManager().addMembershipListener(new MembershipListener() {
+      @Override
+      public void memberDeparted(DistributionManager distributionManager,
+          InternalDistributedMember id, boolean crashed) {
+        assertThat(crashed).isFalse();
+        listenerInvoked.set(Boolean.TRUE);
+      }
+    });
+    final InternalDistributedMember memberID = system.getDistributedMember();
+    locatorvm.invoke("send a shutdown message", () -> {
+      final DistributionManager distributionManager =
+          ((InternalDistributedSystem) Locator.getLocator().getDistributedSystem())
+              .getDistributionManager();
+      final ShutdownMessage shutdownMessage = new ShutdownMessage();
+      shutdownMessage.setRecipient(memberID);
+      shutdownMessage.setDistributionManagerId(distributionManager.getDistributionManagerId());
+      distributionManager.putOutgoing(shutdownMessage);
+    });
+    await().until(() -> listenerInvoked.get());
+  }
+
+  @Test
+  public void shutdownMessageCausesTargetMemberToLeaveStateFlushReplyProcessor() {
+    vm1.invoke("join the cluster", () -> getSystem().getDistributedMember()); // lead member
+    system = getSystem(); // non-lead member
+    DistributedMember targetId = locatorvm.invoke(() -> {
+      return Locator.getLocator().getDistributedSystem().getDistributedMember();
+    });
+
+    StateFlushOperation.StateFlushReplyProcessor stateFlushReplyProcessor =
+        new StateFlushOperation.StateFlushReplyProcessor(getSystem().getDistributionManager(),
+            new HashSet(), targetId);
+    system.getDistributionManager().addMembershipListener(stateFlushReplyProcessor);
+    final InternalDistributedMember memberID = system.getDistributedMember();
+
+    locatorvm.invoke("send a shutdown message", () -> {
+      final DistributionManager distributionManager =
+          ((InternalDistributedSystem) Locator.getLocator().getDistributedSystem())
+              .getDistributionManager();
+      final ShutdownMessage shutdownMessage = new ShutdownMessage();
+      shutdownMessage.setRecipient(memberID);
+      shutdownMessage.setDistributionManagerId(distributionManager.getDistributionManagerId());
+      distributionManager.putOutgoing(shutdownMessage);
+    });
+
+    await().untilAsserted(
+        () -> assertThat(stateFlushReplyProcessor.getTargetMemberHasLeft()).isTrue());
+  }
+
   /**
    * Tests that a severe-level alert is generated if a member does not respond with an ack quickly
    * enough. vm0 and vm1 create a region and set ack-severe-alert-threshold. vm1 has a cache
@@ -228,10 +293,12 @@ public class ClusterDistributionManagerDUnitTest extends CacheTestCase {
     assertThat(getCache().isClosed()).isFalse();
     Region<String, String> region = regionFactory.create("testRegion");
 
+    addIgnoredException("elapsed while waiting for replies");
+    // Ignore logging from Connection.doSevereAlertProcessing()
+    addIgnoredException("seconds have elapsed waiting for a response from");
     vm1.invoke("Connect to distributed system", () -> {
       config.setProperty(NAME, "sleeper");
       getSystem(config);
-      addIgnoredException("elapsed while waiting for replies");
 
       RegionFactory<String, String> regionFactory2 = getCache().createRegionFactory();
       regionFactory2.setScope(Scope.DISTRIBUTED_ACK);
@@ -280,6 +347,8 @@ public class ClusterDistributionManagerDUnitTest extends CacheTestCase {
     Region<String, String> region = regionFactory.create("testRegion");
 
     addIgnoredException("sec have elapsed while waiting for replies");
+    // Ignore logging from Connection.doSevereAlertProcessing()
+    addIgnoredException("seconds have elapsed waiting for a response from");
 
     vm1.invoke(new SerializableRunnable("Connect to distributed system") {
       @Override
@@ -368,6 +437,32 @@ public class ClusterDistributionManagerDUnitTest extends CacheTestCase {
 
     await()
         .untilAsserted(() -> assertThat(waitForViewInstallationDone.get()).isTrue());
+  }
+
+  /**
+   * show that waitForViewInstallation works as expected when distribution manager is closed
+   * while waiting for the latest membership view to install
+   */
+  @Test
+  public void testWaitForViewInstallationDisconnectDS()
+      throws InterruptedException, TimeoutException, BrokenBarrierException, ExecutionException {
+    InternalDistributedSystem system = getSystem();
+    ClusterDistributionManager dm = (ClusterDistributionManager) system.getDM();
+    MembershipView<InternalDistributedMember> view = dm.getDistribution().getView();
+
+    CyclicBarrier cyclicBarrier = new CyclicBarrier(2);
+    Future future = executorService.submit(() -> {
+      try {
+        cyclicBarrier.await(getTimeout().toMillis(), TimeUnit.MILLISECONDS);
+        dm.waitForViewInstallation(view.getViewId() + 1);
+      } catch (InterruptedException | BrokenBarrierException | TimeoutException e) {
+        errorCollector.addError(e);
+      }
+    });
+
+    cyclicBarrier.await(getTimeout().toMillis(), TimeUnit.MILLISECONDS);
+    system.disconnect();
+    future.get(getTimeout().toMillis(), TimeUnit.MILLISECONDS);
   }
 
   private CacheListener<String, String> getSleepingListener(final boolean playDead) {

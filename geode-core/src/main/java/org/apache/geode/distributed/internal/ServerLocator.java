@@ -16,9 +16,7 @@ package org.apache.geode.distributed.internal;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.InetAddress;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -89,13 +87,11 @@ public class ServerLocator implements TcpHandler, RestartHandler, DistributionAd
   private final String hostName;
   private final String memberName;
 
-  private ProductUseLog productUseLog;
-
   private volatile long lastLogTime;
 
   ServerLocator() throws IOException {
     this.port = 10334;
-    this.hostName = LocalHostUtil.getLocalHost().getCanonicalHostName();
+    this.hostName = LocalHostUtil.getCanonicalLocalHostName();
     this.hostNameForClients = this.hostName;
     this.logFile = null;
     this.memberName = null;
@@ -108,15 +104,15 @@ public class ServerLocator implements TcpHandler, RestartHandler, DistributionAd
     return loadSnapshot;
   }
 
-  public ServerLocator(int port, InetAddress bindAddress, String hostNameForClients, File logFile,
-      ProductUseLog productUseLogWriter, String memberName, InternalDistributedSystem ds,
+  public ServerLocator(int port, String bindAddress, String hostNameForClients, File logFile,
+      String memberName, InternalDistributedSystem ds,
       LocatorStats stats) throws IOException {
     this.port = port;
 
-    if (bindAddress == null) {
-      this.hostName = LocalHostUtil.getLocalHost().getCanonicalHostName();
+    if (bindAddress == null || bindAddress.isEmpty()) {
+      this.hostName = LocalHostUtil.getCanonicalLocalHostName();
     } else {
-      this.hostName = bindAddress.getHostAddress();
+      this.hostName = bindAddress;
     }
 
     if (hostNameForClients != null && !hostNameForClients.equals("")) {
@@ -127,8 +123,6 @@ public class ServerLocator implements TcpHandler, RestartHandler, DistributionAd
 
     this.logFile = logFile != null ? logFile.getCanonicalPath() : null;
     this.memberName = memberName;
-    this.productUseLog = productUseLogWriter;
-
     this.ds = ds;
     this.advisor = ControllerAdvisor.createControllerAdvisor(this); // escapes constructor but
                                                                     // allows field to be final
@@ -405,7 +399,9 @@ public class ServerLocator implements TcpHandler, RestartHandler, DistributionAd
       CacheServerProfile bp = (CacheServerProfile) profile;
       ServerLocation location = buildServerLocation(bp);
       String[] groups = bp.getGroups();
-      loadSnapshot.addServer(location, groups, bp.getInitialLoad(), bp.getLoadPollInterval());
+      loadSnapshot.addServer(
+          location, bp.getDistributedMember().getUniqueId(), groups,
+          bp.getInitialLoad(), bp.getLoadPollInterval());
       if (logger.isDebugEnabled()) {
         logger.debug("ServerLocator: Received load from a new server {}, {}", location,
             bp.getInitialLoad());
@@ -423,7 +419,7 @@ public class ServerLocator implements TcpHandler, RestartHandler, DistributionAd
       CacheServerProfile bp = (CacheServerProfile) profile;
       // InternalDistributedMember id = bp.getDistributedMember();
       ServerLocation location = buildServerLocation(bp);
-      loadSnapshot.removeServer(location);
+      loadSnapshot.removeServer(location, bp.getDistributedMember().getUniqueId());
       if (logger.isDebugEnabled()) {
         logger.debug("ServerLocator: server departed {}", location);
       }
@@ -441,58 +437,15 @@ public class ServerLocator implements TcpHandler, RestartHandler, DistributionAd
         .warning("ServerLocator - unexpected profile update.");
   }
 
-  public void updateLoad(ServerLocation location, ServerLoad load, List clientIds) {
+  public void updateLoad(ServerLocation location, String memberId, ServerLoad load,
+      List clientIds) {
     if (getLogWriter().fineEnabled()) {
       getLogWriter()
-          .fine("ServerLocator: Received a load update from " + location + ", " + load);
+          .fine("ServerLocator: Received a load update from " + location + " at " + memberId + " , "
+              + load);
     }
-    loadSnapshot.updateLoad(location, load, clientIds);
+    loadSnapshot.updateLoad(location, memberId, load, clientIds);
     this.stats.incServerLoadUpdates();
-    logServers();
-  }
-
-  private void logServers() {
-    if (productUseLog != null) {
-      Map<ServerLocation, ServerLoad> loadMap = getLoadMap();
-      if (loadMap.size() == 0) {
-        return;
-      }
-
-      long now = System.currentTimeMillis();
-      long lastLogTime = this.lastLogTime;
-      if (now < lastLogTime + SERVER_LOAD_LOG_INTERVAL) {
-        return;
-      }
-      this.lastLogTime = now;
-
-      int queues = 0;
-      int connections = 0;
-      for (ServerLoad l : loadMap.values()) {
-        queues += l.getSubscriptionConnectionLoad();
-        connections = (int) Math.ceil(l.getConnectionLoad() / l.getLoadPerConnection());
-      }
-
-      Set<DistributedMember> servers;
-      synchronized (ownerMap) {
-        servers = new HashSet<>(ownerMap.values());
-      }
-
-      StringBuilder sb = new StringBuilder(1000);
-      sb.append("server count: ").append(servers.size()).append(" connected client count: ")
-          .append(connections).append(" client subscription queue count: ").append(queues)
-          .append(System.lineSeparator()).append("current servers : ");
-
-      String[] ids = new String[servers.size()];
-      int i = 0;
-      for (DistributedMember id : servers) {
-        ids[i++] = id.toString();
-      }
-      Arrays.sort(ids);
-      for (i = 0; i < ids.length; i++) {
-        sb.append(ids[i]).append(' ');
-      }
-      productUseLog.log(sb.toString());
-    }
   }
 
   /**

@@ -34,7 +34,9 @@ import javax.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
 import org.w3c.dom.Element;
 
 import org.apache.geode.annotations.Experimental;
+import org.apache.geode.cache.Region;
 import org.apache.geode.internal.config.VersionAdapter;
+import org.apache.geode.lang.Identifiable;
 
 /**
  * <p>
@@ -159,6 +161,7 @@ import org.apache.geode.internal.config.VersionAdapter;
  *                 &lt;attribute name="alert-threshold" type="{http://www.w3.org/2001/XMLSchema}string" />
  *                 &lt;attribute name="dispatcher-threads" type="{http://www.w3.org/2001/XMLSchema}string" />
  *                 &lt;attribute name="order-policy" type="{http://www.w3.org/2001/XMLSchema}string" />
+ *                 &lt;attribute name="group-transaction-events" type="{http://www.w3.org/2001/XMLSchema}boolean" />
  *               &lt;/restriction>
  *             &lt;/complexContent>
  *           &lt;/complexType>
@@ -327,7 +330,11 @@ public class CacheConfig {
   @XmlJavaTypeAdapter(VersionAdapter.class)
   protected String version;
 
-  public static final String SEPARATOR = "/";
+  /**
+   * @deprecated Please use {@link Region#SEPARATOR}
+   */
+  @Deprecated
+  public static final String SEPARATOR = Region.SEPARATOR;
 
   public CacheConfig() {}
 
@@ -599,7 +606,7 @@ public class CacheConfig {
    */
   public List<DiskStoreType> getDiskStores() {
     if (diskStores == null) {
-      diskStores = new ArrayList<DiskStoreType>();
+      diskStores = new ArrayList<>();
     }
     return this.diskStores;
   }
@@ -1024,11 +1031,22 @@ public class CacheConfig {
     this.version = value;
   }
 
+  // this supports looking for sub regions
   public RegionConfig findRegionConfiguration(String regionPath) {
-    if (regionPath.startsWith(SEPARATOR)) {
+    if (regionPath.startsWith(Region.SEPARATOR)) {
       regionPath = regionPath.substring(1);
     }
-    return find(getRegions(), regionPath);
+    List<RegionConfig> regions = getRegions();
+    RegionConfig found = null;
+    for (String regionToken : regionPath.split(Region.SEPARATOR)) {
+      found = Identifiable.find(regions, regionToken);
+      // couldn't find one of the sub regions, break out of the loop
+      if (found == null) {
+        return null;
+      }
+      regions = found.getRegions();
+    }
+    return found;
   }
 
   public <T extends CacheElement> List<T> findCustomCacheElements(Class<T> classT) {
@@ -2583,6 +2601,7 @@ public class CacheConfig {
    *       &lt;attribute name="alert-threshold" type="{http://www.w3.org/2001/XMLSchema}string" />
    *       &lt;attribute name="dispatcher-threads" type="{http://www.w3.org/2001/XMLSchema}string" />
    *       &lt;attribute name="order-policy" type="{http://www.w3.org/2001/XMLSchema}string" />
+   *       &lt;attribute name="group-transaction-events" type="{http://www.w3.org/2001/XMLSchema}boolean" />
    *     &lt;/restriction>
    *   &lt;/complexContent>
    * &lt;/complexType>
@@ -2635,6 +2654,10 @@ public class CacheConfig {
     protected String dispatcherThreads;
     @XmlAttribute(name = "order-policy")
     protected String orderPolicy;
+    @XmlAttribute(name = "group-transaction-events")
+    protected Boolean groupTransactionEvents;
+    @XmlAttribute(name = "enforce-threads-connect-same-receiver")
+    protected Boolean enforceThreadsConnectSameReceiver;
 
     /**
      * Gets the value of the gatewayEventFilters property.
@@ -2664,6 +2687,10 @@ public class CacheConfig {
         gatewayEventFilters = new ArrayList<>();
       }
       return this.gatewayEventFilters;
+    }
+
+    public boolean areGatewayEventFiltersUpdated() {
+      return gatewayEventFilters != null;
     }
 
     /**
@@ -2760,6 +2787,15 @@ public class CacheConfig {
      */
     public void setRemoteDistributedSystemId(String value) {
       this.remoteDistributedSystemId = value;
+    }
+
+    public Boolean mustGroupTransactionEvents() {
+      return groupTransactionEvents;
+    }
+
+
+    public void setGroupTransactionEvents(Boolean value) {
+      this.groupTransactionEvents = value;
     }
 
     /**
@@ -3070,6 +3106,27 @@ public class CacheConfig {
       this.orderPolicy = value;
     }
 
+    /**
+     * Sets the value of the enforceThreadsConnectSameReceiver property.
+     *
+     * allowed object is
+     * {@link Boolean }
+     *
+     */
+    public void setEnforceThreadsConnectSameReceiver(Boolean value) {
+      this.enforceThreadsConnectSameReceiver = value;
+    }
+
+    /**
+     * Gets the value of the enforceThreadsConnectSameReceiver property.
+     *
+     * possible object is
+     * {@link Boolean }
+     *
+     */
+    public Boolean getEnforceThreadsConnectSameReceiver() {
+      return this.enforceThreadsConnectSameReceiver;
+    }
   }
 
 }

@@ -15,6 +15,7 @@
 
 package org.apache.geode.management.internal.cli.commands;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.internal.lang.SystemUtils.CURRENT_DIRECTORY;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -28,7 +29,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import junitparams.JUnitParamsRunner;
@@ -48,6 +48,7 @@ import org.apache.geode.cache.configuration.DiskStoreType;
 import org.apache.geode.distributed.Locator;
 import org.apache.geode.distributed.internal.InternalConfigurationPersistenceService;
 import org.apache.geode.distributed.internal.InternalLocator;
+import org.apache.geode.internal.cache.DiskInitFile;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.SnapshotTestUtil;
 import org.apache.geode.management.internal.cli.result.model.TabularResultModel;
@@ -84,6 +85,7 @@ public class DiskStoreCommandsDUnitTest implements Serializable {
         REGION_1, DISKSTORE, GROUP)).statusIsSuccess();
   }
 
+  @SuppressWarnings("deprecation")
   private void createDiskStore(MemberVM jmxManager, int serverCount, String group) {
     gfsh.executeAndAssertThat(String.format(
         "create disk-store --name=%s --dir=%s --group=%s --auto-compact=false --compaction-threshold=99 --max-oplog-size=1 --allow-force-compaction=true",
@@ -91,10 +93,9 @@ public class DiskStoreCommandsDUnitTest implements Serializable {
         .statusIsSuccess()
         .doesNotContainOutput("Did not complete waiting");
 
-    List<String> diskStores =
-        IntStream.rangeClosed(1, serverCount).mapToObj(x -> DISKSTORE).collect(Collectors.toList());
     gfsh.executeAndAssertThat("list disk-stores").statusIsSuccess()
-        .tableHasColumnWithValuesContaining("Disk Store Name", diskStores.toArray(new String[0]));
+        .tableHasColumnWithValuesContaining("Disk Store Name",
+            IntStream.rangeClosed(1, serverCount).mapToObj(x -> DISKSTORE).toArray(String[]::new));
   }
 
   private static SerializableRunnableIF dataProducer() {
@@ -112,6 +113,7 @@ public class DiskStoreCommandsDUnitTest implements Serializable {
     props.setProperty("groups", GROUP);
 
     MemberVM locator = rule.startLocatorVM(0);
+    @SuppressWarnings("unused")
     MemberVM server1 = rule.startServerVM(1, props, locator.getPort());
 
     gfsh.connectAndVerify(locator);
@@ -127,9 +129,6 @@ public class DiskStoreCommandsDUnitTest implements Serializable {
 
   @Test
   public void createDuplicateDiskStoreFailsNoServers() throws Exception {
-    Properties props = new Properties();
-    props.setProperty("groups", GROUP);
-
     MemberVM locator = rule.startLocatorVM(0);
 
     gfsh.connectAndVerify(locator);
@@ -209,7 +208,7 @@ public class DiskStoreCommandsDUnitTest implements Serializable {
     gfsh.executeAndAssertThat("revoke missing-disk-store --id=" + diskstoreIDs.get(0))
         .statusIsSuccess().containsOutput("Missing disk store successfully revoked");
 
-    locator.waitUntilRegionIsReadyOnExactlyThisManyServers("/" + REGION_1, 1);
+    locator.waitUntilRegionIsReadyOnExactlyThisManyServers(SEPARATOR + REGION_1, 1);
 
     server1.invoke(() -> {
       Cache cache = ClusterStartupRule.getCache();
@@ -315,6 +314,7 @@ public class DiskStoreCommandsDUnitTest implements Serializable {
   }
 
   @Test
+  @SuppressWarnings("deprecation")
   public void testBackupDiskStore() throws Exception {
     Properties props = new Properties();
     props.setProperty("groups", GROUP);
@@ -432,7 +432,7 @@ public class DiskStoreCommandsDUnitTest implements Serializable {
 
     server1.invoke(() -> {
       Cache cache = ClusterStartupRule.getCache();
-      Region r = cache.getRegion(REGION_1);
+      Region<String, String> r = cache.getRegion(REGION_1);
       r.put("A", "B");
     });
 
@@ -501,7 +501,8 @@ public class DiskStoreCommandsDUnitTest implements Serializable {
         String.format(
             "alter disk-store --name=%s --region=INVALID --disk-dirs=%s --compressor=foo.Bar",
             DISKSTORE, diskDirs))
-        .statusIsError().containsOutput("The disk store does not contain a region named: /INVALID");
+        .statusIsError()
+        .containsOutput("The disk store does not contain a region named: " + SEPARATOR + "INVALID");
   }
 
   @Test
@@ -517,6 +518,25 @@ public class DiskStoreCommandsDUnitTest implements Serializable {
         + nonExistingDiskStorePath.toAbsolutePath().toString()).statusIsError()
         .containsOutput("Could not find disk-dirs:");
     assertThat(Files.exists(nonExistingDiskStorePath)).isFalse();
+  }
+
+  @Test
+  @Parameters({"compact offline-disk-store", "describe offline-disk-store",
+      "upgrade offline-disk-store", "validate offline-disk-store",
+      "alter disk-store --region=testRegion --enable-statistics=true"})
+  public void offlineDiskStoreCommandShouldFailWhenDiskStoreFileDoesNotExist(
+      String baseCommand) {
+    Path diskStorePath =
+        Paths.get(tempDir.getRoot().getAbsolutePath());
+    assertThat(Files.exists(diskStorePath)).isTrue();
+    Path diskStoreFilePath =
+        Paths.get(diskStorePath + File.separator + "BACKUPnonExistingDiskStore"
+            + DiskInitFile.IF_FILE_EXT);
+    assertThat(Files.exists(diskStoreFilePath)).isFalse();
+    gfsh.executeAndAssertThat(baseCommand + " --name=nonExistingDiskStore --disk-dirs="
+        + diskStorePath.toAbsolutePath().toString()).statusIsError()
+        .containsOutput("The init file " + diskStoreFilePath + " does not exist.");
+    assertThat(Files.exists(diskStoreFilePath)).isFalse();
   }
 
   @Test
@@ -537,25 +557,21 @@ public class DiskStoreCommandsDUnitTest implements Serializable {
         .doesNotContainOutput("Did not complete waiting");
 
     // Verify the server defines the disk store with the disk-dir path
-    server.invoke(() -> {
-      verifyDiskStoreInServer(DISKSTORE, diskDirectoryName);
-    });
+    server.invoke(() -> verifyDiskStoreInServer(DISKSTORE, diskDirectoryName));
 
     // Verify the cluster config stores the disk store with the input disk-dir path
-    locator.invoke(() -> {
-      verifyDiskStoreInClusterConfiguration(diskDirectoryName);
-    });
+    locator.invoke(() -> verifyDiskStoreInClusterConfiguration(diskDirectoryName));
 
     // Stop and start the server
     rule.stop(1);
     server = rule.startServerVM(2, locator.getPort());
 
     // Verify the server still defines the disk store with the disk-dir path
-    server.invoke(() -> {
-      verifyDiskStoreInServer(DISKSTORE, diskDirectoryName);
-    });
+    server.invoke(() -> verifyDiskStoreInServer(DISKSTORE, diskDirectoryName));
   }
 
+  // Invoked via JUnit params
+  @SuppressWarnings("unused")
   private String[] getDiskDirNames() throws IOException {
     tempDir.create();
     return new String[] {tempDir.newFolder(DISKSTORE).getAbsolutePath(), DISKSTORE};

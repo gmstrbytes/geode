@@ -15,6 +15,7 @@
 package org.apache.geode.distributed.internal;
 
 import static org.apache.geode.distributed.internal.DistributionImpl.EMPTY_MEMBER_ARRAY;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -30,6 +31,8 @@ import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
@@ -39,11 +42,15 @@ import org.jgroups.util.UUID;
 import org.junit.Before;
 import org.junit.Test;
 
+import org.apache.geode.GemFireConfigException;
+import org.apache.geode.SystemConnectException;
 import org.apache.geode.distributed.DistributedSystemDisconnectedException;
 import org.apache.geode.distributed.internal.direct.DirectChannel;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
+import org.apache.geode.distributed.internal.membership.api.MemberStartupException;
 import org.apache.geode.distributed.internal.membership.api.Membership;
 import org.apache.geode.distributed.internal.membership.api.MembershipClosedException;
+import org.apache.geode.distributed.internal.membership.api.MembershipConfigurationException;
 import org.apache.geode.distributed.internal.membership.gms.GMSMembership;
 import org.apache.geode.internal.admin.remote.AlertListenerMessage;
 import org.apache.geode.internal.admin.remote.RemoteTransportConfig;
@@ -79,7 +86,6 @@ public class DistributionTest {
     distribution = new DistributionImpl(clusterDistributionManager,
         remoteTransportConfig, internalDistributedSystem, membership);
 
-
     Random r = new Random();
     mockMembers = new InternalDistributedMember[5];
     for (int i = 0; i < mockMembers.length; i++) {
@@ -99,9 +105,8 @@ public class DistributionTest {
   @Test
   public void testDirectChannelSend() throws Exception {
     HighPriorityAckedMessage m = new HighPriorityAckedMessage();
-    InternalDistributedMember[] recipients =
-        new InternalDistributedMember[] {mockMembers[2], mockMembers[3]};
-    m.setRecipients(Arrays.asList(recipients));
+    List<InternalDistributedMember> recipients = Arrays.asList(mockMembers[2], mockMembers[3]);
+    m.setRecipients(recipients);
     Set<InternalDistributedMember> failures = distribution
         .directChannelSend(recipients, m);
     assertTrue(failures == null);
@@ -112,27 +117,25 @@ public class DistributionTest {
   @Test
   public void testDirectChannelSendFailureToOneRecipient() throws Exception {
     HighPriorityAckedMessage m = new HighPriorityAckedMessage();
-    InternalDistributedMember[] recipients =
-        new InternalDistributedMember[] {mockMembers[2], mockMembers[3]};
-    m.setRecipients(Arrays.asList(recipients));
+    List<InternalDistributedMember> recipients = Arrays.asList(mockMembers[2], mockMembers[3]);
+    m.setRecipients(recipients);
     Set<InternalDistributedMember> failures = distribution
         .directChannelSend(recipients, m);
     ConnectExceptions exception = new ConnectExceptions();
-    exception.addFailure(recipients[0], new Exception("testing"));
+    exception.addFailure(recipients.get(0), new Exception("testing"));
     when(dc.send(any(), any(mockMembers.getClass()),
         any(DistributionMessage.class), anyLong(), anyLong())).thenThrow(exception);
     failures = distribution.directChannelSend(recipients, m);
     assertTrue(failures != null);
     assertEquals(1, failures.size());
-    assertEquals(recipients[0], failures.iterator().next());
+    assertEquals(recipients.get(0), failures.iterator().next());
   }
 
   @Test
   public void testDirectChannelSendFailureToAll() throws Exception {
     HighPriorityAckedMessage m = new HighPriorityAckedMessage();
-    InternalDistributedMember[] recipients =
-        new InternalDistributedMember[] {mockMembers[2], mockMembers[3]};
-    m.setRecipients(Arrays.asList(recipients));
+    List<InternalDistributedMember> recipients = Arrays.asList(mockMembers[2], mockMembers[3]);
+    m.setRecipients(recipients);
     Set<InternalDistributedMember> failures = distribution
         .directChannelSend(recipients, m);
     when(dc.send(any(), any(mockMembers.getClass()),
@@ -163,14 +166,13 @@ public class DistributionTest {
   public void testDirectChannelSendFailureDueToForcedDisconnect() throws Exception {
     HighPriorityAckedMessage m = new HighPriorityAckedMessage();
     when(membership.shutdownInProgress()).thenReturn(true);
-    InternalDistributedMember[] recipients =
-        new InternalDistributedMember[] {mockMembers[2], mockMembers[3]};
-    m.setRecipients(Arrays.asList(recipients));
+    List<InternalDistributedMember> recipients = Arrays.asList(mockMembers[2], mockMembers[3]);
+    m.setRecipients(recipients);
     Set<InternalDistributedMember> failures = distribution
         .directChannelSend(recipients, m);
     distribution.setShutdown();
     ConnectExceptions exception = new ConnectExceptions();
-    exception.addFailure(recipients[0], new Exception("testing"));
+    exception.addFailure(recipients.get(0), new Exception("testing"));
     when(dc.send(any(), any(mockMembers.getClass()),
         any(DistributionMessage.class), anyLong(), anyLong())).thenThrow(exception);
     Assertions.assertThatThrownBy(() -> {
@@ -184,7 +186,7 @@ public class DistributionTest {
         Instant.now(), "thread", "", 1L, "", "");
     when(membership.shutdownInProgress()).thenReturn(true);
     Set<InternalDistributedMember> failures =
-        distribution.send(new InternalDistributedMember[] {mockMembers[0]}, m);
+        distribution.send(Collections.singletonList(mockMembers[0]), m);
     verify(membership, never()).send(any(), any());
     assertEquals(1, failures.size());
     assertEquals(mockMembers[0], failures.iterator().next());
@@ -200,10 +202,30 @@ public class DistributionTest {
 
   @Test
   public void testSendToEmptyListIsRejected() throws Exception {
-    InternalDistributedMember[] emptyList = new InternalDistributedMember[0];
+    List<InternalDistributedMember> emptyList = Collections.emptyList();
     HighPriorityAckedMessage m = new HighPriorityAckedMessage();
     m.setRecipient(mockMembers[0]);
     distribution.send(emptyList, m);
     verify(membership, never()).send(any(), any());
+  }
+
+  @Test
+  public void testExceptionNestedOnStartConfigError() throws Exception {
+    Throwable exception = new MembershipConfigurationException("Test exception");
+    doThrow(exception).when(membership).start();
+
+    assertThatThrownBy(() -> distribution.start())
+        .isInstanceOf(GemFireConfigException.class)
+        .hasCause(exception);
+  }
+
+  @Test
+  public void testExceptionNestedOnStartStartupError() throws Exception {
+    Throwable exception = new MemberStartupException("Test exception");
+    doThrow(exception).when(membership).start();
+
+    assertThatThrownBy(() -> distribution.start())
+        .isInstanceOf(SystemConnectException.class)
+        .hasCause(exception);
   }
 }

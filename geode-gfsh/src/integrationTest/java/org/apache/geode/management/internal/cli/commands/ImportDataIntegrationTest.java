@@ -16,9 +16,11 @@
 
 package org.apache.geode.management.internal.cli.commands;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -68,7 +70,7 @@ public class ImportDataIntegrationTest {
   }
 
   @Test
-  public void testExportImport() throws Exception {
+  public void testExportImport() {
     String exportCommand = buildBaseExportCommand()
         .addOption(CliStrings.EXPORT_DATA__FILE, snapshotFile.toString()).getCommandString();
     gfsh.executeAndAssertThat(exportCommand).statusIsSuccess();
@@ -83,7 +85,7 @@ public class ImportDataIntegrationTest {
   }
 
   @Test
-  public void testExportImportRelativePath() throws Exception {
+  public void testExportImportRelativePath() throws IOException {
     String exportCommand = buildBaseExportCommand()
         .addOption(CliStrings.EXPORT_DATA__FILE, SNAPSHOT_FILE).getCommandString();
     gfsh.executeAndAssertThat(exportCommand).statusIsSuccess();
@@ -99,7 +101,7 @@ public class ImportDataIntegrationTest {
   }
 
   @Test
-  public void testParallelExportImport() throws Exception {
+  public void testParallelExportImport() {
     String exportCommand =
         buildBaseExportCommand().addOption(CliStrings.EXPORT_DATA__DIR, snapshotDir.toString())
             .addOption(CliStrings.EXPORT_DATA__PARALLEL, "true").getCommandString();
@@ -116,8 +118,9 @@ public class ImportDataIntegrationTest {
     validateImport("value");
   }
 
+  @SuppressWarnings("deprecation")
   @Test
-  public void testInvalidMember() throws Exception {
+  public void testInvalidMember() {
     String invalidMemberName = "invalidMember";
     String invalidMemberCommand = new CommandStringBuilder(CliStrings.EXPORT_DATA)
         .addOption(CliStrings.MEMBER, invalidMemberName)
@@ -129,18 +132,19 @@ public class ImportDataIntegrationTest {
   }
 
   @Test
-  public void testNonExistentRegion() throws Exception {
+  public void testNonExistentRegion() {
     String nonExistentRegionCommand = new CommandStringBuilder(CliStrings.EXPORT_DATA)
         .addOption(CliStrings.MEMBER, server.getName())
-        .addOption(CliStrings.IMPORT_DATA__REGION, "/nonExistentRegion")
+        .addOption(CliStrings.IMPORT_DATA__REGION, SEPARATOR + "nonExistentRegion")
         .addOption(CliStrings.IMPORT_DATA__FILE, snapshotFile.toString()).getCommandString();
     gfsh.executeAndAssertThat(nonExistentRegionCommand).statusIsError()
         .hasTableSection().hasColumn("Message")
-        .containsExactlyInAnyOrder("Region : /nonExistentRegion not found");
+        .containsExactlyInAnyOrder("Region : " + SEPARATOR + "nonExistentRegion not found");
   }
 
   @Test
-  public void testInvalidFile() throws Exception {
+  @SuppressWarnings("deprecation")
+  public void testInvalidFile() {
     String invalidFileCommand = buildBaseImportCommand()
         .addOption(CliStrings.IMPORT_DATA__FILE, snapshotFile.toString() + ".invalid")
         .getCommandString();
@@ -150,14 +154,16 @@ public class ImportDataIntegrationTest {
   }
 
   @Test
-  public void testMissingFileAndDirectory() throws Exception {
+  @SuppressWarnings("deprecation")
+  public void testMissingFileAndDirectory() {
     String missingFileAndDirCommand = buildBaseImportCommand().getCommandString();
     gfsh.executeCommand(missingFileAndDirCommand);
     assertThat(gfsh.getGfshOutput()).contains("Must specify a location to load snapshot from");
   }
 
   @Test
-  public void testParallelWithOnlyFile() throws Exception {
+  @SuppressWarnings("deprecation")
+  public void testParallelWithOnlyFile() {
     String importCommand =
         buildBaseImportCommand().addOption(CliStrings.IMPORT_DATA__FILE, snapshotFile.toString())
             .addOption(CliStrings.IMPORT_DATA__PARALLEL, "true").getCommandString();
@@ -167,7 +173,8 @@ public class ImportDataIntegrationTest {
   }
 
   @Test
-  public void testSpecifyingDirectoryAndFileCommands() throws Exception {
+  @SuppressWarnings("deprecation")
+  public void testSpecifyingDirectoryAndFileCommands() {
     String importCommand =
         buildBaseImportCommand().addOption(CliStrings.IMPORT_DATA__FILE, snapshotFile.toString())
             .addOption(CliStrings.IMPORT_DATA__DIR, snapshotDir.toString()).getCommandString();

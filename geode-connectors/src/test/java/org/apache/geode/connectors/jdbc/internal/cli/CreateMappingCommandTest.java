@@ -14,6 +14,7 @@
  */
 package org.apache.geode.connectors.jdbc.internal.cli;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -41,6 +42,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 
+import org.apache.geode.cache.RegionShortcut;
 import org.apache.geode.cache.configuration.CacheConfig;
 import org.apache.geode.cache.configuration.CacheConfig.AsyncEventQueue;
 import org.apache.geode.cache.configuration.CacheElement;
@@ -331,8 +333,9 @@ public class CreateMappingCommandTest {
     setupRequiredPreconditions();
     results.add(successFunctionResult);
 
-    ResultModel result = createRegionMappingCommand.createMapping("/" + regionName, dataSourceName,
-        tableName, pdxClass, pdxClassFile, false, null, null, null, false, null);
+    ResultModel result =
+        createRegionMappingCommand.createMapping(SEPARATOR + regionName, dataSourceName,
+            tableName, pdxClass, pdxClassFile, false, null, null, null, false, null);
 
     assertThat(result.getStatus()).isSameAs(Result.Status.OK);
     Object[] results = (Object[]) result.getConfigObject();
@@ -634,6 +637,23 @@ public class CreateMappingCommandTest {
   }
 
   @Test
+  public void updateClusterConfigWithOneMatchingPartitionedRegionRefidCreatesParallelAsyncEventQueue() {
+    List<RegionConfig> list = new ArrayList<>();
+    List<CacheElement> listCacheElements = new ArrayList<>();
+    when(matchingRegion.getCustomRegionElements()).thenReturn(listCacheElements);
+    list.add(matchingRegion);
+    when(cacheConfig.getRegions()).thenReturn(list);
+    List<CacheConfig.AsyncEventQueue> queueList = new ArrayList<>();
+    when(cacheConfig.getAsyncEventQueues()).thenReturn(queueList);
+    when(matchingRegionAttributes.getDataPolicy()).thenReturn(null);
+    when(matchingRegionAttributes.getRefid()).thenReturn(RegionShortcut.PARTITION.name());
+
+    createRegionMappingCommand.updateConfigForGroup(null, cacheConfig, arguments);
+
+    assertThat(queueList.get(0).isParallel()).isTrue();
+  }
+
+  @Test
   public void updateClusterConfigWithOneMatchingRegionCallsSetCacheLoader() {
     List<RegionConfig> list = new ArrayList<>();
     List<CacheElement> listCacheElements = new ArrayList<>();
@@ -793,7 +813,7 @@ public class CreateMappingCommandTest {
   @Test
   public void createAsyncEventQueueNameWithRegionPathReturnsQueueNameThatIsTheSameAsRegionWithNoSlash() {
     String queueName1 = MappingCommandUtils.createAsyncEventQueueName("regionName");
-    String queueName2 = MappingCommandUtils.createAsyncEventQueueName("/regionName");
+    String queueName2 = MappingCommandUtils.createAsyncEventQueueName(SEPARATOR + "regionName");
     assertThat(queueName1).isEqualTo(queueName2);
   }
 
@@ -805,7 +825,8 @@ public class CreateMappingCommandTest {
 
   @Test
   public void createAsyncEventQueueNameWithSubregionNameReturnsQueueNameWithNoSlashes() {
-    String queueName = MappingCommandUtils.createAsyncEventQueueName("/parent/child/grandchild");
+    String queueName = MappingCommandUtils.createAsyncEventQueueName(
+        SEPARATOR + "parent" + SEPARATOR + "child" + SEPARATOR + "grandchild");
     assertThat(queueName).isEqualTo("JDBC#parent_child_grandchild");
   }
 

@@ -42,15 +42,16 @@ import org.apache.geode.internal.cache.Oplog.OPLOG_TYPE;
 import org.apache.geode.internal.cache.ProxyBucketRegion;
 import org.apache.geode.internal.cache.versions.RegionVersionHolder;
 import org.apache.geode.internal.logging.log4j.LogMarker;
-import org.apache.geode.internal.serialization.UnsupportedSerializationVersionException;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
+import org.apache.geode.internal.serialization.Versioning;
+import org.apache.geode.internal.serialization.VersioningIO;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 
 public class DiskInitFileParser {
   private static final Logger logger = LogService.getLogger();
 
   private final CountingDataInputStream dis;
-  private DiskInitFileInterpreter interpreter;
+  private final DiskInitFileInterpreter interpreter;
 
   public DiskInitFileParser(CountingDataInputStream dis, DiskInitFileInterpreter interpreter) {
     this.dis = dis;
@@ -64,14 +65,10 @@ public class DiskInitFileParser {
   private transient boolean gotEOF;
 
   public DiskStoreID parse() throws IOException, ClassNotFoundException {
-    Version gfversion = Version.GFE_662;
+    KnownVersion gfversion = KnownVersion.GFE_70;
     DiskStoreID result = null;
     boolean endOfFile = false;
-    while (!endOfFile) {
-      if (dis.atEndOfFile()) {
-        endOfFile = true;
-        break;
-      }
+    while (!(endOfFile || dis.atEndOfFile())) {
       byte opCode = dis.readByte();
       if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
         logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE, "DiskInitFile opcode={}", opCode);
@@ -216,11 +213,11 @@ public class DiskInitFileParser {
           long drId = readDiskRegionID(dis);
           int size = dis.readInt();
           ConcurrentHashMap<DiskStoreID, RegionVersionHolder<DiskStoreID>> memberToVersion =
-              new ConcurrentHashMap<DiskStoreID, RegionVersionHolder<DiskStoreID>>(size);
+              new ConcurrentHashMap<>(size);
           for (int i = 0; i < size; i++) {
             DiskStoreID id = new DiskStoreID();
             InternalDataSerializer.invokeFromData(id, dis);
-            RegionVersionHolder holder = new RegionVersionHolder(dis);
+            RegionVersionHolder<DiskStoreID> holder = new RegionVersionHolder<>(dis);
             memberToVersion.put(id, holder);
           }
           readEndOfRecord(dis);
@@ -426,18 +423,18 @@ public class DiskInitFileParser {
         }
           break;
         case DiskInitFile.IFREC_GEMFIRE_VERSION: {
-          short ver = Version.readOrdinal(dis);
+          short ver = VersioningIO.readOrdinal(dis);
           readEndOfRecord(dis);
           if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
             logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE, "IFREC_GEMFIRE_VERSION version={}",
                 ver);
           }
-          try {
-            gfversion = Version.fromOrdinal(ver);
-          } catch (UnsupportedSerializationVersionException e) {
+          gfversion = Versioning.getKnownVersionOrDefault(
+              Versioning.getVersion(ver), null);
+          if (gfversion == null) {
             throw new DiskAccessException(
-                String.format("Unknown version ordinal %s found when recovering Oplogs", ver), e,
-                this.interpreter.getNameForError());
+                String.format("Unknown version ordinal %s found when recovering Oplogs", ver),
+                interpreter.getNameForError());
           }
           interpreter.cmnGemfireVersion(gfversion);
           break;
@@ -468,7 +465,7 @@ public class DiskInitFileParser {
           readEndOfRecord(dis);
           if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
             logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE,
-                "IFREC_REVOKE_DISK_STORE_ID id={}" + pattern);
+                "IFREC_REVOKE_DISK_STORE_ID id={}", pattern);
           }
           interpreter.cmnRevokeDiskStoreId(pattern);
         }
@@ -476,7 +473,7 @@ public class DiskInitFileParser {
         default:
           throw new DiskAccessException(
               String.format("Unknown opCode %s found in disk initialization file.", opCode),
-              this.interpreter.getNameForError());
+              interpreter.getNameForError());
       }
       if (interpreter.isClosing()) {
         break;
@@ -501,7 +498,7 @@ public class DiskInitFileParser {
     if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
       StringBuffer sb = new StringBuffer();
       for (int i = 0; i < OPLOG_TYPE.getLen(); i++) {
-        sb.append(" " + seq[i]);
+        sb.append(" ").append(seq[i]);
       }
       logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE, "oplog magic code: {}", sb);
     }
@@ -570,7 +567,7 @@ public class DiskInitFileParser {
     }
   }
 
-  private PersistentMemberID readPMID(CountingDataInputStream dis, Version gfversion)
+  private PersistentMemberID readPMID(CountingDataInputStream dis, KnownVersion gfversion)
       throws IOException, ClassNotFoundException {
     int len = dis.readInt();
     byte[] buf = new byte[len];
@@ -578,12 +575,12 @@ public class DiskInitFileParser {
     return bytesToPMID(buf, gfversion);
   }
 
-  private PersistentMemberID bytesToPMID(byte[] bytes, Version gfversion)
+  private PersistentMemberID bytesToPMID(byte[] bytes, KnownVersion gfversion)
       throws IOException, ClassNotFoundException {
     ByteArrayInputStream bais = new ByteArrayInputStream(bytes);
     DataInputStream dis = new DataInputStream(bais);
     PersistentMemberID result = new PersistentMemberID();
-    if (Version.GFE_70.compareTo(gfversion) > 0) {
+    if (KnownVersion.GFE_70.compareTo(gfversion) > 0) {
       result._fromData662(dis);
     } else {
       InternalDataSerializer.invokeFromData(result, dis);
@@ -614,10 +611,9 @@ public class DiskInitFileParser {
 
   private static DiskInitFileInterpreter createPrintingInterpreter(
       DiskInitFileInterpreter wrapped) {
-    DiskInitFileInterpreter interpreter = (DiskInitFileInterpreter) Proxy.newProxyInstance(
+    return (DiskInitFileInterpreter) Proxy.newProxyInstance(
         DiskInitFileInterpreter.class.getClassLoader(), new Class[] {DiskInitFileInterpreter.class},
         new PrintingInterpreter(wrapped));
-    return interpreter;
   }
 
 
@@ -626,7 +622,7 @@ public class DiskInitFileParser {
     private final DiskInitFileInterpreter delegate;
 
     public PrintingInterpreter(DiskInitFileInterpreter wrapped) {
-      this.delegate = wrapped;
+      delegate = wrapped;
     }
 
     @Override
@@ -663,6 +659,6 @@ public class DiskInitFileParser {
   }
 
   public boolean gotEOF() {
-    return this.gotEOF;
+    return gotEOF;
   }
 }

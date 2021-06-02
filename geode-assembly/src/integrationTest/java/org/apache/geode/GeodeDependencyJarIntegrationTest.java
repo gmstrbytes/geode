@@ -58,7 +58,7 @@ public class GeodeDependencyJarIntegrationTest {
   @Test
   public void verifyManifestClassPath() throws IOException {
     List<String> currentClasspathElements = getManifestClassPath();
-    Files.write(Paths.get("dependency_classpath.txt"), currentClasspathElements);
+    Files.write(Paths.get("..", "dependency_classpath.txt"), currentClasspathElements);
 
     assertThat(getManifestClassPath())
         .describedAs("The geode-dependency jar's manifest classpath has changed. Verify "
@@ -86,7 +86,7 @@ public class GeodeDependencyJarIntegrationTest {
 
     return Arrays.stream(classpath.split(" "))
         .map(entry -> entry.contains("geode")
-            ? entry.replaceFirst("\\d+\\.\\d+\\.\\d+(-SNAPSHOT)?", "0.0.0") : entry)
+            ? entry.replaceFirst("\\d+\\.\\d+\\.\\d+(-build\\.\\d+)?", "0.0.0") : entry)
         .collect(Collectors.toList());
   }
 }

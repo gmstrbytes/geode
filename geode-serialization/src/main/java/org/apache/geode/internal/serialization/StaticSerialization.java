@@ -149,6 +149,7 @@ public class StaticSerialization {
       int utfLen = len; // added for bug 40932
       for (int i = 0; i < len; i++) {
         char c = value.charAt(i);
+        // noinspection StatementWithEmptyBody
         if ((c <= 0x007F) && (c >= 0x0001)) {
           // nothing needed
         } else if (c > 0x07FF) {
@@ -243,7 +244,9 @@ public class StaticSerialization {
     }
     byte[] buf = getThreadLocalByteArray(len);
     dataInput.readFully(buf, 0, len);
-    return new String(buf, 0, 0, len); // intentionally using deprecated constructor
+    @SuppressWarnings("deprecation") // intentionally using deprecated constructor
+    final String string = new String(buf, 0, 0, len);
+    return string;
   }
 
   /**
@@ -266,8 +269,8 @@ public class StaticSerialization {
     }
 
     try {
-      InetAddress addr = InetAddress.getByAddress(address);
-      return addr;
+      // note: this does not throw UnknownHostException at this time
+      return InetAddress.getByAddress(address);
     } catch (UnknownHostException ex) {
       throw new IOException("While reading an InetAddress", ex);
     }
@@ -302,8 +305,8 @@ public class StaticSerialization {
     } else {
       HashMap<K, V> map = new HashMap<>(size);
       for (int i = 0; i < size; i++) {
-        K key = (K) context.getDeserializer().readObject(in);
-        V value = (V) context.getDeserializer().readObject(in);
+        K key = context.getDeserializer().readObject(in);
+        V value = context.getDeserializer().readObject(in);
         map.put(key, value);
       }
 
@@ -443,7 +446,7 @@ public class StaticSerialization {
   /**
    * Writes the type code for a primitive type Class to {@code DataOutput}.
    */
-  public static void writePrimitiveClass(Class c, DataOutput out) throws IOException {
+  public static void writePrimitiveClass(Class<?> c, DataOutput out) throws IOException {
     if (c == Boolean.TYPE) {
       out.writeByte(DSCODE.BOOLEAN_TYPE.toByte());
     } else if (c == Character.TYPE) {
@@ -501,11 +504,11 @@ public class StaticSerialization {
   }
 
   /**
-   * Get the {@link Version} of the peer or disk store that created this
+   * Get the {@link KnownVersion} of the peer or disk store that created this
    * {@link DataInput}. Returns
    * null if the version is same as this member's.
    */
-  public static Version getVersionForDataStreamOrNull(DataInput in) {
+  public static KnownVersion getVersionForDataStreamOrNull(DataInput in) {
     // check if this is a versioned data input
     if (in instanceof VersionedDataStream) {
       return ((VersionedDataStream) in).getVersion();
@@ -516,41 +519,41 @@ public class StaticSerialization {
   }
 
   /**
-   * Get the {@link Version} of the peer or disk store that created this
+   * Get the {@link KnownVersion} of the peer or disk store that created this
    * {@link DataInput}.
    */
-  public static Version getVersionForDataStream(DataInput in) {
+  public static KnownVersion getVersionForDataStream(DataInput in) {
     // check if this is a versioned data input
     if (in instanceof VersionedDataStream) {
-      final Version v = ((VersionedDataStream) in).getVersion();
-      return v != null ? v : Version.CURRENT;
+      final KnownVersion v = ((VersionedDataStream) in).getVersion();
+      return v != null ? v : KnownVersion.CURRENT;
     } else {
       // assume latest version
-      return Version.CURRENT;
+      return KnownVersion.CURRENT;
     }
   }
 
   /**
-   * Get the {@link Version} of the peer or disk store that created this
+   * Get the {@link KnownVersion} of the peer or disk store that created this
    * {@link DataOutput}.
    */
-  public static Version getVersionForDataStream(DataOutput out) {
+  public static KnownVersion getVersionForDataStream(DataOutput out) {
     // check if this is a versioned data output
     if (out instanceof VersionedDataStream) {
-      final Version v = ((VersionedDataStream) out).getVersion();
-      return v != null ? v : Version.CURRENT;
+      final KnownVersion v = ((VersionedDataStream) out).getVersion();
+      return v != null ? v : KnownVersion.CURRENT;
     } else {
       // assume latest version
-      return Version.CURRENT;
+      return KnownVersion.CURRENT;
     }
   }
 
   /**
-   * Get the {@link Version} of the peer or disk store that created this
+   * Get the {@link KnownVersion} of the peer or disk store that created this
    * {@link DataOutput}. Returns
    * null if the version is same as this member's.
    */
-  public static Version getVersionForDataStreamOrNull(DataOutput out) {
+  public static KnownVersion getVersionForDataStreamOrNull(DataOutput out) {
     // check if this is a versioned data output
     if (out instanceof VersionedDataStream) {
       return ((VersionedDataStream) out).getVersion();

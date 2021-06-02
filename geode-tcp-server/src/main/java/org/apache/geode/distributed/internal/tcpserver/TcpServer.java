@@ -26,8 +26,6 @@ import java.net.SocketAddress;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.util.Date;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
@@ -37,61 +35,48 @@ import javax.net.ssl.SSLException;
 
 import org.apache.logging.log4j.Logger;
 
-import org.apache.geode.annotations.internal.MutableForTesting;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.ObjectDeserializer;
 import org.apache.geode.internal.serialization.ObjectSerializer;
 import org.apache.geode.internal.serialization.UnsupportedSerializationVersionException;
-import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.internal.serialization.VersionedDataInputStream;
 import org.apache.geode.internal.serialization.VersionedDataOutputStream;
+import org.apache.geode.internal.serialization.Versioning;
 import org.apache.geode.logging.internal.executors.LoggingThread;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
- * TCP server which listens on a port and delegates requests to a request handler. The server uses
- * expects messages containing a global version number, followed by a DataSerializable object
+ * TcpServer listens on a port and delegates requests to one or more request handlers. Use
+ * TcpClient to send messages to a TcpServer. Messages should all implement DataSerializableFixedID.
  * <p>
- * This code was factored out of GossipServer.java to allow multiple handlers to share the same
- * gossip server port.
- *
- * @since GemFire 5.7
+ * TcpServer accepts a connection, reads one request, passes the request to a handler,
+ * sends the reply and then closes the connection.
+ * <p>
+ * TcpServer is used in the Geode Locator service.
  */
 public class TcpServer {
 
   /**
-   * The version of the tcp server protocol
-   * <p>
-   * This should be incremented if the gossip message structures change
-   * <p>
-   * 0 - special indicator of a non-gossip message from a client<br>
-   * 1000 - gemfire 5.5 - using java serialization<br>
-   * 1001 - 5.7 - using DataSerializable and supporting server locator messages.<br>
-   * 1002 - 7.1 - sending GemFire version along with GOSSIP_VERSION in each request.
-   * <p>
-   * with the addition of support for all old versions of clients you can no longer change this
-   * version number
+   * GOSSIPVERSION is a remnant of the pre-open-source TcpServer. It was used to designate
+   * the on-wire protocol for TcpServer communications prior to the introduction of Geode's
+   * Version class. It should not be changed and exists for backward-compatibility.
    */
   public static final int GOSSIPVERSION = 1002;
 
-  // Don't change it ever. We did NOT send GemFire version in a Gossip request till 1001 version.
-  // This GOSSIPVERSION is used in _getVersionForAddress request for getting GemFire version of a
-  // GossipServer.
+  /**
+   * Version 1001 was the on-wire protocol version prior to the introduction of the use of
+   * Geode's Version class to designate the on-wire protocol. Even newer clients use this
+   * gossip version for initial server version discovery. We can't remove this until after
+   * Geode support 1.14 is removed.
+   *
+   * @deprecated Use {@link #GOSSIPVERSION}. Remove after {@link KnownVersion#GEODE_1_14_0} is
+   *             removed.
+   */
+  @Deprecated
   public static final int OLDGOSSIPVERSION = 1001;
 
-  @MutableForTesting("The map used here is mutable, because some tests modify it")
-  private static final Map<Integer, Short> GOSSIP_TO_GEMFIRE_VERSION_MAP =
-      createGossipToVersionMap();
   public static final int GOSSIP_BYTE = 0;
   private static final String P2P_BACKLOG_PROPERTY_NAME = "p2p.backlog";
-
-  // For test purpose only
-  @MutableForTesting
-  public static boolean isTesting = false;
-  // Non-final field for testing to avoid any security holes in system.
-  @MutableForTesting
-  public static int TESTVERSION = GOSSIPVERSION;
-  @MutableForTesting
-  public static int OLDTESTVERSION = OLDGOSSIPVERSION;
 
   public static final long SHUTDOWN_WAIT_TIME = 60 * 1000;
 
@@ -120,19 +105,25 @@ public class TcpServer {
 
   private final LongSupplier nanoTimeSupplier;
 
-
-  /*
-   * Initialize versions map. Warning: This map must be compatible with all GemFire versions being
-   * handled by this member "With different GOSSIPVERION". If GOSSIPVERIONS are same for then
-   * current GOSSIPVERSION should be used.
+  /**
+   * The constructor for TcpServer
+   *
+   * @param port The port to listen on
+   * @param bind_address The bind-address to use (may be null)
+   * @param handler The TcpHandler that will process messages
+   * @param threadName The name to use in the listening thread
+   * @param protocolChecker A cut point for inserting a message handler with different serialization
+   * @param nanoTimeSupplier A time supplier
+   * @param executorServiceSupplier A provider of the executor to be used by handlers
+   * @param socketCreator The socket-creator that TcpServer should use. If null a default socket
+   *        creator is constructed
+   * @param objectSerializer The serializer
+   * @param objectDeserializer The deserializer
+   * @param readTimeoutPropertyName A system property name used to look up read timeout millis
+   * @param backlogLimitPropertyName A system property name used to establish the server socket
+   *        backlog
+   * @see #start()
    */
-  private static Map<Integer, Short> createGossipToVersionMap() {
-    HashMap<Integer, Short> map = new HashMap<>();
-    map.put(GOSSIPVERSION, Version.GFE_71.ordinal());
-    map.put(OLDGOSSIPVERSION, Version.GFE_57.ordinal());
-    return map;
-  }
-
   public TcpServer(int port, InetAddress bind_address, TcpHandler handler,
       String threadName, ProtocolChecker protocolChecker,
       final LongSupplier nanoTimeSupplier,
@@ -146,7 +137,6 @@ public class TcpServer {
     this.handler = handler;
     this.protocolChecker = protocolChecker;
     this.executorServiceSupplier = executorServiceSupplier;
-    this.executor = executorServiceSupplier.get();
     this.threadName = threadName;
     this.nanoTimeSupplier = nanoTimeSupplier;
     if (socketCreator == null) {
@@ -156,22 +146,35 @@ public class TcpServer {
     }
     this.objectSerializer = objectSerializer;
     this.objectDeserializer = objectDeserializer;
+
+    executor = executorServiceSupplier.get();
     readTimeout = Integer.getInteger(readTimeoutPropertyName, 60 * 1000);
     final int p2pBacklog = Integer.getInteger(P2P_BACKLOG_PROPERTY_NAME, 1000);
     backlogLimit = Integer.getInteger(backlogLimitPropertyName, p2pBacklog);
   }
 
+  /**
+   * This method is used during a Geode auto-reconnect to restart the server-socket thread
+   */
   public void restarting() throws IOException {
-    this.shuttingDown = false;
+    shuttingDown = false;
     startServerThread();
-    this.executor = executorServiceSupplier.get();
+    if (executor == null || executor.isShutdown()) {
+      executor = executorServiceSupplier.get();
+    }
     logger.info("TcpServer@" + System.identityHashCode(this)
-        + " restarting: completed.  Server thread=" + this.serverThread + '@'
-        + System.identityHashCode(this.serverThread) + ";alive=" + this.serverThread.isAlive());
+        + " restarting: completed.  Server thread=" + serverThread + '@'
+        + System.identityHashCode(serverThread) + ";alive=" + serverThread.isAlive());
   }
 
+  /**
+   * After constructing a TcpServer use this method to start its server-socket listening thread.
+   * A TcpServer should be stopped via a ShutdownRequest made through a TcpClient.
+   *
+   * @see TcpClient#stop(HostAndPort)
+   */
   public void start() throws IOException {
-    this.shuttingDown = false;
+    shuttingDown = false;
     startServerThread();
     handler.init(this);
   }
@@ -187,15 +190,15 @@ public class TcpServer {
   private void initializeServerSocket() throws IOException {
     if (srv_sock == null || srv_sock.isClosed()) {
       if (bind_address == null) {
-        srv_sock = socketCreator.createServerSocket(port, backlogLimit);
+        srv_sock = socketCreator.forCluster().createServerSocket(port, backlogLimit);
         bind_address = srv_sock.getInetAddress();
       } else {
-        srv_sock = socketCreator.createServerSocket(port, backlogLimit, bind_address);
+        srv_sock = socketCreator.forCluster().createServerSocket(port, backlogLimit, bind_address);
       }
       // GEODE-4176 - set the port from a wild-card bind so that handlers know the correct value
 
-      if (this.port <= 0) {
-        this.port = srv_sock.getLocalPort();
+      if (port <= 0) {
+        port = srv_sock.getLocalPort();
       }
       if (logger.isInfoEnabled()) {
         logger.info("Locator was created at " + new Date());
@@ -205,27 +208,47 @@ public class TcpServer {
     }
   }
 
+  /**
+   * Wait on the server-socket thread using {@link Thread#join(long)}
+   *
+   * @param millis how long to wait
+   */
   public void join(long millis) throws InterruptedException {
-    if (serverThread != null) {
+    if (isAlive()) {
       serverThread.join(millis);
     }
   }
 
+  /**
+   * Wait on the server-socket thread using {@link Thread#join()}
+   */
   public void join() throws InterruptedException {
-    if (serverThread != null) {
+    if (isAlive()) {
       serverThread.join();
     }
   }
 
+  /**
+   * Check to see if the server-socket thread is alive
+   */
   public boolean isAlive() {
     return serverThread != null && serverThread.isAlive();
   }
 
+  /**
+   * Check to see if we've requested that the server-socket thread has been requested
+   * to shut down
+   */
   public boolean isShuttingDown() {
-    return this.shuttingDown;
+    return shuttingDown;
   }
 
-  public SocketAddress getBindAddress() {
+  /**
+   * Returns the server-socket's local socket address
+   *
+   * @see ServerSocket#getLocalSocketAddress()
+   */
+  public SocketAddress getSocketAddress() {
     return srv_sock.getLocalSocketAddress();
   }
 
@@ -240,7 +263,6 @@ public class TcpServer {
   }
 
   protected void run() {
-    Socket sock = null;
 
     while (!shuttingDown) {
       if (srv_sock.isClosed()) {
@@ -248,6 +270,7 @@ public class TcpServer {
         break;
       }
       try {
+        final Socket sock;
         try {
           sock = srv_sock.accept();
         } catch (SSLException ex) {
@@ -264,7 +287,6 @@ public class TcpServer {
         if (!shuttingDown) {
           logger.error("exception=", ex);
         }
-        continue;
       }
     }
 
@@ -286,7 +308,7 @@ public class TcpServer {
       }
       handler.shutDown();
       synchronized (this) {
-        this.notifyAll();
+        notifyAll();
       }
     }
   }
@@ -302,7 +324,7 @@ public class TcpServer {
       DataInputStream input = null;
       try {
         socket.setSoTimeout(readTimeout);
-        socketCreator.handshakeIfSocketIsSSL(socket, readTimeout);
+        socketCreator.forCluster().handshakeIfSocketIsSSL(socket, readTimeout);
 
         try {
           input = new DataInputStream(socket.getInputStream());
@@ -329,17 +351,11 @@ public class TcpServer {
       } catch (EOFException | SocketException ignore) {
         // client went away - ignore
       } catch (SocketTimeoutException ex) {
-        String sender = null;
-        if (socket != null) {
-          sender = socket.getInetAddress().getHostAddress();
-        }
+        final String sender = socket.getInetAddress().getHostAddress();
         // Do not want the full stack trace to fill up the logs
         logger.info("Exception in processing request from " + sender + ": " + ex.getMessage());
       } catch (ClassNotFoundException ex) {
-        String sender = null;
-        if (socket != null) {
-          sender = socket.getInetAddress().getHostAddress();
-        }
+        final String sender = socket.getInetAddress().getHostAddress();
         logger.info("Unable to process request from " + sender + " exception=" + ex.getMessage());
       } catch (Exception ex) {
         String sender = null;
@@ -357,10 +373,7 @@ public class TcpServer {
         }
 
       } catch (Throwable ex) {
-        String sender = null;
-        if (socket != null) {
-          sender = socket.getInetAddress().getHostAddress();
-        }
+        final String sender = socket.getInetAddress().getHostAddress();
         try {
           logger.fatal("Exception in processing request from " + sender, ex);
         } catch (Throwable t) {
@@ -372,71 +385,86 @@ public class TcpServer {
         } catch (IOException ignore) {
           // ignore
         }
+        if (input != null) {
+          try {
+            input.close();
+          } catch (IOException ignore) {
+
+          }
+        }
       }
     });
   }
 
   private void processOneConnection(Socket socket, final long startTime, DataInputStream input)
       throws IOException, UnsupportedSerializationVersionException, ClassNotFoundException {
-    // At this point we've read the leading byte of the gossip version and found it to be 0,
-    // continue reading the next three bytes
+    final int gossipVersion = readGossipVersion(input);
+    if (!(gossipVersion == GOSSIPVERSION || gossipVersion == OLDGOSSIPVERSION)) {
+      rejectUnknownProtocolConnection(socket, gossipVersion);
+      return;
+    }
+
+    final short versionOrdinal;
+    if (gossipVersion == OLDGOSSIPVERSION) {
+      // Even newer clients use OLDGOSSIPVERSION for initial connection
+      versionOrdinal = KnownVersion.OLDEST.ordinal();
+    } else {
+      // Recent versions of TcpClient will send the version ordinal
+      versionOrdinal = input.readShort();
+    }
+
+    if (logger.isDebugEnabled() && versionOrdinal != KnownVersion.CURRENT_ORDINAL) {
+      logger.debug("Locator reading request from " + socket.getInetAddress() + " with version "
+          + Versioning.getVersion(versionOrdinal));
+    }
+    final KnownVersion version = Versioning.getKnownVersionOrDefault(
+        Versioning.getVersion(versionOrdinal), null);
+    if (version == null) {
+      throw new UnsupportedSerializationVersionException(
+          KnownVersion.unsupportedVersionMessage(versionOrdinal));
+    }
+    input = new VersionedDataInputStream(input, version);
+    final Object request = objectDeserializer.readObject(input);
+    if (logger.isDebugEnabled()) {
+      logger.debug("Locator received request " + request + " from " + socket.getInetAddress());
+    }
+    final Object response;
+    if (request instanceof ShutdownRequest) {
+      shuttingDown = true;
+      // Don't call shutdown from within the worker thread, see java bug #6576792.
+      // Closing the socket will cause our acceptor thread to shutdown the executor
+      srv_sock.close();
+      response = new ShutdownResponse();
+    } else if (request instanceof VersionRequest) {
+      response = handleVersionRequest();
+    } else {
+      response = handler.processRequest(request);
+    }
+
+    handler.endRequest(request, startTime);
+
+    final long startTime2 = nanoTimeSupplier.getAsLong();
+    if (response != null) {
+      DataOutputStream output = new DataOutputStream(socket.getOutputStream());
+      if (version != KnownVersion.CURRENT) {
+        output = new VersionedDataOutputStream(output, version);
+      }
+      objectSerializer.writeObject(response, output);
+      output.flush();
+    }
+
+    handler.endResponse(request, startTime2);
+  }
+
+  /**
+   * Reads the next 3 bytes of the gossip version where first byte was 0.
+   */
+  private int readGossipVersion(final DataInputStream input) throws IOException {
     int gossipVersion = 0;
     for (int i = 0; i < 3; i++) {
       gossipVersion = (gossipVersion << 8) + (0xff & input.readUnsignedByte());
     }
-
-    Object request;
-    Object response;
-    short versionOrdinal;
-    if (gossipVersion <= getCurrentGossipVersion()
-        && GOSSIP_TO_GEMFIRE_VERSION_MAP.containsKey(gossipVersion)) {
-      // Create a versioned stream to remember sender's GemFire version
-      versionOrdinal = (short) GOSSIP_TO_GEMFIRE_VERSION_MAP.get(gossipVersion);
-
-      if (Version.GFE_71.compareTo(versionOrdinal) <= 0) {
-        // Recent versions of TcpClient will send the version ordinal
-        versionOrdinal = input.readShort();
-      }
-
-      if (logger.isDebugEnabled() && versionOrdinal != Version.CURRENT_ORDINAL) {
-        logger.debug("Locator reading request from " + socket.getInetAddress() + " with version "
-            + Version.fromOrdinal(versionOrdinal));
-      }
-      input = new VersionedDataInputStream(input, Version.fromOrdinal(versionOrdinal));
-      request = objectDeserializer.readObject(input);
-      if (logger.isDebugEnabled()) {
-        logger.debug("Locator received request " + request + " from " + socket.getInetAddress());
-      }
-      if (request instanceof ShutdownRequest) {
-        shuttingDown = true;
-        // Don't call shutdown from within the worker thread, see java bug #6576792.
-        // Closing the socket will cause our acceptor thread to shutdown the executor
-        srv_sock.close();
-        response = new ShutdownResponse();
-      } else if (request instanceof VersionRequest) {
-        response = handleVersionRequest(request);
-      } else {
-        response = handler.processRequest(request);
-      }
-
-      handler.endRequest(request, startTime);
-
-      final long startTime2 = nanoTimeSupplier.getAsLong();
-      if (response != null) {
-        DataOutputStream output = new DataOutputStream(socket.getOutputStream());
-        if (versionOrdinal != Version.CURRENT_ORDINAL) {
-          output =
-              new VersionedDataOutputStream(output, Version.fromOrdinal(versionOrdinal));
-        }
-        objectSerializer.writeObject(response, output);
-        output.flush();
-      }
-
-      handler.endResponse(request, startTime2);
-    } else {
-      // Close the socket. We can not accept requests from a newer version
-      rejectUnknownProtocolConnection(socket, gossipVersion);
-    }
+    return gossipVersion;
   }
 
   private void rejectUnknownProtocolConnection(Socket socket, int gossipVersion) {
@@ -451,24 +479,10 @@ public class TcpServer {
     }
   }
 
-
-
-  protected Object handleVersionRequest(Object request) {
+  private Object handleVersionRequest() {
     VersionResponse response = new VersionResponse();
-    response.setVersionOrdinal(Version.CURRENT_ORDINAL);
+    response.setVersionOrdinal(KnownVersion.CURRENT_ORDINAL);
     return response;
-  }
-
-  public static int getCurrentGossipVersion() {
-    return TcpServer.isTesting ? TcpServer.TESTVERSION : TcpServer.GOSSIPVERSION;
-  }
-
-  public static int getOldGossipVersion() {
-    return TcpServer.isTesting ? TcpServer.OLDTESTVERSION : TcpServer.OLDGOSSIPVERSION;
-  }
-
-  public static Map<Integer, Short> getGossipVersionMapForTestOnly() {
-    return GOSSIP_TO_GEMFIRE_VERSION_MAP;
   }
 
 }

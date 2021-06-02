@@ -21,6 +21,7 @@ import javax.servlet.http.HttpServletRequest;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
@@ -43,12 +44,18 @@ import org.apache.geode.tools.pulse.internal.data.Repository;
 public class ClusterMemoryUsageService implements PulseService {
 
   private final ObjectMapper mapper = new ObjectMapper();
+  private final Repository repository;
+
+  @Autowired
+  public ClusterMemoryUsageService(Repository repository) {
+    this.repository = repository;
+  }
 
   @Override
   public ObjectNode execute(final HttpServletRequest request) throws Exception {
 
     // get cluster object
-    Cluster cluster = Repository.get().getCluster();
+    Cluster cluster = repository.getCluster();
 
     // json object to be sent as response
     ObjectNode responseJSON = mapper.createObjectNode();
@@ -56,7 +63,7 @@ public class ClusterMemoryUsageService implements PulseService {
     // cluster's Memory Usage trend added to json response object
 
     responseJSON.put("currentMemoryUsage", cluster.getUsedHeapSize());
-    responseJSON.put("memoryUsageTrend",
+    responseJSON.set("memoryUsageTrend",
         mapper.valueToTree(cluster.getStatisticTrend(Cluster.CLUSTER_STAT_MEMORY_USAGE)));
 
     // Send json response

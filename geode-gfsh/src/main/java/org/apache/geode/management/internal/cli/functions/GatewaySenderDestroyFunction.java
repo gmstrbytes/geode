@@ -21,26 +21,35 @@ import org.apache.geode.cache.execute.ResultSender;
 import org.apache.geode.cache.wan.GatewaySender;
 import org.apache.geode.internal.cache.execute.InternalFunction;
 import org.apache.geode.internal.cache.xmlcache.CacheXml;
-import org.apache.geode.management.internal.cli.CliUtil;
+import org.apache.geode.management.internal.cli.CliUtils;
 import org.apache.geode.management.internal.configuration.domain.XmlEntity;
 import org.apache.geode.management.internal.functions.CliFunctionResult;
 
-public class GatewaySenderDestroyFunction implements InternalFunction {
+public class GatewaySenderDestroyFunction
+    implements InternalFunction<GatewaySenderDestroyFunctionArgs> {
   private static final long serialVersionUID = 1L;
-  private static final String ID = GatewaySenderDestroyFunction.class.getName();
   @Immutable
   public static final GatewaySenderDestroyFunction INSTANCE = new GatewaySenderDestroyFunction();
 
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.GatewaySenderDestroyFunction";
+
   @Override
-  public void execute(FunctionContext context) {
+  public String getId() {
+    return ID;
+  }
+
+  @Override
+  @SuppressWarnings("deprecation")
+  public void execute(FunctionContext<GatewaySenderDestroyFunctionArgs> context) {
     ResultSender<Object> resultSender = context.getResultSender();
 
     Cache cache = context.getCache();
     String memberNameOrId =
-        CliUtil.getMemberNameOrId(cache.getDistributedSystem().getDistributedMember());
+        CliUtils.getMemberNameOrId(cache.getDistributedSystem().getDistributedMember());
 
     GatewaySenderDestroyFunctionArgs gatewaySenderDestroyFunctionArgs =
-        (GatewaySenderDestroyFunctionArgs) context.getArguments();
+        context.getArguments();
 
     String senderId = gatewaySenderDestroyFunctionArgs.getId();
     boolean ifExists = gatewaySenderDestroyFunctionArgs.isIfExists();
@@ -66,10 +75,4 @@ public class GatewaySenderDestroyFunction implements InternalFunction {
       resultSender.lastResult(new CliFunctionResult(memberNameOrId, e, ""));
     }
   }
-
-  @Override
-  public String getId() {
-    return ID;
-  }
-
 }

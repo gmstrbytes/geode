@@ -49,7 +49,7 @@ import org.apache.geode.internal.cache.tier.MessageType;
 import org.apache.geode.internal.cache.tier.sockets.ChunkedMessage;
 import org.apache.geode.internal.cache.tier.sockets.Message;
 import org.apache.geode.internal.cache.tier.sockets.Part;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
@@ -65,7 +65,7 @@ public class ExecuteRegionFunctionSingleHopOp {
   public static void execute(ExecutablePool pool, Region region,
       ServerRegionFunctionExecutor serverRegionExecutor,
       ResultCollector resultCollector,
-      Map<ServerLocation, ? extends HashSet> serverToFilterMap,
+      Map<ServerLocation, ? extends Set> serverToFilterMap,
       boolean isHA,
       final java.util.function.Function<ServerRegionFunctionExecutor, AbstractOp> regionFunctionSingleHopOpFunction,
       final Supplier<AbstractOp> executeRegionFunctionOpSupplier) {
@@ -113,7 +113,7 @@ public class ExecuteRegionFunctionSingleHopOp {
 
   private static List<SingleHopOperationCallable> constructAndGetExecuteFunctionTasks(
       ServerRegionFunctionExecutor serverRegionExecutor,
-      final Map<ServerLocation, ? extends HashSet> serverToFilterMap,
+      final Map<ServerLocation, ? extends Set> serverToFilterMap,
       final PoolImpl pool,
       ClientMetadataService cms,
       final java.util.function.Function<ServerRegionFunctionExecutor, AbstractOp> opFactory) {
@@ -433,7 +433,7 @@ public class ExecuteRegionFunctionSingleHopOp {
 
     @Override
     protected Message createResponseMessage() {
-      return new ChunkedMessage(1, Version.CURRENT);
+      return new ChunkedMessage(1, KnownVersion.CURRENT);
     }
 
   }

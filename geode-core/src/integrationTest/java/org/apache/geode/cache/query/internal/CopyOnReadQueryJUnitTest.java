@@ -14,6 +14,7 @@
  */
 package org.apache.geode.cache.query.internal;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.junit.Assert.assertEquals;
 
 import java.util.HashMap;
@@ -42,10 +43,12 @@ public class CopyOnReadQueryJUnitTest {
   private static final String indexName = "testIndex";
 
   private QueryTestUtils utils;
-  private String[] queries = {"select * from /" + regionName + " p where p.indexKey = 1",
-      "select distinct * from /" + regionName + " p where p.indexKey = 1 order by p.indexKey",
-      "select * from /" + regionName + " p, p.positions.values pv where pv.secId = '1'",
-      "select * from /" + regionName + " p where p in (select * from /" + regionName
+  private String[] queries = {"select * from " + SEPARATOR + regionName + " p where p.indexKey = 1",
+      "select distinct * from " + SEPARATOR + regionName
+          + " p where p.indexKey = 1 order by p.indexKey",
+      "select * from " + SEPARATOR + regionName + " p, p.positions.values pv where pv.secId = '1'",
+      "select * from " + SEPARATOR + regionName + " p where p in (select * from " + SEPARATOR
+          + regionName
           + " pi where pi.indexKey = 1)"};
 
   private int[] expectedResults = {1, 1, 1, 1};
@@ -125,7 +128,7 @@ public class CopyOnReadQueryJUnitTest {
     for (int i = 0; i < queries.length; i++) {
       Portfolio.instanceCount.set(0);
       utils.createPartitionRegion(regionName, null);
-      Region region = utils.getCache().getRegion("/" + regionName);
+      Region region = utils.getCache().getRegion(SEPARATOR + regionName);
       createData(region, numObjects, objectsAndResultsMultiplier);
       helpTestCopyOnReadFalse(queries[i], expectedResults[i], numObjects,
           objectsAndResultsMultiplier, false, true, containsInnerQuery[i]);
@@ -137,7 +140,7 @@ public class CopyOnReadQueryJUnitTest {
   public void testCopyOnReadFalseWithHashIndexWithLocalRegion() throws Exception {
     utils.getCache().setCopyOnRead(false);
     utils.createLocalRegion(regionName);
-    utils.createHashIndex(indexName, "p.indexKey", "/" + regionName + " p");
+    utils.createHashIndex(indexName, "p.indexKey", SEPARATOR + regionName + " p");
     helpExecuteQueriesCopyOnReadFalse(queries, expectedResults, numObjects,
         objectsAndResultsMultiplier, true, false);
   }
@@ -146,7 +149,7 @@ public class CopyOnReadQueryJUnitTest {
   public void testCopyOnReadFalseWithHashIndexWithReplicatedRegion() throws Exception {
     utils.getCache().setCopyOnRead(false);
     utils.createReplicateRegion(regionName);
-    utils.createHashIndex(indexName, "p.indexKey", "/" + regionName + " p");
+    utils.createHashIndex(indexName, "p.indexKey", SEPARATOR + regionName + " p");
     helpExecuteQueriesCopyOnReadFalse(queries, expectedResults, numObjects,
         objectsAndResultsMultiplier, true, false);
   }
@@ -155,7 +158,7 @@ public class CopyOnReadQueryJUnitTest {
   public void testCopyOnReadFalseWithHashIndexWithPartitionedRegion() throws Exception {
     utils.getCache().setCopyOnRead(false);
     utils.createPartitionRegion(regionName, null);
-    utils.createHashIndex(indexName, "p.indexKey", "/" + regionName + " p");
+    utils.createHashIndex(indexName, "p.indexKey", SEPARATOR + regionName + " p");
     helpExecuteQueriesCopyOnReadFalse(queries, expectedResults, numObjects,
         objectsAndResultsMultiplier, true, true);
   }
@@ -164,7 +167,7 @@ public class CopyOnReadQueryJUnitTest {
   public void testCopyOnReadFalseWithCompactRangeIndexWithLocalRegion() throws Exception {
     utils.getCache().setCopyOnRead(false);
     utils.createLocalRegion(regionName);
-    utils.createIndex(indexName, "p.indexKey", "/" + regionName + " p");
+    utils.createIndex(indexName, "p.indexKey", SEPARATOR + regionName + " p");
     helpExecuteQueriesCopyOnReadFalse(queries, expectedResults, numObjects,
         objectsAndResultsMultiplier, true, false);
   }
@@ -173,7 +176,7 @@ public class CopyOnReadQueryJUnitTest {
   public void testCopyOnReadFalseWithCompactRangeIndexWithReplicatedRegion() throws Exception {
     utils.getCache().setCopyOnRead(false);
     utils.createReplicateRegion(regionName);
-    utils.createIndex(indexName, "p.indexKey", "/" + regionName + " p");
+    utils.createIndex(indexName, "p.indexKey", SEPARATOR + regionName + " p");
     helpExecuteQueriesCopyOnReadFalse(queries, expectedResults, numObjects,
         objectsAndResultsMultiplier, true, false);
   }
@@ -182,7 +185,7 @@ public class CopyOnReadQueryJUnitTest {
   public void testCopyOnReadFalseWithCompactRangeIndexWithPartitionedRegion() throws Exception {
     utils.getCache().setCopyOnRead(false);
     utils.createPartitionRegion(regionName, null);
-    utils.createIndex(indexName, "p.indexKey", "/" + regionName + " p");
+    utils.createIndex(indexName, "p.indexKey", SEPARATOR + regionName + " p");
     helpExecuteQueriesCopyOnReadFalse(queries, expectedResults, numObjects,
         objectsAndResultsMultiplier, true, true);
   }
@@ -191,7 +194,8 @@ public class CopyOnReadQueryJUnitTest {
   public void testCopyOnReadFalseWithRangeIndexWithLocalRegion() throws Exception {
     utils.getCache().setCopyOnRead(false);
     utils.createLocalRegion(regionName);
-    utils.createIndex(indexName, "p.indexKey", "/" + regionName + " p, p.positions.values pv");
+    utils.createIndex(indexName, "p.indexKey",
+        SEPARATOR + regionName + " p, p.positions.values pv");
     helpExecuteQueriesCopyOnReadFalse(queries, expectedResults, numObjects,
         objectsAndResultsMultiplier, true, false);
   }
@@ -200,7 +204,8 @@ public class CopyOnReadQueryJUnitTest {
   public void testCopyOnReadFalseWithRangeIndexWithReplicatedRegion() throws Exception {
     utils.getCache().setCopyOnRead(false);
     utils.createReplicateRegion(regionName);
-    utils.createIndex(indexName, "p.indexKey", "/" + regionName + " p, p.positions.values pv");
+    utils.createIndex(indexName, "p.indexKey",
+        SEPARATOR + regionName + " p, p.positions.values pv");
     helpExecuteQueriesCopyOnReadFalse(queries, expectedResults, numObjects,
         objectsAndResultsMultiplier, true, false);
   }
@@ -209,7 +214,8 @@ public class CopyOnReadQueryJUnitTest {
   public void testCopyOnReadFalseWithRangeIndexWithPartitionedRegion() throws Exception {
     utils.getCache().setCopyOnRead(false);
     utils.createPartitionRegion(regionName, null);
-    utils.createIndex(indexName, "p.indexKey", "/" + regionName + " p, p.positions.values pv");
+    utils.createIndex(indexName, "p.indexKey",
+        SEPARATOR + regionName + " p, p.positions.values pv");
     helpExecuteQueriesCopyOnReadFalse(queries, expectedResults, numObjects,
         objectsAndResultsMultiplier, true, true);
   }
@@ -218,7 +224,7 @@ public class CopyOnReadQueryJUnitTest {
   public void testCopyOnReadFalseWithRangeIndexTupleWithLocalRegion() throws Exception {
     utils.getCache().setCopyOnRead(false);
     utils.createLocalRegion(regionName);
-    utils.createIndex(indexName, "pv.secId", "/" + regionName + " p, p.positions.values pv");
+    utils.createIndex(indexName, "pv.secId", SEPARATOR + regionName + " p, p.positions.values pv");
     helpExecuteQueriesCopyOnReadFalse(queries, expectedResults, numObjects,
         objectsAndResultsMultiplier, true, false);
   }
@@ -227,14 +233,14 @@ public class CopyOnReadQueryJUnitTest {
   public void testCopyOnReadFalseWithRangeIndexTupleWithReplicatedRegion() throws Exception {
     utils.getCache().setCopyOnRead(false);
     utils.createReplicateRegion(regionName);
-    utils.createIndex(indexName, "pv.secId", "/" + regionName + " p, p.positions.values pv");
+    utils.createIndex(indexName, "pv.secId", SEPARATOR + regionName + " p, p.positions.values pv");
     helpExecuteQueriesCopyOnReadFalse(queries, expectedResults, numObjects,
         objectsAndResultsMultiplier, true, false);
   }
 
   private void helpExecuteQueriesCopyOnRead(String[] queries, int[] expectedResults, int numObjects,
       int objectsAndResultsMultiplier, boolean hasIndex, boolean isPR) throws Exception {
-    Region region = utils.getCache().getRegion("/" + regionName);
+    Region region = utils.getCache().getRegion(SEPARATOR + regionName);
     createData(region, numObjects, objectsAndResultsMultiplier);
     for (int i = 0; i < queries.length; i++) {
       Portfolio.instanceCount.set(numObjects * objectsAndResultsMultiplier);
@@ -249,7 +255,7 @@ public class CopyOnReadQueryJUnitTest {
   private void helpExecuteQueriesCopyOnReadFalse(String[] queries, int[] expectedResults,
       int numObjects, int objectsAndResultsMultiplier, boolean hasIndex, boolean isPR)
       throws Exception {
-    Region region = utils.getCache().getRegion("/" + regionName);
+    Region region = utils.getCache().getRegion(SEPARATOR + regionName);
     createData(region, numObjects, objectsAndResultsMultiplier);
     for (int i = 0; i < queries.length; i++) {
       Portfolio.instanceCount.set(numObjects * objectsAndResultsMultiplier);

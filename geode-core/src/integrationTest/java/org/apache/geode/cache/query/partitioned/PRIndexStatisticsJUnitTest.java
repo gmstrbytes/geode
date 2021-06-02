@@ -14,6 +14,7 @@
  */
 package org.apache.geode.cache.query.partitioned;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
@@ -101,7 +102,7 @@ public class PRIndexStatisticsJUnitTest {
   public void testStatsForRangeIndex() throws Exception {
     createAndPopulateRegion();
     keyIndex1 = (IndexProtocol) qs.createIndex("multiKeyIndex1", IndexType.FUNCTIONAL, "pos.secId",
-        "/portfolio p, p.positions.values pos");
+        SEPARATOR + "portfolio p, p.positions.values pos");
 
     assertTrue(keyIndex1 instanceof PartitionedIndex);
 
@@ -122,7 +123,8 @@ public class PRIndexStatisticsJUnitTest {
     assertEquals(400, keyIndex1Stats.getNumUpdates());
 
     // IndexUsed stats test
-    String queryStr = "select * from /portfolio p, p.positions.values pos where pos.secId = 'YHOO'";
+    String queryStr = "select * from " + SEPARATOR
+        + "portfolio p, p.positions.values pos where pos.secId = 'YHOO'";
     Query query = qs.newQuery(queryStr);
 
     for (int i = 0; i < 50; i++) {
@@ -170,7 +172,8 @@ public class PRIndexStatisticsJUnitTest {
   public void testStatsForCompactRangeIndex() throws Exception {
     createAndPopulateRegion();
     keyIndex2 =
-        (IndexProtocol) qs.createIndex("multiKeyIndex2", IndexType.FUNCTIONAL, "ID", "/portfolio ");
+        (IndexProtocol) qs.createIndex("multiKeyIndex2", IndexType.FUNCTIONAL, "ID",
+            SEPARATOR + "portfolio ");
 
     assertTrue(keyIndex2 instanceof PartitionedIndex);
 
@@ -191,7 +194,7 @@ public class PRIndexStatisticsJUnitTest {
     assertEquals(200, keyIndex1Stats.getNumUpdates());
 
     // IndexUsed stats test
-    String queryStr = "select * from /portfolio where ID > 0";
+    String queryStr = "select * from " + SEPARATOR + "portfolio where ID > 0";
     Query query = qs.newQuery(queryStr);
 
     for (int i = 0; i < 50; i++) {
@@ -239,7 +242,7 @@ public class PRIndexStatisticsJUnitTest {
   public void testStatsForCompactMapRangeIndex() throws Exception {
     createAndPopulateRegion();
     keyIndex3 = (IndexProtocol) qs.createIndex("multiKeyIndex3", IndexType.FUNCTIONAL,
-        "positions['DELL', 'YHOO']", "/portfolio p");
+        "positions['DELL', 'YHOO']", SEPARATOR + "portfolio p");
 
     assertTrue(keyIndex3 instanceof PartitionedIndex);
 
@@ -249,8 +252,8 @@ public class PRIndexStatisticsJUnitTest {
 
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
     assertEquals(100, keyIndexStats.getNumberOfKeys());
-    assertEquals(100, keyIndexStats.getNumberOfValues());
-    assertEquals(100, keyIndexStats.getNumUpdates());
+    assertEquals(200, keyIndexStats.getNumberOfValues());
+    assertEquals(200, keyIndexStats.getNumUpdates());
 
     for (int i = 0; i < 100; i++) {
       region.put(Integer.toString(i), new Portfolio(i, i));
@@ -258,19 +261,20 @@ public class PRIndexStatisticsJUnitTest {
 
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
     assertEquals(100, keyIndexStats.getNumberOfKeys());
-    assertEquals(100, keyIndexStats.getNumberOfValues());
-    assertEquals(200, keyIndexStats.getNumUpdates());
+    assertEquals(200, keyIndexStats.getNumberOfValues());
+    assertEquals(400, keyIndexStats.getNumUpdates());
 
     String queryStr =
-        "select * from /portfolio where positions['DELL'] != NULL OR positions['YHOO'] != NULL";
+        "select * from " + SEPARATOR
+            + "portfolio where positions['DELL'] != NULL OR positions['YHOO'] != NULL";
     Query query = qs.newQuery(queryStr);
 
     for (int i = 0; i < 50; i++) {
       query.execute();
     }
 
-    // Both RangeIndex should be used
-    assertEquals(100 /* Execution time */, keyIndexStats.getTotalUses());
+    // Index should be used
+    assertEquals(100, keyIndexStats.getTotalUses());
 
     for (int i = 0; i < 50; i++) {
       region.invalidate(Integer.toString(i));
@@ -278,8 +282,8 @@ public class PRIndexStatisticsJUnitTest {
 
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
     assertEquals(50, keyIndexStats.getNumberOfKeys());
-    assertEquals(50, keyIndexStats.getNumberOfValues());
-    assertEquals(250, keyIndexStats.getNumUpdates());
+    assertEquals(100, keyIndexStats.getNumberOfValues());
+    assertEquals(500, keyIndexStats.getNumUpdates());
 
     for (int i = 0; i < 50; i++) {
       region.destroy(Integer.toString(i));
@@ -287,14 +291,14 @@ public class PRIndexStatisticsJUnitTest {
 
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
     assertEquals(50, keyIndexStats.getNumberOfKeys());
-    assertEquals(50, keyIndexStats.getNumberOfValues());
-    assertEquals(250, keyIndexStats.getNumUpdates());
+    assertEquals(100, keyIndexStats.getNumberOfValues());
+    assertEquals(500, keyIndexStats.getNumUpdates());
 
     for (int i = 50; i < 100; i++) {
       region.destroy(Integer.toString(i));
     }
 
-    assertEquals(300, keyIndexStats.getNumUpdates());
+    assertEquals(600, keyIndexStats.getNumUpdates());
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
     assertEquals(0, keyIndexStats.getNumberOfKeys());
 
@@ -311,7 +315,7 @@ public class PRIndexStatisticsJUnitTest {
     IndexManager.TEST_RANGEINDEX_ONLY = true;
     createAndPopulateRegion();
     keyIndex3 = (IndexProtocol) qs.createIndex("multiKeyIndex3", IndexType.FUNCTIONAL,
-        "positions['DELL', 'YHOO']", "/portfolio");
+        "positions['DELL', 'YHOO']", SEPARATOR + "portfolio");
 
     assertTrue(keyIndex3 instanceof PartitionedIndex);
 
@@ -322,8 +326,8 @@ public class PRIndexStatisticsJUnitTest {
     assertEquals(89, keyIndexStats.getNumberOfBucketIndexes());
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
     assertEquals(100, keyIndexStats.getNumberOfKeys());
-    assertEquals(100, keyIndexStats.getNumberOfValues());
-    assertEquals(100, keyIndexStats.getNumUpdates());
+    assertEquals(200, keyIndexStats.getNumberOfValues());
+    assertEquals(200, keyIndexStats.getNumUpdates());
 
     Position.cnt = 0;
     for (int i = 0; i < 100; i++) {
@@ -332,11 +336,12 @@ public class PRIndexStatisticsJUnitTest {
 
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
     assertEquals(100, keyIndexStats.getNumberOfKeys());
-    assertEquals(100, keyIndexStats.getNumberOfValues());
-    assertEquals(200, keyIndexStats.getNumUpdates());
+    assertEquals(200, keyIndexStats.getNumberOfValues());
+    assertEquals(400, keyIndexStats.getNumUpdates());
 
     String queryStr =
-        "select * from /portfolio where positions['DELL'] != NULL OR positions['YHOO'] != NULL";
+        "select * from " + SEPARATOR
+            + "portfolio where positions['DELL'] != NULL OR positions['YHOO'] != NULL";
     Query query = qs.newQuery(queryStr);
 
     for (int i = 0; i < 50; i++) {
@@ -352,8 +357,8 @@ public class PRIndexStatisticsJUnitTest {
 
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
     assertEquals(50, keyIndexStats.getNumberOfKeys());
-    assertEquals(50, keyIndexStats.getNumberOfValues());
-    assertEquals(300, keyIndexStats.getNumUpdates());
+    assertEquals(100, keyIndexStats.getNumberOfValues());
+    assertEquals(600, keyIndexStats.getNumUpdates());
 
     for (int i = 0; i < 50; i++) {
       region.destroy(Integer.toString(i));
@@ -361,15 +366,15 @@ public class PRIndexStatisticsJUnitTest {
 
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
     assertEquals(50, keyIndexStats.getNumberOfKeys());
-    assertEquals(50, keyIndexStats.getNumberOfValues());
-    assertEquals(300, keyIndexStats.getNumUpdates());
+    assertEquals(100, keyIndexStats.getNumberOfValues());
+    assertEquals(600, keyIndexStats.getNumUpdates());
 
 
     for (int i = 50; i < 100; i++) {
       region.destroy(Integer.toString(i));
     }
 
-    assertEquals(400, keyIndexStats.getNumUpdates());
+    assertEquals(800, keyIndexStats.getNumUpdates());
     assertEquals(0, keyIndexStats.getNumberOfKeys());
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
 
@@ -388,7 +393,7 @@ public class PRIndexStatisticsJUnitTest {
     assertEquals(0, region.size());
 
     keyIndex1 = (IndexProtocol) qs.createIndex("multiKeyIndex4", IndexType.FUNCTIONAL, "pos.secId",
-        "/portfolio p, p.positions.values pos");
+        SEPARATOR + "portfolio p, p.positions.values pos");
 
     // Recreate all entries in the region
     for (int i = 0; i < 100; i++) {
@@ -414,7 +419,8 @@ public class PRIndexStatisticsJUnitTest {
     assertEquals(400, keyIndex1Stats.getNumUpdates());
 
     // IndexUsed stats test
-    String queryStr = "select * from /portfolio p, p.positions.values pos where pos.secId = 'YHOO'";
+    String queryStr = "select * from " + SEPARATOR
+        + "portfolio p, p.positions.values pos where pos.secId = 'YHOO'";
     Query query = qs.newQuery(queryStr);
 
     for (int i = 0; i < 50; i++) {
@@ -465,7 +471,8 @@ public class PRIndexStatisticsJUnitTest {
     assertEquals(0, region.size());
 
     keyIndex2 =
-        (IndexProtocol) qs.createIndex("multiKeyIndex5", IndexType.FUNCTIONAL, "ID", "/portfolio ");
+        (IndexProtocol) qs.createIndex("multiKeyIndex5", IndexType.FUNCTIONAL, "ID",
+            SEPARATOR + "portfolio ");
 
     // Recreate all entries in the region
     for (int i = 0; i < 100; i++) {
@@ -491,7 +498,7 @@ public class PRIndexStatisticsJUnitTest {
     assertEquals(200, keyIndex1Stats.getNumUpdates());
 
     // IndexUsed stats test
-    String queryStr = "select * from /portfolio where ID > 0";
+    String queryStr = "select * from " + SEPARATOR + "portfolio where ID > 0";
     Query query = qs.newQuery(queryStr);
 
     for (int i = 0; i < 50; i++) {
@@ -541,7 +548,7 @@ public class PRIndexStatisticsJUnitTest {
     assertEquals(0, region.size());
 
     keyIndex3 = (IndexProtocol) qs.createIndex("multiKeyIndex6", IndexType.FUNCTIONAL,
-        "positions['DELL', 'YHOO']", "/portfolio");
+        "positions['DELL', 'YHOO']", SEPARATOR + "portfolio");
 
     // Recreate all entries in the region
     Position.cnt = 0;
@@ -556,8 +563,8 @@ public class PRIndexStatisticsJUnitTest {
 
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
     assertEquals(100, keyIndexStats.getNumberOfKeys());
-    assertEquals(100, keyIndexStats.getNumberOfValues());
-    assertEquals(100, keyIndexStats.getNumUpdates());
+    assertEquals(200, keyIndexStats.getNumberOfValues());
+    assertEquals(200, keyIndexStats.getNumUpdates());
 
     Position.cnt = 0;
     for (int i = 0; i < 100; i++) {
@@ -566,11 +573,12 @@ public class PRIndexStatisticsJUnitTest {
 
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
     assertEquals(100, keyIndexStats.getNumberOfKeys());
-    assertEquals(100, keyIndexStats.getNumberOfValues());
-    assertEquals(200, keyIndexStats.getNumUpdates());
+    assertEquals(200, keyIndexStats.getNumberOfValues());
+    assertEquals(400, keyIndexStats.getNumUpdates());
 
     String queryStr =
-        "select * from /portfolio where positions['DELL'] != NULL OR positions['YHOO'] != NULL";
+        "select * from " + SEPARATOR
+            + "portfolio where positions['DELL'] != NULL OR positions['YHOO'] != NULL";
     Query query = qs.newQuery(queryStr);
 
     for (int i = 0; i < 50; i++) {
@@ -586,8 +594,8 @@ public class PRIndexStatisticsJUnitTest {
 
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
     assertEquals(50, keyIndexStats.getNumberOfKeys());
-    assertEquals(50, keyIndexStats.getNumberOfValues());
-    assertEquals(250, keyIndexStats.getNumUpdates());
+    assertEquals(100, keyIndexStats.getNumberOfValues());
+    assertEquals(500, keyIndexStats.getNumUpdates());
 
     for (int i = 0; i < 50; i++) {
       region.destroy(Integer.toString(i));
@@ -595,14 +603,14 @@ public class PRIndexStatisticsJUnitTest {
 
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
     assertEquals(50, keyIndexStats.getNumberOfKeys());
-    assertEquals(50, keyIndexStats.getNumberOfValues());
-    assertEquals(250, keyIndexStats.getNumUpdates());
+    assertEquals(100, keyIndexStats.getNumberOfValues());
+    assertEquals(500, keyIndexStats.getNumUpdates());
 
     for (int i = 50; i < 100; i++) {
       region.destroy(Integer.toString(i));
     }
 
-    assertEquals(300, keyIndexStats.getNumUpdates());
+    assertEquals(600, keyIndexStats.getNumUpdates());
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
     assertEquals(0, keyIndexStats.getNumberOfKeys());
 
@@ -622,7 +630,7 @@ public class PRIndexStatisticsJUnitTest {
     assertEquals(0, region.size());
 
     keyIndex3 = (IndexProtocol) qs.createIndex("multiKeyIndex6", IndexType.FUNCTIONAL,
-        "positions['DELL', 'YHOO']", "/portfolio");
+        "positions['DELL', 'YHOO']", SEPARATOR + "portfolio");
 
     // Recreate all entries in the region
     Position.cnt = 0;
@@ -637,8 +645,8 @@ public class PRIndexStatisticsJUnitTest {
 
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
     assertEquals(100, keyIndexStats.getNumberOfKeys());
-    assertEquals(100, keyIndexStats.getNumberOfValues());
-    assertEquals(100, keyIndexStats.getNumUpdates());
+    assertEquals(200, keyIndexStats.getNumberOfValues());
+    assertEquals(200, keyIndexStats.getNumUpdates());
 
     Position.cnt = 0;
     for (int i = 0; i < 100; i++) {
@@ -647,11 +655,12 @@ public class PRIndexStatisticsJUnitTest {
 
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
     assertEquals(100, keyIndexStats.getNumberOfKeys());
-    assertEquals(100, keyIndexStats.getNumberOfValues());
-    assertEquals(200, keyIndexStats.getNumUpdates());
+    assertEquals(200, keyIndexStats.getNumberOfValues());
+    assertEquals(400, keyIndexStats.getNumUpdates());
 
     String queryStr =
-        "select * from /portfolio where positions['DELL'] != NULL OR positions['YHOO'] != NULL";
+        "select * from " + SEPARATOR
+            + "portfolio where positions['DELL'] != NULL OR positions['YHOO'] != NULL";
     Query query = qs.newQuery(queryStr);
 
     for (int i = 0; i < 50; i++) {
@@ -667,8 +676,8 @@ public class PRIndexStatisticsJUnitTest {
 
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
     assertEquals(50, keyIndexStats.getNumberOfKeys());
-    assertEquals(50, keyIndexStats.getNumberOfValues());
-    assertEquals(300, keyIndexStats.getNumUpdates());
+    assertEquals(100, keyIndexStats.getNumberOfValues());
+    assertEquals(600, keyIndexStats.getNumUpdates());
 
     for (int i = 0; i < 50; i++) {
       region.destroy(Integer.toString(i));
@@ -676,8 +685,8 @@ public class PRIndexStatisticsJUnitTest {
 
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
     assertEquals(50, keyIndexStats.getNumberOfKeys());
-    assertEquals(50, keyIndexStats.getNumberOfValues());
-    assertEquals(300, keyIndexStats.getNumUpdates());
+    assertEquals(100, keyIndexStats.getNumberOfValues());
+    assertEquals(600, keyIndexStats.getNumUpdates());
 
 
     for (int i = 50; i < 100; i++) {
@@ -685,7 +694,7 @@ public class PRIndexStatisticsJUnitTest {
     }
 
     assertEquals(2, keyIndexStats.getNumberOfMapIndexKeys());
-    assertEquals(400, keyIndexStats.getNumUpdates());
+    assertEquals(800, keyIndexStats.getNumUpdates());
     assertEquals(0, keyIndexStats.getNumberOfKeys());
 
     qs.removeIndex(keyIndex3);

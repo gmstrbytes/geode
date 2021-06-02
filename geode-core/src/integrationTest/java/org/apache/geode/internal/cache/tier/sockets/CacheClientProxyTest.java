@@ -35,7 +35,7 @@ import org.junit.Test;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.net.SocketCloser;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.statistics.StatisticsClock;
 import org.apache.geode.test.junit.rules.ExecutorServiceRule;
 import org.apache.geode.test.junit.rules.ServerStarterRule;
@@ -65,14 +65,14 @@ public class CacheClientProxyTest {
     final InetAddress address = mock(InetAddress.class);
     when(socket.getInetAddress()).thenReturn(address);
     when(address.getHostAddress()).thenReturn("localhost");
-    doNothing().when(sc).asyncClose(any(), eq("localhost"), eq(null));
+    doNothing().when(sc).asyncClose(any(), eq("localhost"), any(Runnable.class));
 
     final ClientProxyMembershipID proxyID = mock(ClientProxyMembershipID.class);
     final DistributedMember member = cache.getDistributedSystem().getDistributedMember();
     when(proxyID.getDistributedMember()).thenReturn(member);
 
     CacheClientProxy proxy = new CacheClientProxy(ccn, socket, proxyID, true,
-        Handshake.CONFLATION_DEFAULT, Version.CURRENT, 1L, true,
+        Handshake.CONFLATION_DEFAULT, KnownVersion.CURRENT, 1L, true,
         null, null, mock(StatisticsClock.class));
 
     CompletableFuture<Void> result1 = executorServiceRule.runAsync(() -> proxy.close());

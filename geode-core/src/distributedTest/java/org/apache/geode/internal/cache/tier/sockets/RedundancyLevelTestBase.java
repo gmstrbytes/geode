@@ -14,8 +14,10 @@
  */
 package org.apache.geode.internal.cache.tier.sockets;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.equalTo;
@@ -46,7 +48,6 @@ import org.apache.geode.cache.client.internal.RegisterInterestTracker;
 import org.apache.geode.cache.server.CacheServer;
 import org.apache.geode.distributed.DistributedSystem;
 import org.apache.geode.distributed.internal.ServerLocation;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.cache.CacheServerImpl;
 import org.apache.geode.internal.cache.ClientServerObserver;
 import org.apache.geode.internal.cache.ClientServerObserverAdapter;
@@ -106,7 +107,7 @@ public class RedundancyLevelTestBase extends JUnit4DistributedTestCase {
     server2 = VM.getVM(2);
     server3 = VM.getVM(3);
 
-    IgnoredException.addIgnoredException("java.net.SocketException||java.net.ConnectException");
+    IgnoredException.addIgnoredException("java.net.SocketException|java.net.ConnectException");
 
     // start servers first
     PORT1 = server0.invoke(RedundancyLevelTestBase::createServerCache);
@@ -131,7 +132,7 @@ public class RedundancyLevelTestBase extends JUnit4DistributedTestCase {
   }
 
   private static void putEntriesK1andK2() throws InterruptedException {
-    Region<String, String> r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region<String, String> r1 = cache.getRegion(SEPARATOR + REGION_NAME);
     assertThat(r1).isNotNull();
     r1.put(k1, k1);
     r1.put(k2, k2);
@@ -219,7 +220,7 @@ public class RedundancyLevelTestBase extends JUnit4DistributedTestCase {
   }
 
   public static void createEntriesK1andK2() {
-    Region<String, String> r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region<String, String> r1 = cache.getRegion(SEPARATOR + REGION_NAME);
     assertThat(r1).isNotNull();
     if (!r1.containsKey(k1)) {
       r1.create(k1, k1);
@@ -232,7 +233,7 @@ public class RedundancyLevelTestBase extends JUnit4DistributedTestCase {
   }
 
   static void registerK1AndK2() {
-    Region r = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region r = cache.getRegion(SEPARATOR + REGION_NAME);
     assertThat(r).isNotNull();
     List<String> list = new ArrayList<>();
     list.add(k1);
@@ -241,7 +242,7 @@ public class RedundancyLevelTestBase extends JUnit4DistributedTestCase {
   }
 
   public static void unregisterInterest() {
-    Region<String, String> r = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region<String, String> r = cache.getRegion(SEPARATOR + REGION_NAME);
     r.unregisterInterest("k1");
   }
 
@@ -294,7 +295,7 @@ public class RedundancyLevelTestBase extends JUnit4DistributedTestCase {
 
     await().until(() -> {
       Set keysMap = ccp.cils[RegisterInterestTracker.interestListIndex]
-          .getProfile(Region.SEPARATOR + REGION_NAME).getKeysOfInterestFor(ccp.getProxyID());
+          .getProfile(SEPARATOR + REGION_NAME).getKeysOfInterestFor(ccp.getProxyID());
       if (keysMap == null) {
         return false;
       }
@@ -305,7 +306,7 @@ public class RedundancyLevelTestBase extends JUnit4DistributedTestCase {
     });
 
     Set keysMap = ccp.cils[RegisterInterestTracker.interestListIndex]
-        .getProfile(Region.SEPARATOR + REGION_NAME).getKeysOfInterestFor(ccp.getProxyID());
+        .getProfile(SEPARATOR + REGION_NAME).getKeysOfInterestFor(ccp.getProxyID());
     assertThat(keysMap.contains(k1)).isTrue();
     assertThat(keysMap.contains(k2)).isTrue();
   }
@@ -392,7 +393,7 @@ public class RedundancyLevelTestBase extends JUnit4DistributedTestCase {
 
     CacheServer server1 = cache.addCacheServer();
 
-    int port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    int port = getRandomAvailableTCPPort();
     server1.setMaximumTimeBetweenPings(180000);
     server1.setPort(port);
     server1.start();

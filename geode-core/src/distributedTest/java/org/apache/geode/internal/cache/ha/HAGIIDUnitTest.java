@@ -14,8 +14,10 @@
  */
 package org.apache.geode.internal.cache.ha;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.apache.geode.test.dunit.Assert.assertEquals;
 import static org.apache.geode.test.dunit.Assert.assertNotNull;
 import static org.apache.geode.test.dunit.Assert.assertTrue;
@@ -45,7 +47,6 @@ import org.apache.geode.cache.util.CacheListenerAdapter;
 import org.apache.geode.cache30.ClientServerTestCase;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.cache.EventID;
 import org.apache.geode.internal.cache.FilterRoutingInfo.FilterInfo;
 import org.apache.geode.internal.cache.LocalRegion;
@@ -102,7 +103,7 @@ public class HAGIIDUnitTest extends JUnit4DistributedTestCase {
     server0.invoke(() -> HAGIIDUnitTest.setSystemProperty());
 
 
-    PORT2 = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    PORT2 = getRandomAvailableTCPPort();
     // Start the client
     client0.invoke(() -> HAGIIDUnitTest.createClientCache(NetworkUtils.getServerHostName(host),
         new Integer(PORT1), new Integer(PORT2)));
@@ -160,7 +161,7 @@ public class HAGIIDUnitTest extends JUnit4DistributedTestCase {
     factory.setDataPolicy(DataPolicy.REPLICATE);
     RegionAttributes attrs = factory.create();
     cache.createRegion(REGION_NAME, attrs);
-    int port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    int port = getRandomAvailableTCPPort();
     CacheServer server1 = cache.addCacheServer();
     server1.setPort(port);
     server1.setNotifyBySubscription(true);
@@ -183,7 +184,7 @@ public class HAGIIDUnitTest extends JUnit4DistributedTestCase {
 
   public static void registerInterestList() {
     try {
-      Region r = cache.getRegion("/" + REGION_NAME);
+      Region r = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(r);
       r.registerInterest("key-1", InterestResultPolicy.KEYS_VALUES);
       r.registerInterest("key-2", InterestResultPolicy.KEYS_VALUES);
@@ -195,7 +196,7 @@ public class HAGIIDUnitTest extends JUnit4DistributedTestCase {
 
   public static void createEntries() {
     try {
-      Region r = cache.getRegion("/" + REGION_NAME);
+      Region r = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(r);
       r.create("key-1", "key-1");
       r.create("key-2", "key-2");
@@ -220,7 +221,7 @@ public class HAGIIDUnitTest extends JUnit4DistributedTestCase {
 
   public static void put() {
     try {
-      Region r = cache.getRegion("/" + REGION_NAME);
+      Region r = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(r);
 
       r.put("key-1", "value-1");
@@ -234,7 +235,7 @@ public class HAGIIDUnitTest extends JUnit4DistributedTestCase {
 
   /** queue a tombstone GC message for the client. See bug #46832 */
   public static void tombstonegc() throws Exception {
-    LocalRegion r = (LocalRegion) cache.getRegion("/" + REGION_NAME);
+    LocalRegion r = (LocalRegion) cache.getRegion(SEPARATOR + REGION_NAME);
     assertNotNull(r);
 
     DistributedMember id = r.getCache().getDistributedSystem().getDistributedMember();
@@ -253,7 +254,7 @@ public class HAGIIDUnitTest extends JUnit4DistributedTestCase {
 
   public static void verifyEntries() {
     try {
-      final Region r = cache.getRegion("/" + REGION_NAME);
+      final Region r = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(r);
       // wait until we
       // have a dead
@@ -355,7 +356,7 @@ public class HAGIIDUnitTest extends JUnit4DistributedTestCase {
 
   public static void verifyEntriesAfterGII() {
     try {
-      final Region r = cache.getRegion("/" + REGION_NAME);
+      final Region r = cache.getRegion(SEPARATOR + REGION_NAME);
       assertNotNull(r);
       // wait until
       // we have a

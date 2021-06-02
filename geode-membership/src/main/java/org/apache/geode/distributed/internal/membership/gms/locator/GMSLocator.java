@@ -22,8 +22,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -45,15 +43,17 @@ import org.apache.geode.distributed.internal.membership.gms.GMSMembershipView;
 import org.apache.geode.distributed.internal.membership.gms.GMSUtil;
 import org.apache.geode.distributed.internal.membership.gms.Services;
 import org.apache.geode.distributed.internal.membership.gms.interfaces.Locator;
-import org.apache.geode.distributed.internal.membership.gms.membership.HostAddress;
 import org.apache.geode.distributed.internal.membership.gms.messenger.GMSMemberWrapper;
+import org.apache.geode.distributed.internal.tcpserver.HostAddress;
+import org.apache.geode.distributed.internal.tcpserver.HostAndPort;
 import org.apache.geode.distributed.internal.tcpserver.TcpClient;
 import org.apache.geode.distributed.internal.tcpserver.TcpHandler;
 import org.apache.geode.distributed.internal.tcpserver.TcpServer;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.ObjectDeserializer;
 import org.apache.geode.internal.serialization.ObjectSerializer;
-import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.internal.serialization.VersionedDataInputStream;
+import org.apache.geode.internal.serialization.Versioning;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
@@ -73,7 +73,7 @@ public class GMSLocator<ID extends MemberIdentifier> implements Locator<ID>, Tcp
   private final boolean networkPartitionDetectionEnabled;
   private final String securityUDPDHAlgo;
   private final String locatorString;
-  private final List<HostAddress> locators;
+  private final List<HostAndPort> locators;
   private final MembershipLocatorStatistics locatorStats;
   private final Set<ID> registrants = new HashSet<>();
   private final Map<GMSMemberWrapper, byte[]> publicKeys =
@@ -108,7 +108,7 @@ public class GMSLocator<ID extends MemberIdentifier> implements Locator<ID>, Tcp
    * @param objectSerializer a serializer used to persist the membership view
    * @param objectDeserializer a deserializer used to recover the membership view
    */
-  public GMSLocator(InetAddress bindAddress, String locatorString, boolean usePreferredCoordinators,
+  public GMSLocator(HostAddress bindAddress, String locatorString, boolean usePreferredCoordinators,
       boolean networkPartitionDetectionEnabled, MembershipLocatorStatistics locatorStats,
       String securityUDPDHAlgo, Path workingDirectory, final TcpClient locatorClient,
       ObjectSerializer objectSerializer,
@@ -121,7 +121,8 @@ public class GMSLocator<ID extends MemberIdentifier> implements Locator<ID>, Tcp
     if (this.locatorString == null || this.locatorString.isEmpty()) {
       locators = new ArrayList<>(0);
     } else {
-      locators = GMSUtil.parseLocators(locatorString, bindAddress);
+      locators = GMSUtil.parseLocators(locatorString,
+          bindAddress == null ? null : bindAddress.getAddress());
     }
     this.locatorStats = locatorStats;
     this.workingDirectory = workingDirectory;
@@ -262,15 +263,6 @@ public class GMSLocator<ID extends MemberIdentifier> implements Locator<ID>, Tcp
     services.getMessenger().setPublicKey(findRequest.getMyPublicKey(),
         findRequest.getMemberID());
 
-    // at this level we want to return the coordinator known to membership services,
-    // which may be more up-to-date than the one known by the membership manager
-    if (view == null) {
-      if (services == null) {
-        // we must know this process's identity in order to respond
-        return null;
-      }
-    }
-
     GMSMembershipView<ID> responseView = view;
     if (responseView == null) {
       responseView = recoveredView;
@@ -366,7 +358,7 @@ public class GMSLocator<ID extends MemberIdentifier> implements Locator<ID>, Tcp
     try (FileOutputStream fileStream = new FileOutputStream(viewFile);
         ObjectOutputStream oos = new ObjectOutputStream(fileStream)) {
       oos.writeInt(LOCATOR_FILE_STAMP);
-      oos.writeInt(Version.getCurrentVersion().ordinal());
+      oos.writeInt(KnownVersion.getCurrentVersion().ordinal());
       oos.flush();
       DataOutputStream dataOutputStream = new DataOutputStream(oos);
       objectSerializer.writeObject(view, dataOutputStream);
@@ -412,8 +404,8 @@ public class GMSLocator<ID extends MemberIdentifier> implements Locator<ID>, Tcp
   }
 
   private boolean recoverFromOtherLocators() {
-    for (HostAddress other : locators) {
-      if (recover(other.getSocketInetAddress())) {
+    for (HostAndPort other : locators) {
+      if (recover(other)) {
         logger.info("Peer locator recovered state from {}", other);
         return true;
       }
@@ -421,10 +413,10 @@ public class GMSLocator<ID extends MemberIdentifier> implements Locator<ID>, Tcp
     return false;
   }
 
-  private boolean recover(InetSocketAddress other) {
+  private boolean recover(HostAndPort other) {
     try {
       logger.info("Peer locator attempting to recover from {}", other);
-      Object response = locatorClient.requestToServer(other.getAddress(), other.getPort(),
+      Object response = locatorClient.requestToServer(other,
           new GetViewRequest(), 20000, true);
       if (response instanceof GetViewResponse) {
         view = ((GetViewResponse<ID>) response).getView();
@@ -455,17 +447,20 @@ public class GMSLocator<ID extends MemberIdentifier> implements Locator<ID>, Tcp
       }
 
       int version = ois.readInt();
-      int currentVersion = Version.getCurrentVersion().ordinal();
+      int currentVersion = KnownVersion.getCurrentVersion().ordinal();
       DataInputStream input;
       if (version == currentVersion) {
         input = new DataInputStream(ois);
       } else if (version > currentVersion) {
         return false;
       } else {
-        Version geodeVersion = Version.fromOrdinalNoThrow((short) version, false);
+        KnownVersion geodeVersion =
+            Versioning.getKnownVersionOrDefault(
+                Versioning.getVersion((short) version),
+                KnownVersion.CURRENT);
         logger.info("Peer locator found that persistent view was written with version {}",
             geodeVersion);
-        if (Version.GEODE_1_11_0.equals(geodeVersion)) {
+        if (KnownVersion.GEODE_1_11_0.equals(geodeVersion)) {
           // v1.11 did not create the file with an ObjectOutputStream, so don't use one here
           input = new VersionedDataInputStream(fileInputStream, geodeVersion);
         } else {

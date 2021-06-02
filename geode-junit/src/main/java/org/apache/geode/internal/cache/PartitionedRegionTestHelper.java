@@ -18,6 +18,7 @@ import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
 
 import java.io.Serializable;
+import java.util.Objects;
 import java.util.Properties;
 
 import org.junit.Assert;
@@ -301,11 +302,18 @@ class SerializableObject implements Serializable {
     this.i = i;
   }
 
+  @Override
   public boolean equals(Object obj) {
-    if (obj == null)
+    if (!(obj instanceof SerializableObject)) {
       return false;
-    if (this.str.equals(((SerializableObject) obj).str) && this.i == ((SerializableObject) obj).i)
-      return true;
-    return false;
+    }
+    return this.str.equals(((SerializableObject) obj).str)
+        && this.i == ((SerializableObject) obj).i;
   }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(str, i);
+  }
+
 }

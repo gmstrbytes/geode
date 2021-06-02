@@ -15,8 +15,12 @@
 package org.apache.geode.cache.client.internal.pooling;
 
 import java.util.Deque;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.function.Predicate;
+
+import org.apache.geode.annotations.VisibleForTesting;
+import org.apache.geode.cache.client.internal.Connection;
 
 /**
  * This manager maintains a collection of PooledConnection instances.
@@ -30,7 +34,7 @@ import java.util.function.Predicate;
  *
  */
 public class AvailableConnectionManager {
-  private final Deque<PooledConnection> connections =
+  private final Deque<Connection> connections =
       new ConcurrentLinkedDeque<>();
 
   /**
@@ -39,8 +43,8 @@ public class AvailableConnectionManager {
    *
    * @return the activated connection or null if none found
    */
-  public PooledConnection useFirst() {
-    PooledConnection connection;
+  public Connection useFirst() {
+    Connection connection;
     while (null != (connection = connections.pollFirst())) {
       if (connection.activate()) {
         return connection;
@@ -55,7 +59,7 @@ public class AvailableConnectionManager {
    * @param connection the connection to remove
    * @return true if a connection was removed; otherwise false
    */
-  public boolean remove(PooledConnection connection) {
+  public boolean remove(Connection connection) {
     return connections.remove(connection);
   }
 
@@ -66,10 +70,10 @@ public class AvailableConnectionManager {
    * @param predicate that the connections are matched against
    * @return the activated connection or null if none found
    */
-  public PooledConnection useFirst(Predicate<PooledConnection> predicate) {
+  public Connection useFirst(Predicate<Connection> predicate) {
     final EqualsWithPredicate equalsWithPredicate = new EqualsWithPredicate(predicate);
     while (connections.removeFirstOccurrence(equalsWithPredicate)) {
-      PooledConnection connection = equalsWithPredicate.getConnectionThatMatched();
+      Connection connection = equalsWithPredicate.getConnectionThatMatched();
       if (connection.activate()) {
         // Need to recheck the predicate after we have activated.
         // Until activated load conditioning can change the server
@@ -91,7 +95,7 @@ public class AvailableConnectionManager {
    * @param connection the connection to passivate and add
    * @param accessed true if the connection was used by the caller, false otherwise
    */
-  public void addFirst(PooledConnection connection, boolean accessed) {
+  public void addFirst(Connection connection, boolean accessed) {
     passivate(connection, accessed);
     connections.addFirst(connection);
   }
@@ -102,12 +106,12 @@ public class AvailableConnectionManager {
    * @param connection the connection to passivate and add
    * @param accessed true if the connection was used by the caller, false otherwise
    */
-  public void addLast(PooledConnection connection, boolean accessed) {
+  public void addLast(Connection connection, boolean accessed) {
     passivate(connection, accessed);
     connections.addLast(connection);
   }
 
-  private void passivate(PooledConnection connection, boolean accessed) {
+  private void passivate(Connection connection, boolean accessed) {
     // thread local connections are already passive at this point
     if (connection.isActive()) {
       connection.passivate(accessed);
@@ -115,7 +119,8 @@ public class AvailableConnectionManager {
   }
 
   // used by unit tests
-  Deque<PooledConnection> getDeque() {
+  @VisibleForTesting
+  Deque<Connection> getDeque() {
     return connections;
   }
 
@@ -126,19 +131,19 @@ public class AvailableConnectionManager {
    * that did match.
    */
   private static class EqualsWithPredicate {
-    private final Predicate<PooledConnection> predicate;
-    private PooledConnection connectionThatMatched;
+    private final Predicate<Connection> predicate;
+    private Connection connectionThatMatched;
 
-    EqualsWithPredicate(Predicate<PooledConnection> predicate) {
+    EqualsWithPredicate(Predicate<Connection> predicate) {
       this.predicate = predicate;
     }
 
     @Override
     public boolean equals(Object o) {
-      if (!(o instanceof PooledConnection)) {
+      if (!(o instanceof Connection)) {
         return false;
       }
-      PooledConnection pooledConnection = (PooledConnection) o;
+      Connection pooledConnection = (Connection) o;
       if (predicate.test(pooledConnection)) {
         this.connectionThatMatched = pooledConnection;
         return true;
@@ -146,7 +151,12 @@ public class AvailableConnectionManager {
       return false;
     }
 
-    public PooledConnection getConnectionThatMatched() {
+    @Override
+    public int hashCode() {
+      return Objects.hash(predicate, connectionThatMatched);
+    }
+
+    public Connection getConnectionThatMatched() {
       return this.connectionThatMatched;
     }
   }

@@ -18,10 +18,12 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
@@ -212,10 +214,11 @@ public class TestFunction<T> implements Function<T>, Declarable2, DataSerializab
     RegionFunctionContextImpl rfc = (RegionFunctionContextImpl) context;
     PartitionedRegion pr = (PartitionedRegion) rfc.getDataSet();
     int[] bucketIDs = rfc.getLocalBucketArray(pr);
-    pr.getGemFireCache().getLogger().fine("LOCAL BUCKETSET =" + bucketIDs);
+    pr.getGemFireCache().getLogger().fine("LOCAL BUCKETSET =" + Arrays.toString(bucketIDs));
     ResultSender<Integer> rs = context.<Integer>getResultSender();
     if (!pr.getDataStore().areAllBucketsHosted(bucketIDs)) {
-      throw new AssertionError("bucket IDs =" + bucketIDs + " not all hosted locally");
+      throw new AssertionError(
+          "bucket IDs =" + Arrays.toString(bucketIDs) + " not all hosted locally");
     } else {
       for (int i = 1; i < bucketIDs[0]; ++i) {
         rs.sendResult(bucketIDs[i]);
@@ -548,7 +551,6 @@ public class TestFunction<T> implements Function<T>, Declarable2, DataSerializab
         }
       } else if (rfContext.getArguments() instanceof Set) {
         Set origKeys = (Set) rfContext.getArguments();
-        ArrayList vals = new ArrayList();
         for (Iterator i = origKeys.iterator(); i.hasNext();) {
           Object val;
           if (context instanceof RegionFunctionContext) {
@@ -563,9 +565,6 @@ public class TestFunction<T> implements Function<T>, Declarable2, DataSerializab
           else
             rfContext.getResultSender().lastResult(val);
 
-          if (val != null) {
-            vals.add(val);
-          }
         }
       } else if (rfContext.getArguments() instanceof HashMap) {
         HashMap putData = (HashMap) rfContext.getArguments();
@@ -1030,6 +1029,11 @@ public class TestFunction<T> implements Function<T>, Declarable2, DataSerializab
     }
     TestFunction function = (TestFunction) obj;
     return this.props.equals(function.getConfig());
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(props);
   }
 
   @Override

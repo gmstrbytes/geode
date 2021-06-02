@@ -15,21 +15,12 @@
 package org.apache.geode.internal.cache.tier;
 
 import org.apache.geode.annotations.Immutable;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 
 /**
  * Provides the version of the client.
- *
- * @since GemFire 2.0.2
  */
-@SuppressWarnings("deprecation")
 public interface ConnectionProxy {
-
-  /**
-   * The GFE version of the client.
-   *
-   * @since GemFire 5.7
-   */
   @Immutable
-  Version VERSION = Version.CURRENT;
+  KnownVersion VERSION = KnownVersion.CURRENT.getClientServerProtocolVersion();
 }

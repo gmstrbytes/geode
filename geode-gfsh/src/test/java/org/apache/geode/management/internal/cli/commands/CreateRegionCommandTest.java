@@ -15,6 +15,7 @@
 
 package org.apache.geode.management.internal.cli.commands;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
@@ -24,6 +25,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 
 import org.junit.Before;
@@ -47,16 +49,15 @@ public class CreateRegionCommandTest {
   public GfshParserRule parser = new GfshParserRule();
 
   private CreateRegionCommand command;
-  private InternalCache cache;
   private DistributedRegionMXBean regionMXBean;
   ManagementService service;
 
   private static String COMMAND = "create region --name=region --type=REPLICATE ";
 
   @Before
-  public void before() throws Exception {
+  public void before() {
     command = spy(CreateRegionCommand.class);
-    cache = mock(InternalCache.class);
+    InternalCache cache = mock(InternalCache.class);
     doReturn(cache).when(command).getCache();
 
     service = mock(ManagementService.class);
@@ -66,19 +67,19 @@ public class CreateRegionCommandTest {
   }
 
   @Test
-  public void testRegionExistsReturnsCorrectValue() throws Exception {
+  public void testRegionExistsReturnsCorrectValue() {
     assertThat(command.regionExists(null)).isFalse();
   }
 
   @Test
-  public void missingName() throws Exception {
+  public void missingName() {
     parser.executeAndAssertThat(command, "create region")
         .statusIsError()
         .hasInfoSection().hasOutput().contains("Invalid command");
   }
 
   @Test
-  public void missingBothTypeAndUseAttributeFrom() throws Exception {
+  public void missingBothTypeAndUseAttributeFrom() {
     parser.executeAndAssertThat(command, "create region --name=region")
         .statusIsError()
         .hasInfoSection().hasOutput()
@@ -86,7 +87,7 @@ public class CreateRegionCommandTest {
   }
 
   @Test
-  public void haveBothTypeAndUseAttributeFrom() throws Exception {
+  public void haveBothTypeAndUseAttributeFrom() {
     parser.executeAndAssertThat(command,
         "create region --name=region --type=REPLICATE --template-region=regionB").statusIsError()
         .hasInfoSection().hasOutput()
@@ -94,7 +95,7 @@ public class CreateRegionCommandTest {
   }
 
   @Test
-  public void invalidEvictionAction() throws Exception {
+  public void invalidEvictionAction() {
     parser.executeAndAssertThat(command,
         "create region --name=region --type=REPLICATE --eviction-action=invalidAction")
         .statusIsError().hasInfoSection().hasOutput()
@@ -102,7 +103,7 @@ public class CreateRegionCommandTest {
   }
 
   @Test
-  public void invalidEvictionAttributes() throws Exception {
+  public void invalidEvictionAttributes() {
     parser.executeAndAssertThat(command,
         "create region --name=region --type=REPLICATE --eviction-max-memory=1000 --eviction-entry-count=200")
         .statusIsError().hasInfoSection().hasOutput()
@@ -110,14 +111,14 @@ public class CreateRegionCommandTest {
   }
 
   @Test
-  public void missingEvictionAction() throws Exception {
+  public void missingEvictionAction() {
     parser.executeAndAssertThat(command,
         "create region --name=region --type=REPLICATE --eviction-max-memory=1000").statusIsError()
         .hasInfoSection().hasOutput().contains("eviction-action must be specified.");
   }
 
   @Test
-  public void invalidEvictionSizerAndCount() throws Exception {
+  public void invalidEvictionSizerAndCount() {
     parser.executeAndAssertThat(command,
         "create region --name=region --type=REPLICATE --eviction-entry-count=1 --eviction-object-sizer=abc --eviction-action=local-destroy")
         .statusIsError().hasInfoSection().hasOutput()
@@ -125,8 +126,9 @@ public class CreateRegionCommandTest {
   }
 
   @Test
-  public void defaultValues() throws Exception {
-    ResultCollector resultCollector = mock(ResultCollector.class);
+  @SuppressWarnings("unchecked")
+  public void defaultValues() {
+    ResultCollector<Object, List<Object>> resultCollector = mock(ResultCollector.class);
     doReturn(resultCollector).when(command).executeFunction(any(), any(), any(Set.class));
     when(resultCollector.getResult()).thenReturn(Collections.emptyList());
     DistributedSystemMXBean dsMBean = mock(DistributedSystemMXBean.class);
@@ -147,7 +149,7 @@ public class CreateRegionCommandTest {
   }
 
   @Test
-  public void invalidCacheListener() throws Exception {
+  public void invalidCacheListener() {
     parser
         .executeAndAssertThat(command,
             "create region --name=region --type=REPLICATE --cache-listener=abc-def")
@@ -155,7 +157,7 @@ public class CreateRegionCommandTest {
   }
 
   @Test
-  public void invalidCacheLoader() throws Exception {
+  public void invalidCacheLoader() {
     parser
         .executeAndAssertThat(command,
             "create region --name=region --type=REPLICATE --cache-loader=abc-def")
@@ -163,7 +165,7 @@ public class CreateRegionCommandTest {
   }
 
   @Test
-  public void invalidCacheWriter() throws Exception {
+  public void invalidCacheWriter() {
     parser
         .executeAndAssertThat(command,
             "create region --name=region --type=REPLICATE --cache-writer=abc-def")
@@ -171,7 +173,7 @@ public class CreateRegionCommandTest {
   }
 
   @Test
-  public void declarableClassIsNullIfNotSpecified() throws Exception {
+  public void declarableClassIsNullIfNotSpecified() {
     GfshParseResult result = parser.parse("create region --name=region --cache-writer");
     assertThat(result.getParamValue("cache-writer")).isNull();
     assertThat(result.getParamValue("cache-loader")).isNull();
@@ -269,21 +271,21 @@ public class CreateRegionCommandTest {
   }
 
   @Test
-  public void invalidCompressor() throws Exception {
+  public void invalidCompressor() {
     parser.executeAndAssertThat(command,
         "create region --name=region --type=REPLICATE --compressor=abc-def").statusIsError()
         .hasInfoSection().hasOutput().contains("abc-def is an invalid Compressor.");
   }
 
   @Test
-  public void invalidKeyType() throws Exception {
+  public void invalidKeyType() {
     parser.executeAndAssertThat(command,
         "create region --name=region --type=REPLICATE --key-type=abc-def").statusIsError()
         .hasInfoSection().hasOutput().contains("Invalid command");
   }
 
   @Test
-  public void invalidValueType() throws Exception {
+  public void invalidValueType() {
     parser.executeAndAssertThat(command,
         "create region --name=region --type=REPLICATE --value-type=abc-def").statusIsError()
         .hasInfoSection().hasOutput().contains("Invalid command");
@@ -329,8 +331,8 @@ public class CreateRegionCommandTest {
     when(regionMXBean.getEmptyNodes()).thenReturn(1);
     when(regionMXBean.getRegionType()).thenReturn("REPLICATE");
     parser.executeAndAssertThat(command, COMMAND).statusIsError()
-        .containsOutput("Region /region already exists on the cluster");
+        .containsOutput("Region " + SEPARATOR + "region already exists on the cluster");
     parser.executeAndAssertThat(command, COMMAND + " --if-not-exists").statusIsSuccess()
-        .containsOutput("Skipping: Region /region already exists on the cluster");
+        .containsOutput("Skipping: Region " + SEPARATOR + "region already exists on the cluster");
   }
 }

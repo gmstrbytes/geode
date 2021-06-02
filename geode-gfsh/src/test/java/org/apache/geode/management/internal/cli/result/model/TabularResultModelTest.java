@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.geode.management.internal.cli.result.model;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -25,8 +24,8 @@ import org.junit.Test;
 
 import org.apache.geode.test.junit.assertions.TabularResultModelAssert;
 
-
 public class TabularResultModelTest {
+
   private TabularResultModel table1;
 
   @Before
@@ -52,7 +51,7 @@ public class TabularResultModelTest {
 
     assertThat(table2.getColumnSize()).isEqualTo(3);
 
-    assertThat(table1.getContent()).isEqualToComparingFieldByFieldRecursively(table2.getContent());
+    assertThat(table1.getContent()).usingRecursiveComparison().isEqualTo(table2.getContent());
   }
 
   @Test

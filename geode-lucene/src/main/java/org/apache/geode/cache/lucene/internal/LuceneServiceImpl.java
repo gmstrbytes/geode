@@ -15,6 +15,8 @@
 
 package org.apache.geode.cache.lucene.internal;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
+import static org.apache.geode.cache.Region.SEPARATOR_CHAR;
 import static org.apache.geode.internal.serialization.DataSerializableFixedID.CREATE_REGION_MESSAGE_LUCENE;
 
 import java.util.ArrayList;
@@ -79,6 +81,7 @@ import org.apache.geode.internal.cache.RegionListener;
 import org.apache.geode.internal.cache.extension.Extensible;
 import org.apache.geode.internal.cache.xmlcache.XmlGenerator;
 import org.apache.geode.internal.serialization.DataSerializableFixedID;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.management.internal.beans.CacheServiceMBeanBase;
@@ -102,7 +105,7 @@ public class LuceneServiceImpl implements InternalLuceneService {
       Boolean.getBoolean(GeodeGlossary.GEMFIRE_PREFIX + "luceneReindex");
 
   // Change this to the correct version once reindexing on an existing region is enabled
-  public static short LUCENE_REINDEX_ENABLED_VERSION_ORDINAL = Version.CURRENT_ORDINAL;
+  public static short LUCENE_REINDEX_ENABLED_VERSION_ORDINAL = KnownVersion.CURRENT_ORDINAL;
 
   public LuceneServiceImpl() {}
 
@@ -174,10 +177,10 @@ public class LuceneServiceImpl implements InternalLuceneService {
   }
 
   public static String getUniqueIndexName(String indexName, String regionPath) {
-    if (!regionPath.startsWith("/")) {
-      regionPath = "/" + regionPath;
+    if (!regionPath.startsWith(SEPARATOR)) {
+      regionPath = SEPARATOR + regionPath;
     }
-    return indexName + "#" + regionPath.replace('/', '_');
+    return indexName + "#" + regionPath.replace(SEPARATOR_CHAR, '_');
   }
 
   public static String getUniqueIndexRegionName(String indexName, String regionPath,
@@ -202,8 +205,8 @@ public class LuceneServiceImpl implements InternalLuceneService {
       final Map<String, Analyzer> fieldAnalyzers, final LuceneSerializer serializer,
       boolean allowOnExistingRegion, final String... fields) {
 
-    if (!regionPath.startsWith("/")) {
-      regionPath = "/" + regionPath;
+    if (!regionPath.startsWith(SEPARATOR)) {
+      regionPath = SEPARATOR + regionPath;
     }
 
     // We must always register the index (this is where IndexAlreadyExistsException is detected)
@@ -213,7 +216,7 @@ public class LuceneServiceImpl implements InternalLuceneService {
       // If the region does not yet exist, install LuceneRegionListener and return
       PartitionedRegion region = (PartitionedRegion) cache.getRegion(regionPath);
       if (region == null) {
-        LuceneRegionListener regionListener = new LuceneRegionListener(this, cache, indexName,
+        LuceneRegionListener regionListener = new LuceneRegionListener(this, indexName,
             regionPath, fields, analyzer, fieldAnalyzers, serializer);
         cache.addRegionListener(regionListener);
         return;
@@ -237,11 +240,11 @@ public class LuceneServiceImpl implements InternalLuceneService {
 
   protected void validateAllMembersAreTheSameVersion(PartitionedRegion region) {
     Set<InternalDistributedMember> remoteMembers = region.getRegionAdvisor().adviseAllPRNodes();
-    Version localVersion =
-        cache.getDistributionManager().getDistributionManagerId().getVersionObject();
+    final Version localVersion =
+        cache.getDistributionManager().getDistributionManagerId().getVersion();
     if (!remoteMembers.isEmpty()) {
       for (InternalDistributedMember remoteMember : remoteMembers) {
-        if (!remoteMember.getVersionObject().equals(localVersion)) {
+        if (!remoteMember.getVersion().equals(localVersion)) {
           throw new IllegalStateException(
               "The lucene index cannot be created on a existing region if all members hosting the region : "
                   + region.getFullPath() + ", are not the same Apache Geode version ");
@@ -449,8 +452,8 @@ public class LuceneServiceImpl implements InternalLuceneService {
   }
 
   protected void destroyIndex(String indexName, String regionPath, boolean initiator) {
-    if (!regionPath.startsWith("/")) {
-      regionPath = "/" + regionPath;
+    if (!regionPath.startsWith(SEPARATOR)) {
+      regionPath = SEPARATOR + regionPath;
     }
     LuceneIndexImpl indexImpl = (LuceneIndexImpl) getIndex(indexName, regionPath);
     if (indexImpl == null) {
@@ -464,8 +467,8 @@ public class LuceneServiceImpl implements InternalLuceneService {
   }
 
   public void destroyDefinedIndex(String indexName, String regionPath) {
-    if (!regionPath.startsWith("/")) {
-      regionPath = "/" + regionPath;
+    if (!regionPath.startsWith(SEPARATOR)) {
+      regionPath = SEPARATOR + regionPath;
     }
     String uniqueIndexName = LuceneServiceImpl.getUniqueIndexName(indexName, regionPath);
     if (definedIndexMap.containsKey(uniqueIndexName)) {
@@ -484,8 +487,8 @@ public class LuceneServiceImpl implements InternalLuceneService {
   }
 
   protected RegionListener getRegionListener(String indexName, String regionPath) {
-    if (!regionPath.startsWith("/")) {
-      regionPath = "/" + regionPath;
+    if (!regionPath.startsWith(SEPARATOR)) {
+      regionPath = SEPARATOR + regionPath;
     }
     RegionListener rl = null;
     for (RegionListener listener : cache.getRegionListeners()) {
@@ -506,8 +509,8 @@ public class LuceneServiceImpl implements InternalLuceneService {
   }
 
   protected void destroyIndexes(String regionPath, boolean initiator) {
-    if (!regionPath.startsWith("/")) {
-      regionPath = "/" + regionPath;
+    if (!regionPath.startsWith(SEPARATOR)) {
+      regionPath = SEPARATOR + regionPath;
     }
     List<LuceneIndexImpl> indexesToDestroy = new ArrayList<>();
     for (LuceneIndex index : getAllIndexes()) {
@@ -533,8 +536,8 @@ public class LuceneServiceImpl implements InternalLuceneService {
   }
 
   public void destroyDefinedIndexes(String regionPath) {
-    if (!regionPath.startsWith("/")) {
-      regionPath = "/" + regionPath;
+    if (!regionPath.startsWith(SEPARATOR)) {
+      regionPath = SEPARATOR + regionPath;
     }
 
     // Iterate the defined indexes to get the ones for the regionPath
@@ -723,7 +726,7 @@ public class LuceneServiceImpl implements InternalLuceneService {
   private boolean isAnyRemoteMemberVersionLessThanGeode1_7_0(
       Set<InternalDistributedMember> remoteMembers) {
     for (InternalDistributedMember remoteMember : remoteMembers) {
-      if (remoteMember.getVersionObject().ordinal() < Version.GEODE_1_7_0.ordinal()) {
+      if (remoteMember.getVersion().ordinal() < KnownVersion.GEODE_1_7_0.ordinal()) {
         return true;
       }
     }

@@ -15,6 +15,7 @@
 
 package org.apache.geode.management.internal.cli.commands;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.After;
@@ -50,13 +51,13 @@ public class PutCommandIntegrationTest {
 
 
   @After
-  public void after() throws Exception {
+  public void after() {
     // clear the region after each test
     server.getCache().getRegion("testRegion").clear();
   }
 
   @Test
-  public void putWithoutSlash() throws Exception {
+  public void putWithoutSlash() {
     gfsh.executeAndAssertThat("put --region=testRegion --key=key1 --value=value1")
         .statusIsSuccess();
     assertThat(server.getCache().getRegion("testRegion").get("key1")).isEqualTo("value1");
@@ -64,74 +65,81 @@ public class PutCommandIntegrationTest {
 
 
   @Test
-  public void putWithSlash() throws Exception {
-    gfsh.executeAndAssertThat("put --region=/testRegion --key=key1 --value=value1")
+  @SuppressWarnings("deprecation")
+  public void putWithSlash() {
+    gfsh.executeAndAssertThat("put --region=" + SEPARATOR + "testRegion --key=key1 --value=value1")
         .statusIsSuccess().containsKeyValuePair("Result", "true");
     assertThat(server.getCache().getRegion("testRegion").get("key1")).isEqualTo("value1");
   }
 
   @Test
-  public void putIfNotExists() throws Exception {
-    gfsh.executeAndAssertThat("put --region=/testRegion --key=key1 --value=value1")
+  @SuppressWarnings("deprecation")
+  public void putIfNotExists() {
+    gfsh.executeAndAssertThat("put --region=" + SEPARATOR + "testRegion --key=key1 --value=value1")
         .statusIsSuccess().containsKeyValuePair("Result", "true");
     assertThat(server.getCache().getRegion("testRegion").get("key1")).isEqualTo("value1");
 
     // if unspecified if-not-exits=false, so override
-    gfsh.executeAndAssertThat("put --region=/testRegion --key=key1 --value=value2")
+    gfsh.executeAndAssertThat("put --region=" + SEPARATOR + "testRegion --key=key1 --value=value2")
         .statusIsSuccess().containsKeyValuePair("Result", "true");
     assertThat(server.getCache().getRegion("testRegion").get("key1")).isEqualTo("value2");
 
     // if specified then true, so skip it
-    gfsh.executeAndAssertThat("put --region=/testRegion --key=key1 --value=value3 --if-not-exists")
+    gfsh.executeAndAssertThat(
+        "put --region=" + SEPARATOR + "testRegion --key=key1 --value=value3 --if-not-exists")
         .statusIsSuccess().containsKeyValuePair("Result", "true");
     assertThat(server.getCache().getRegion("testRegion").get("key1")).isEqualTo("value2");
 
     // if specified and set to false then honor it
     gfsh.executeAndAssertThat(
-        "put --region=/testRegion --key=key1 --value=value3 --if-not-exists=false")
+        "put --region=" + SEPARATOR + "testRegion --key=key1 --value=value3 --if-not-exists=false")
         .statusIsSuccess().containsKeyValuePair("Result", "true");
     assertThat(server.getCache().getRegion("testRegion").get("key1")).isEqualTo("value3");
   }
 
   @Test
+  @SuppressWarnings("deprecation")
   // Bug : 51587 : GFSH command failing when ; is present in either key or value in put operation
-  public void putWithSemicolon() throws Exception {
-    gfsh.executeAndAssertThat("put --region=/testRegion --key=key1;key1 --value=value1;value1")
+  public void putWithSemicolon() {
+    gfsh.executeAndAssertThat(
+        "put --region=" + SEPARATOR + "testRegion --key=key1;key1 --value=value1;value1")
         .statusIsSuccess().containsKeyValuePair("Result", "true");
     assertThat(server.getCache().getRegion("testRegion").get("key1;key1"))
         .isEqualTo("value1;value1");
   }
 
+  @SuppressWarnings("deprecation")
   @Test
-  public void putIfAbsent() throws Exception {
+  public void putIfAbsent() {
     // skip-if-exists is deprecated.
     gfsh.executeAndAssertThat("help put").statusIsSuccess()
         .containsOutput("(Deprecated: Use --if-not-exists).");
 
-    gfsh.executeAndAssertThat("put --region=/testRegion --key=key1 --value=value1")
+    gfsh.executeAndAssertThat("put --region=" + SEPARATOR + "testRegion --key=key1 --value=value1")
         .statusIsSuccess()
         .hasDataSection(DataCommandResult.DATA_INFO_SECTION).hasContent()
         .containsEntry("Result", "true");
 
     // if unspecified then override
-    gfsh.executeAndAssertThat("put --region=/testRegion --key=key1 --value=value2")
+    gfsh.executeAndAssertThat("put --region=" + SEPARATOR + "testRegion --key=key1 --value=value2")
         .statusIsSuccess();
     assertThat(server.getCache().getRegion("testRegion").get("key1")).isEqualTo("value2");
 
     // if specified then don't override
-    gfsh.executeAndAssertThat("put --region=/testRegion --key=key1 --value=value3 --skip-if-exists")
+    gfsh.executeAndAssertThat(
+        "put --region=" + SEPARATOR + "testRegion --key=key1 --value=value3 --skip-if-exists")
         .statusIsSuccess().containsKeyValuePair("Result", "true");
     assertThat(server.getCache().getRegion("testRegion").get("key1")).isEqualTo("value2");
 
     // if specified and set to false then honor it
     gfsh.executeAndAssertThat(
-        "put --region=/testRegion --key=key1 --value=value3 --skip-if-exists=false")
+        "put --region=" + SEPARATOR + "testRegion --key=key1 --value=value3 --skip-if-exists=false")
         .statusIsSuccess().containsKeyValuePair("Result", "true");
     assertThat(server.getCache().getRegion("testRegion").get("key1")).isEqualTo("value3");
   }
 
   @Test
-  public void putWithSimpleJson() throws Exception {
+  public void putWithSimpleJson() {
     gfsh.executeAndAssertThat(
         "put --region=testRegion --key=('key':'1') --value=('value':'1') " + "--key-class="
             + Key.class.getCanonicalName() + " --value-class=" + Value.class.getCanonicalName())
@@ -141,7 +149,7 @@ public class PutCommandIntegrationTest {
   }
 
   @Test
-  public void putWithCorrectJsonSyntax() throws Exception {
+  public void putWithCorrectJsonSyntax() {
     gfsh.executeAndAssertThat(
         "put --region=testRegion --key={\"key\":\"1\"} --value={\"value\":\"1\"} " + "--key-class="
             + Key.class.getCanonicalName() + " --value-class=" + Value.class.getCanonicalName())
@@ -151,7 +159,7 @@ public class PutCommandIntegrationTest {
   }
 
   @Test
-  public void putWithInvalidJson() throws Exception {
+  public void putWithInvalidJson() {
     gfsh.executeAndAssertThat(
         "put --region=testRegion --key=('key':'1') --value=(value:2) " + "--key-class="
             + Key.class.getCanonicalName() + " --value-class=" + Value.class.getCanonicalName())
@@ -159,7 +167,7 @@ public class PutCommandIntegrationTest {
   }
 
   @Test
-  public void putWithComplicatedJson() throws Exception {
+  public void putWithComplicatedJson() {
     String keyJson = "('id':'1','name':'name1')";
     String stateJson =
         "('stateName':'State1','population':10,'capitalCity':'capital1','areaInSqKm':100)";

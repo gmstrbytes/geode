@@ -14,11 +14,12 @@
  */
 package org.apache.geode.connectors.jdbc.internal.xml;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.connectors.jdbc.internal.xml.ElementType.JDBC_MAPPING;
 import static org.apache.geode.connectors.jdbc.internal.xml.JdbcConnectorServiceXmlParser.NAMESPACE;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verifyZeroInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.Stack;
@@ -36,15 +37,15 @@ public class JdbcConnectorServiceXmlParserTest {
 
   private Attributes attributes;
   private RegionCreation regionCreation;
-  private ExtensionPoint<Region<?, ?>> extensionPoint;
   private Stack<Object> stack;
 
+  @SuppressWarnings("unchecked")
   @Before
   public void setup() {
     attributes = mock(Attributes.class);
     regionCreation = mock(RegionCreation.class);
-    when(regionCreation.getFullPath()).thenReturn("/region");
-    extensionPoint = mock(ExtensionPoint.class);
+    when(regionCreation.getFullPath()).thenReturn(SEPARATOR + "region");
+    ExtensionPoint<Region<?, ?>> extensionPoint = mock(ExtensionPoint.class);
     when(regionCreation.getExtensionPoint()).thenReturn(extensionPoint);
     stack = new Stack<>();
   }
@@ -87,7 +88,7 @@ public class JdbcConnectorServiceXmlParserTest {
     parser.endElement(NAMESPACE, JDBC_MAPPING.getTypeName(), null);
 
     assertThat(stack.pop()).isEqualTo(regionCreation);
-    verifyZeroInteractions(regionMapping);
+    verifyNoMoreInteractions(regionMapping);
   }
 
   @Test
@@ -101,6 +102,6 @@ public class JdbcConnectorServiceXmlParserTest {
     parser.endElement("wrongNamespace", JDBC_MAPPING.getTypeName(), null);
 
     assertThat(stack.pop()).isEqualTo(regionMapping);
-    verifyZeroInteractions(regionMapping);
+    verifyNoMoreInteractions(regionMapping);
   }
 }

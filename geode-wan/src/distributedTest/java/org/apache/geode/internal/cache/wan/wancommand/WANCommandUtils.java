@@ -45,13 +45,13 @@ import org.apache.geode.cache.wan.GatewayTransportFilter;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.internal.ServerLocation;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.cache.CacheServerAdvisor;
 import org.apache.geode.internal.cache.CacheServerImpl;
 import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.internal.cache.InternalRegion;
 import org.apache.geode.internal.cache.wan.AbstractGatewaySender;
 import org.apache.geode.internal.cache.wan.parallel.ParallelGatewaySenderQueue;
+import org.apache.geode.internal.membership.utils.AvailablePort;
 import org.apache.geode.management.GatewayReceiverMXBean;
 import org.apache.geode.management.GatewaySenderMXBean;
 import org.apache.geode.management.MemberMXBean;
@@ -149,7 +149,8 @@ public class WANCommandUtils implements Serializable {
       boolean enableBatchConflation, int batchSize, int batchTimeInterval,
       boolean enablePersistence, boolean diskSynchronous, int maxQueueMemory, int alertThreshold,
       int dispatcherThreads, GatewaySender.OrderPolicy orderPolicy,
-      List<String> expectedGatewayEventFilters, List<String> expectedGatewayTransportFilters) {
+      List<String> expectedGatewayEventFilters, List<String> expectedGatewayTransportFilters,
+      boolean groupTransactionEvents) {
 
     GatewaySender sender = ClusterStartupRule.getCache().getGatewaySenders().stream()
         .filter(x -> senderId.equals(x.getId())).findFirst().orElse(null);
@@ -168,6 +169,9 @@ public class WANCommandUtils implements Serializable {
     assertEquals("alertThreshold", alertThreshold, sender.getAlertThreshold());
     assertEquals("dispatcherThreads", dispatcherThreads, sender.getDispatcherThreads());
     assertEquals("orderPolicy", orderPolicy, sender.getOrderPolicy());
+    assertEquals("groupTransactionEvents", groupTransactionEvents,
+        sender.mustGroupTransactionEvents());
+
 
     // verify GatewayEventFilters
     if (expectedGatewayEventFilters != null) {

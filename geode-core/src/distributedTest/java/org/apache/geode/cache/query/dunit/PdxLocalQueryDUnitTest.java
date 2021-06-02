@@ -14,6 +14,7 @@
  */
 package org.apache.geode.cache.query.dunit;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.test.dunit.Assert.assertEquals;
 import static org.apache.geode.test.dunit.Assert.assertTrue;
 import static org.apache.geode.test.dunit.Assert.fail;
@@ -61,7 +62,7 @@ public class PdxLocalQueryDUnitTest extends PDXQueryTestBase {
     final VM server2 = host.getVM(1);
 
     final int numberOfEntries = 10;
-    final String name = "/" + regionName;
+    final String name = SEPARATOR + regionName;
 
     final String[] queries = {"select * from " + name + " where status = 'inactive'",
         "select p from " + name + " p where p.status = 'inactive'",
@@ -125,7 +126,7 @@ public class PdxLocalQueryDUnitTest extends PDXQueryTestBase {
     final VM server2 = host.getVM(1);
 
     final int numberOfEntries = 10;
-    final String name = "/" + regionName;
+    final String name = SEPARATOR + regionName;
 
     final String[] queries = {"select * from " + name + " where position1 = $1",
         "select * from " + name + " where aDay = $1",
@@ -238,8 +239,8 @@ public class PdxLocalQueryDUnitTest extends PDXQueryTestBase {
     final VM client = host.getVM(2);
 
     final int numberOfEntries = 10;
-    final String name = "/" + regionName;
-    final String name2 = "/" + regionName2;
+    final String name = SEPARATOR + regionName;
+    final String name2 = SEPARATOR + regionName2;
     final String[] queries = {"select * from " + name + " where position1 = $1",
         "select * from " + name + " where aDay = $1",
         "select distinct * from " + name + " p where p.status = 'inactive'", // numberOfEntries
@@ -294,7 +295,7 @@ public class PdxLocalQueryDUnitTest extends PDXQueryTestBase {
         }
 
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;
@@ -593,7 +594,7 @@ public class PdxLocalQueryDUnitTest extends PDXQueryTestBase {
     final VM client = host.getVM(2);
 
     final int numberOfEntries = 10;
-    final String name = "/" + regionName;
+    final String name = SEPARATOR + regionName;
     final String[] queries = {"select * from " + name + " where position1 = $1",
         "select * from " + name + " where aDay = $1",
         "select distinct * from " + name + " p where p.status = 'inactive'", // numberOfEntries
@@ -636,7 +637,7 @@ public class PdxLocalQueryDUnitTest extends PDXQueryTestBase {
           r1.put("key-" + i, new PortfolioPdx(i));
         }
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;
@@ -649,7 +650,7 @@ public class PdxLocalQueryDUnitTest extends PDXQueryTestBase {
       public Object call() throws Exception {
         Region r1 = getCache().createRegionFactory(RegionShortcut.PARTITION).create(regionName);
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;

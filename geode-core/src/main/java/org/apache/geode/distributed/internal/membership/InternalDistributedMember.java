@@ -33,8 +33,6 @@ import org.jgroups.util.UUID;
 import org.apache.geode.InternalGemFireError;
 import org.apache.geode.annotations.Immutable;
 import org.apache.geode.annotations.VisibleForTesting;
-import org.apache.geode.annotations.internal.MutableForTesting;
-import org.apache.geode.cache.client.ServerConnectivityException;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.DurableClientAttributes;
 import org.apache.geode.distributed.Role;
@@ -49,6 +47,7 @@ import org.apache.geode.internal.inet.LocalHostUtil;
 import org.apache.geode.internal.net.SocketCreator;
 import org.apache.geode.internal.serialization.DataSerializableFixedID;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
 import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.logging.internal.OSProcess;
@@ -60,18 +59,17 @@ public class InternalDistributedMember
     implements DistributedMember, Externalizable, ProfileId, VersionSource<DistributedMember>,
     MemberIdentifier, DataSerializableFixedID {
   private static final long serialVersionUID = -2785249969777296507L;
+  public static final int DEFAULT_DURABLE_CLIENT_TIMEOUT = 300;
 
   @Immutable
   public static final MemberIdentifierFactoryImpl MEMBER_IDENTIFIER_FACTORY =
       new MemberIdentifierFactoryImpl();
 
-  /** Retrieves an InetAddress given the provided hostname */
-  @MutableForTesting
-  protected static HostnameResolver hostnameResolver =
-      (location) -> InetAddress.getByName(location.getHostName());
   private final MemberIdentifier memberIdentifier;
 
-  /** lock object used when getting/setting roles/rolesSet fields */
+  @VisibleForTesting
+  // Cached to prevent creating a new instance every single time.
+  protected volatile DurableClientAttributes durableClientAttributes;
 
   // Used only by deserialization
   public InternalDistributedMember() {
@@ -141,7 +139,8 @@ public class InternalDistributedMember
 
   /**
    * Creates a new InternalDistributedMember for use in notifying listeners in client
-   * caches. The version information in the ID is set to Version.CURRENT.
+   * caches. The version information in the ID is set to Version.CURRENT and the host name
+   * is left unresolved (DistributedMember doesn't expose the InetAddress).
    *
    * @param location the coordinates of the server
    */
@@ -149,21 +148,11 @@ public class InternalDistributedMember
   public InternalDistributedMember(ServerLocation location) {
     memberIdentifier =
         MEMBER_IDENTIFIER_FACTORY.create(
-            MemberDataBuilder.newBuilder(getInetAddress(location), location.getHostName())
+            MemberDataBuilder.newBuilderForLocalHost(location.getHostName())
                 .setMembershipPort(location.getPort())
                 .setNetworkPartitionDetectionEnabled(false)
                 .setPreferredForCoordinator(true)
                 .build());
-  }
-
-  private static InetAddress getInetAddress(ServerLocation location) {
-    final InetAddress addr;
-    try {
-      addr = hostnameResolver.getInetAddress(location);
-    } catch (UnknownHostException e) {
-      throw new ServerConnectivityException("Unable to resolve server location " + location, e);
-    }
-    return addr;
   }
 
   /**
@@ -184,10 +173,10 @@ public class InternalDistributedMember
    * @param groups the server groups / roles
    * @param attr durable client attributes, if any
    *
-   * @throws UnknownHostException if the given hostname cannot be resolved
    */
   public InternalDistributedMember(String host, int p, String n, String u, int vmKind,
-      String[] groups, DurableClientAttributes attr) throws UnknownHostException {
+      String[] groups, DurableClientAttributes attr) {
+    durableClientAttributes = attr;
     memberIdentifier =
         MEMBER_IDENTIFIER_FACTORY.create(createMemberData(host, p, n, vmKind, groups, attr, u));
 
@@ -262,21 +251,25 @@ public class InternalDistributedMember
     return mbr;
   }
 
-  public static void setHostnameResolver(final HostnameResolver hostnameResolver) {
-    InternalDistributedMember.hostnameResolver = hostnameResolver;
-  }
-
   /**
    * Returns this client member's durable attributes or null if no durable attributes were created.
    */
   @Override
   public DurableClientAttributes getDurableClientAttributes() {
     assert !this.isPartial();
-    String durableId = memberIdentifier.getDurableId();
-    if (durableId == null || durableId.isEmpty()) {
-      return new DurableClientAttributes("", 300);
+
+    if (durableClientAttributes == null) {
+      String durableId = memberIdentifier.getDurableId();
+
+      if (durableId == null || durableId.isEmpty()) {
+        durableClientAttributes = new DurableClientAttributes("", DEFAULT_DURABLE_CLIENT_TIMEOUT);
+      } else {
+        durableClientAttributes =
+            new DurableClientAttributes(durableId, memberIdentifier.getDurableTimeout());
+      }
     }
-    return new DurableClientAttributes(durableId, memberIdentifier.getDurableTimeout());
+
+    return durableClientAttributes;
   }
 
   /**
@@ -319,7 +312,7 @@ public class InternalDistributedMember
     memberIdentifier.setProcessId(OSProcess.getId());
     try {
       if (SocketCreator.resolve_dns) {
-        setHostName(SocketCreator.getHostName(LocalHostUtil.getLocalHost()));
+        setHostName(LocalHostUtil.getLocalHostName());
       } else {
         setHostName(LocalHostUtil.getLocalHost().getHostAddress());
       }
@@ -336,16 +329,19 @@ public class InternalDistributedMember
   @Override
   public void setDurableTimeout(int newValue) {
     memberIdentifier.setDurableTimeout(newValue);
+    durableClientAttributes = null;
   }
 
   @Override
   public void setDurableId(String id) {
     memberIdentifier.setDurableId(id);
+    durableClientAttributes = null;
   }
 
   @Override
   public void setMemberData(MemberData m) {
     memberIdentifier.setMemberData(m);
+    durableClientAttributes = null;
   }
 
   @Override
@@ -457,6 +453,7 @@ public class InternalDistributedMember
   @Override
   public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
     memberIdentifier.readExternal(in);
+    durableClientAttributes = null;
   }
 
   @Override
@@ -483,6 +480,7 @@ public class InternalDistributedMember
       DeserializationContext context)
       throws IOException, ClassNotFoundException {
     memberIdentifier.fromData(in, context);
+    durableClientAttributes = null;
   }
 
   @Override
@@ -490,6 +488,7 @@ public class InternalDistributedMember
       DeserializationContext context)
       throws IOException, ClassNotFoundException {
     memberIdentifier.fromDataPre_GFE_9_0_0_0(in, context);
+    durableClientAttributes = null;
   }
 
   @Override
@@ -497,6 +496,7 @@ public class InternalDistributedMember
       DeserializationContext context)
       throws IOException, ClassNotFoundException {
     memberIdentifier.fromDataPre_GFE_7_1_0_0(in, context);
+    durableClientAttributes = null;
   }
 
   @Override
@@ -545,17 +545,17 @@ public class InternalDistributedMember
     return memberIdentifier.getUniqueId();
   }
 
-  public void setVersionObjectForTest(Version v) {
-    memberIdentifier.setVersionObjectForTest(v);
+  public void setVersionForTest(Version v) {
+    memberIdentifier.setVersionForTest(v);
   }
 
   @Override
-  public Version getVersionObject() {
-    return memberIdentifier.getVersionObject();
+  public Version getVersion() {
+    return memberIdentifier.getVersion();
   }
 
   @Override
-  public Version[] getSerializationVersions() {
+  public KnownVersion[] getSerializationVersions() {
     return memberIdentifier.getSerializationVersions();
   }
 

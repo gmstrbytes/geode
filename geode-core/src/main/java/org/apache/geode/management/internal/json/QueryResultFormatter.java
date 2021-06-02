@@ -21,6 +21,7 @@ import java.io.StringWriter;
 import java.io.UncheckedIOException;
 import java.io.Writer;
 import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -37,10 +38,12 @@ import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.jsontype.TypeSerializer;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.BeanSerializerModifier;
+import com.fasterxml.jackson.databind.ser.ResolvableSerializer;
 import com.fasterxml.jackson.databind.type.ArrayType;
 
-public class QueryResultFormatter extends AbstractJSONFormatter {
+import org.apache.geode.internal.logging.DateFormatter;
 
+public class QueryResultFormatter extends AbstractJSONFormatter {
   /**
    * map contains the named objects to be serialized
    */
@@ -74,8 +77,10 @@ public class QueryResultFormatter extends AbstractJSONFormatter {
       TypeSerializationEnforcerModule typeModule =
           new TypeSerializationEnforcerModule(nonOverridableSerializers);
 
-      // Consistency: use the default date format java.sql.Date as well as java.util.Date.
+      // Consistency: use the same date format java.sql.Date as well as java.util.Date.
       mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+      SimpleDateFormat sdf = DateFormatter.createLocalizedDateFormat();
+      mapper.setDateFormat(sdf);
       typeModule.addSerializer(java.sql.Date.class, new SqlDateSerializer(mapper.getDateFormat()));
 
       // Register module
@@ -211,6 +216,9 @@ public class QueryResultFormatter extends AbstractJSONFormatter {
       } else {
         gen.writeStartArray();
         gen.writeString(value.getClass().getCanonicalName());
+        if (defaultSerializer instanceof ResolvableSerializer) {
+          ((ResolvableSerializer) defaultSerializer).resolve(serializers);
+        }
         defaultSerializer.serialize(value, gen, serializers);
         gen.writeEndArray();
       }

@@ -26,11 +26,13 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.CopyHelper;
 import org.apache.geode.DataSerializer;
+import org.apache.geode.Delta;
 import org.apache.geode.DeltaSerializationException;
 import org.apache.geode.GemFireIOException;
 import org.apache.geode.InvalidDeltaException;
 import org.apache.geode.SerializationException;
 import org.apache.geode.SystemFailure;
+import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.cache.EntryNotFoundException;
 import org.apache.geode.cache.EntryOperation;
 import org.apache.geode.cache.Operation;
@@ -77,8 +79,8 @@ import org.apache.geode.internal.offheap.annotations.Unretained;
 import org.apache.geode.internal.serialization.ByteArrayDataInput;
 import org.apache.geode.internal.serialization.DataSerializableFixedID;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
-import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.internal.size.Sizeable;
 import org.apache.geode.internal.util.ArrayUtils;
 import org.apache.geode.internal.util.BlobHelper;
@@ -262,7 +264,6 @@ public class EntryEventImpl implements InternalEntryEvent, InternalCacheEvent,
   protected EntryEventImpl(final InternalRegion region, Operation op, Object key,
       @Retained(ENTRY_EVENT_NEW_VALUE) Object newVal, Object callbackArgument, boolean originRemote,
       DistributedMember distributedMember, boolean generateCallbacks, boolean initializeId) {
-
     this.region = region;
     InternalDistributedSystem ds =
         (InternalDistributedSystem) region.getCache().getDistributedSystem();
@@ -452,6 +453,7 @@ public class EntryEventImpl implements InternalEntryEvent, InternalCacheEvent,
         e = EntryEventImpl.create(region, entryOp, entryKey, entryNewValue,
             event.getCallbackArgument(), false, region.getMyId(), event.isGenerateCallbacks());
       }
+      e.setPossibleDuplicate(event.isPossibleDuplicate());
 
     } else {
       e = EntryEventImpl.create(region, entryOp, entryKey, entryNewValue, null, false,
@@ -478,6 +480,7 @@ public class EntryEventImpl implements InternalEntryEvent, InternalCacheEvent,
         e = EntryEventImpl.create(region, entryOp, entryKey, null, event.getCallbackArgument(),
             false, region.getMyId(), event.isGenerateCallbacks());
       }
+      e.setPossibleDuplicate(event.isPossibleDuplicate());
 
     } else {
       e = EntryEventImpl.create(region, entryOp, entryKey, null, null, false, region.getMyId(),
@@ -1521,7 +1524,7 @@ public class EntryEventImpl implements InternalEntryEvent, InternalCacheEvent,
     if (obj instanceof byte[] || obj == null || obj instanceof CachedDeserializable
         || obj == Token.NOT_AVAILABLE || Token.isInvalidOrRemoved(obj)
         // don't serialize delta object already serialized
-        || obj instanceof org.apache.geode.Delta) { // internal delta
+        || obj instanceof Delta) { // internal delta
       return obj;
     }
     final CachedDeserializable cd;
@@ -1713,10 +1716,10 @@ public class EntryEventImpl implements InternalEntryEvent, InternalCacheEvent,
     // This is a horrible hack, but we need to get the size of the object
     // When we store an entry. This code is only used when we do a put
     // in the primary.
-    if (v instanceof org.apache.geode.Delta && getRegion().isUsedForPartitionedRegionBucket()) {
+    if (v instanceof Delta && getRegion().isUsedForPartitionedRegionBucket()) {
       int vSize;
       Object ov = basicGetOldValue();
-      if (ov instanceof CachedDeserializable && !GemFireCacheImpl.DELTAS_RECALCULATE_SIZE) {
+      if (ov instanceof CachedDeserializable && !(shouldRecalculateSize((Delta) v))) {
         vSize = ((CachedDeserializable) ov).getValueSizeInBytes();
       } else {
         vSize = CachedDeserializableFactory.calcMemSize(v, getRegion().getObjectSizer(), false);
@@ -1833,10 +1836,9 @@ public class EntryEventImpl implements InternalEntryEvent, InternalCacheEvent,
         }
       }
       boolean deltaBytesApplied = false;
-      try {
+      try (ByteArrayDataInput in = new ByteArrayDataInput(getDeltaBytes())) {
         long start = getRegion().getCachePerfStats().getTime();
-        ((org.apache.geode.Delta) value)
-            .fromDelta(new ByteArrayDataInput(getDeltaBytes()));
+        ((Delta) value).fromDelta(in);
         getRegion().getCachePerfStats().endDeltaUpdate(start);
         deltaBytesApplied = true;
       } catch (RuntimeException rte) {
@@ -1859,7 +1861,7 @@ public class EntryEventImpl implements InternalEntryEvent, InternalCacheEvent,
       if (wasCD) {
         CachedDeserializable old = (CachedDeserializable) oldValueInVM;
         int valueSize;
-        if (GemFireCacheImpl.DELTAS_RECALCULATE_SIZE) {
+        if (shouldRecalculateSize((Delta) value)) {
           valueSize =
               CachedDeserializableFactory.calcMemSize(value, getRegion().getObjectSizer(), false);
         } else {
@@ -1877,6 +1879,12 @@ public class EntryEventImpl implements InternalEntryEvent, InternalCacheEvent,
           "Cache encountered replay of event containing delta bytes for key "
               + this.keyInfo.getKey());
     }
+  }
+
+  @VisibleForTesting
+  protected static boolean shouldRecalculateSize(Delta value) {
+    return GemFireCacheImpl.DELTAS_RECALCULATE_SIZE
+        || value.getForceRecalculateSize();
   }
 
   void setTXEntryOldValue(Object oldVal, boolean mustBeAvailable) {
@@ -2032,7 +2040,7 @@ public class EntryEventImpl implements InternalEntryEvent, InternalCacheEvent,
     return deserialize(bytes, null, null);
   }
 
-  public static Object deserialize(byte[] bytes, Version version, ByteArrayDataInput in) {
+  public static Object deserialize(byte[] bytes, KnownVersion version, ByteArrayDataInput in) {
     if (bytes == null)
       return null;
     try {
@@ -2084,7 +2092,7 @@ public class EntryEventImpl implements InternalEntryEvent, InternalCacheEvent,
    *
    * @throws IllegalArgumentException If <code>obj</code> should not be serialized
    */
-  public static byte[] serialize(Object obj, Version version) {
+  public static byte[] serialize(Object obj, KnownVersion version) {
     if (obj == null || obj == Token.NOT_AVAILABLE || Token.isInvalidOrRemoved(obj))
       throw new IllegalArgumentException(
           String.format("Must not serialize %s in this context.",
@@ -2114,10 +2122,10 @@ public class EntryEventImpl implements InternalEntryEvent, InternalCacheEvent,
     if (obj == null || obj == Token.NOT_AVAILABLE || Token.isInvalidOrRemoved(obj))
       throw new IllegalArgumentException(
           String.format("Must not serialize %s in this context.", obj));
+    HeapDataOutputStream hdos = null;
     try {
-      HeapDataOutputStream hdos = null;
       if (wrapper.getBytes().length < 32) {
-        hdos = new HeapDataOutputStream(Version.CURRENT);
+        hdos = new HeapDataOutputStream(KnownVersion.CURRENT);
       } else {
         hdos = new HeapDataOutputStream(wrapper.getBytes());
       }
@@ -2129,6 +2137,10 @@ public class EntryEventImpl implements InternalEntryEvent, InternalCacheEvent,
           "An IOException was thrown while serializing.");
       e2.initCause(e);
       throw e2;
+    } finally {
+      if (hdos != null) {
+        hdos.close();
+      }
     }
   }
 
@@ -2219,7 +2231,7 @@ public class EntryEventImpl implements InternalEntryEvent, InternalCacheEvent,
       buf.append(";inhibitDistribution");
     }
     if (this.tailKey != -1) {
-      buf.append(";tailKey=" + tailKey);
+      buf.append(";tailKey=").append(tailKey);
     }
     buf.append("]");
     return buf.toString();
@@ -2610,7 +2622,7 @@ public class EntryEventImpl implements InternalEntryEvent, InternalCacheEvent,
   }
 
   @Override
-  public Version[] getSerializationVersions() {
+  public KnownVersion[] getSerializationVersions() {
     return null;
   }
 

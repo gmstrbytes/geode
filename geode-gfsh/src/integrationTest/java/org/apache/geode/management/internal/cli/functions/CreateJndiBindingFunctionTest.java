@@ -41,7 +41,7 @@ import org.apache.geode.distributed.DistributedSystem;
 import org.apache.geode.internal.datasource.ConfigProperty;
 import org.apache.geode.internal.jndi.JNDIInvoker;
 import org.apache.geode.internal.logging.LocalLogWriter;
-import org.apache.geode.internal.util.DriverJarUtil;
+import org.apache.geode.internal.util.DriverJarUtils;
 import org.apache.geode.management.internal.cli.commands.CreateJndiBindingCommand;
 import org.apache.geode.management.internal.functions.CliFunctionResult;
 import org.apache.geode.test.junit.categories.GfshTest;
@@ -51,15 +51,15 @@ public class CreateJndiBindingFunctionTest {
 
   private CreateJndiBindingFunction createBindingFunction;
   private FunctionContext<Object[]> context;
-  private DistributedSystem distributedSystem;
-  private ResultSender resultSender;
+  private ResultSender<Object> resultSender;
   private ArgumentCaptor<CliFunctionResult> resultCaptor;
 
   @Before
+  @SuppressWarnings({"unchecked", "deprecation"})
   public void setup() {
     createBindingFunction = spy(new CreateJndiBindingFunction());
     context = mock(FunctionContext.class);
-    distributedSystem = mock(DistributedSystem.class);
+    DistributedSystem distributedSystem = mock(DistributedSystem.class);
     resultSender = mock(ResultSender.class);
     resultCaptor = ArgumentCaptor.forClass(CliFunctionResult.class);
 
@@ -125,7 +125,7 @@ public class CreateJndiBindingFunctionTest {
 
   @Test
   public void createDataSourceIsSuccessfulWithJarSpecified() throws Exception {
-    DriverJarUtil driverJarUtil = mock(DriverJarUtil.class);
+    DriverJarUtils driverJarUtils = mock(DriverJarUtils.class);
     JndiBindingsType.JndiBinding config = spy(new JndiBindingsType.JndiBinding());
     final String NAME = "jndi1";
     final String MEMBER = "mock-member";
@@ -138,7 +138,7 @@ public class CreateJndiBindingFunctionTest {
     when(context.getArguments()).thenReturn(arguments);
     when(context.getMemberName()).thenReturn(MEMBER);
     when(context.getResultSender()).thenReturn(resultSender);
-    doReturn(driverJarUtil).when(createBindingFunction).getDriverJarUtil();
+    doReturn(driverJarUtils).when(createBindingFunction).getDriverJarUtil();
 
     createBindingFunction.execute(context);
 

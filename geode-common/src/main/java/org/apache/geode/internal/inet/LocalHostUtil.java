@@ -14,16 +14,22 @@
  */
 package org.apache.geode.internal.inet;
 
+import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.apache.geode.internal.utils.Retry.tryFor;
+
 import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
 import java.net.SocketException;
 import java.net.UnknownHostException;
 import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.Hashtable;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.TimeoutException;
 
 import javax.naming.Context;
 import javax.naming.NamingEnumeration;
@@ -54,18 +60,26 @@ public class LocalHostUtil {
       Boolean.getBoolean(USE_LINK_LOCAL_ADDRESSES_PROPERTY);
 
   /**
-   * we cache localHost to avoid bug #40619, access-violation in native code
-   */
-  private static final InetAddress localHost;
-
-  /**
    * all classes should use this variable to determine whether to use IPv4 or IPv6 addresses
    */
   @MakeNotStatic
   private static boolean useIPv6Addresses = !Boolean.getBoolean("java.net.preferIPv4Stack")
       && Boolean.getBoolean("java.net.preferIPv6Addresses");
 
-  static {
+  /**
+   * Resolves local host. Will retry if resolution fails.
+   *
+   * @return local host if resolved otherwise null.
+   */
+  private static InetAddress tryToResolveLocalHost() {
+    try {
+      return tryFor(60, SECONDS, 1, SECONDS, LocalHostUtil::resolveLocalHost, Objects::nonNull);
+    } catch (TimeoutException | InterruptedException ignored) {
+    }
+    return null;
+  }
+
+  private static InetAddress resolveLocalHost() {
     InetAddress inetAddress = null;
     try {
       inetAddress = InetAddress.getByAddress(InetAddress.getLocalHost().getAddress());
@@ -114,9 +128,13 @@ public class LocalHostUtil {
       }
     } catch (UnknownHostException ignored) {
     }
-    localHost = inetAddress;
+    return inetAddress;
   }
 
+  /**
+   * Cache local host to avoid lookup costs.
+   */
+  private static final InetAddress localHost = tryToResolveLocalHost();
 
   /**
    * returns a set of the non-loopback InetAddresses for this machine
@@ -217,6 +235,14 @@ public class LocalHostUtil {
   }
 
   /**
+   * Returns the special address that can be used to bind to all local addresses.
+   * In most cases this will be "0.0.0.0".
+   */
+  public static InetAddress getAnyLocalAddress() {
+    return new InetSocketAddress(0).getAddress();
+  }
+
+  /**
    * Returns true if host matches the LOCALHOST.
    */
   public static boolean isLocalHost(Object host) {
@@ -225,6 +251,8 @@ public class LocalHostUtil {
       if (isLocalHost(inetAddress)) {
         return true;
       } else if (inetAddress.isLoopbackAddress()) {
+        return true;
+      } else if (inetAddress.isAnyLocalAddress()) {
         return true;
       } else {
         try {
@@ -282,5 +310,18 @@ public class LocalHostUtil {
     } catch (UnknownHostException e) {
       throw new IllegalArgumentException(e.getMessage());
     }
+  }
+
+  public static String getLocalHostName() throws UnknownHostException {
+    return getLocalHost().getHostName();
+  }
+
+  public static String getLocalHostString() throws UnknownHostException {
+    return getLocalHost().toString();
+  }
+
+  public static String getCanonicalLocalHostName() throws UnknownHostException {
+    return getLocalHost().getCanonicalHostName();
+
   }
 }

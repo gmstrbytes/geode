@@ -36,7 +36,7 @@ import org.apache.geode.test.dunit.rules.ClusterStartupRule;
 import org.apache.geode.test.dunit.rules.MemberVM;
 import org.apache.geode.test.junit.rules.GfshCommandRule;
 import org.apache.geode.test.junit.rules.VMProvider;
-import org.apache.geode.util.test.TestUtil;
+import org.apache.geode.test.util.ResourceUtils;
 
 public class CreateDataSourceCommandDUnitTest {
 
@@ -59,16 +59,12 @@ public class CreateDataSourceCommandDUnitTest {
   }
 
   @Test
-  public void testCreateDataSource() throws Exception {
+  public void testCreateDataSource() {
     VMProvider.invokeInEveryMember(
         () -> assertThat(JNDIInvoker.getNoOfAvailableDataSources()).isEqualTo(0), server1, server2);
 
     String URL = "jdbc:derby:memory:newDB;create=true";
-    // create the data-source
-    gfsh.executeAndAssertThat(
-        "create data-source --name=jndi1 --username=myuser --password=mypass --pooled=false --url=\""
-            + URL + "\"")
-        .statusIsSuccess().tableHasColumnOnlyWithValues("Member", "server-1", "server-2");
+    createDataSource(URL);
 
     // verify cluster config is updated
     locator.invoke(() -> {
@@ -102,6 +98,15 @@ public class CreateDataSourceCommandDUnitTest {
     verifyThatNonExistentClassCausesGfshToError();
   }
 
+  @SuppressWarnings("deprecation")
+  private void createDataSource(String URL) {
+    // create the data-source
+    gfsh.executeAndAssertThat(
+        "create data-source --name=jndi1 --username=myuser --password=mypass --pooled=false --url=\""
+            + URL + "\"")
+        .statusIsSuccess().tableHasColumnOnlyWithValues("Member", "server-1", "server-2");
+  }
+
   @Test
   public void testCreateDataSourceWithJarOptionDoesNotThrowDriverError() {
     String URL = "jdbc:mysql://localhost/";
@@ -113,7 +118,7 @@ public class CreateDataSourceCommandDUnitTest {
         "Failed to connect to \"mySqlDataSource\"");
 
     // aquire the jar to be used
-    final String jdbcJarName = "mysql-connector-java-8.0.17.jar";
+    final String jdbcJarName = "mysql-connector-java-8.0.23.jar";
     final String jdbcDriverClassName = "com.mysql.cj.jdbc.Driver";
     File mySqlDriverFile = loadTestResource("/" + jdbcJarName);
     assertThat(mySqlDriverFile).exists();
@@ -141,7 +146,6 @@ public class CreateDataSourceCommandDUnitTest {
         "create data-source --name=mySqlDataSource --username=mySqlUser --password=mySqlPass --url=\""
             + URL + "\" --jdbc-driver-class=" + jdbcDriverClassName)
         .statusIsError().doesNotContainOutput("No suitable driver");
-
   }
 
   private void verifyThatNonExistentClassCausesGfshToError() {
@@ -161,7 +165,7 @@ public class CreateDataSourceCommandDUnitTest {
   }
 
   private File loadTestResource(String fileName) {
-    String filePath = TestUtil.getResourcePath(this.getClass(), fileName);
+    String filePath = ResourceUtils.getResource(getClass(), fileName).getPath();
     Assertions.assertThat(filePath).isNotNull();
 
     return new File(filePath);

@@ -14,6 +14,7 @@
  */
 package org.apache.geode.management.internal.cli.commands;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.Before;
@@ -69,9 +70,9 @@ public class CreateRegionCommandDUnitTest {
         .statusIsError()
         .containsOutput("server-1",
             "Parallel Async Event Queue " + asyncQueueName
-                + " can not be used with replicated region /" + regionName)
+                + " can not be used with replicated region " + SEPARATOR + regionName)
         .containsOutput("server-2", "Parallel Async Event Queue " + asyncQueueName
-            + " can not be used with replicated region /" + regionName);
+            + " can not be used with replicated region " + SEPARATOR + regionName);
 
     // The exception must be thrown early in the initialization, so the region itself shouldn't be
     // added to the root regions.
@@ -94,10 +95,10 @@ public class CreateRegionCommandDUnitTest {
         + " --gateway-sender-id=" + gatewaySenderName)
         .statusIsError()
         .containsOutput("server-1",
-            "Parallel gateway sender " + gatewaySenderName
-                + " can not be used with replicated region /" + regionName)
-        .containsOutput("server-2", "Parallel gateway sender " + gatewaySenderName
-            + " can not be used with replicated region /" + regionName);
+            "Parallel Gateway Sender " + gatewaySenderName
+                + " can not be used with replicated region " + SEPARATOR + regionName)
+        .containsOutput("server-2", "Parallel Gateway Sender " + gatewaySenderName
+            + " can not be used with replicated region " + SEPARATOR + regionName);
 
     // The exception must be thrown early in the initialization, so the region itself shouldn't be
     // added to the root regions.

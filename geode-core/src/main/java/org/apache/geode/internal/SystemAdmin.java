@@ -79,7 +79,9 @@ import org.apache.geode.distributed.internal.DistributionConfigImpl;
 import org.apache.geode.distributed.internal.HighPriorityAckedMessage;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
+import org.apache.geode.distributed.internal.tcpserver.HostAndPort;
 import org.apache.geode.distributed.internal.tcpserver.TcpClient;
+import org.apache.geode.distributed.internal.tcpserver.TcpSocketFactory;
 import org.apache.geode.internal.admin.remote.TailLogResponse;
 import org.apache.geode.internal.cache.DiskStoreImpl;
 import org.apache.geode.internal.cache.backup.BackupOperation;
@@ -193,10 +195,10 @@ public class SystemAdmin {
       throw new GemFireIOException("Unable to delete " + logFile.getAbsolutePath());
     }
     boolean treatAsPure = true;
-    /**
+    /*
      * A counter used by PureJava to determine when its waited too long to start the locator
      * process. countDown * 250 = how many seconds to wait before giving up.
-     **/
+     */
     int countDown = 60;
     // NYI: wait around until we can attach
     while (!ManagerInfo.isLocatorStarted(directory)) {
@@ -261,8 +263,10 @@ public class SystemAdmin {
     if (Thread.interrupted())
       throw new InterruptedException();
     InetAddress addr = null; // fix for bug 30810
-    if (addressOption == null)
+    if (addressOption == null) {
       addressOption = "";
+    }
+    addressOption = addressOption.trim();
     if (!addressOption.equals("")) {
       // make sure its a valid ip address
       try {
@@ -289,7 +293,7 @@ public class SystemAdmin {
       if (portOption == null || portOption.trim().length() == 0) {
         port = info.getManagerPort();
       }
-      if (addressOption.trim().length() == 0) {
+      if (addr == null) {
         addr = info.getManagerAddress();
       }
 
@@ -297,8 +301,9 @@ public class SystemAdmin {
         new TcpClient(SocketCreatorFactory
             .getSocketCreatorForComponent(SecurableCommunicationChannel.LOCATOR),
             InternalDataSerializer.getDSFIDSerializer().getObjectSerializer(),
-            InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer())
-                .stop(addr, port);
+            InternalDataSerializer.getDSFIDSerializer().getObjectDeserializer(),
+            TcpSocketFactory.DEFAULT)
+                .stop(new HostAndPort(addr.getHostName(), port));
       } catch (java.net.ConnectException ce) {
         System.out.println(
             "Unable to connect to Locator process. Possible causes are that an incorrect bind address/port combination was specified to the stop-locator command or the process is unresponsive.");
@@ -1148,112 +1153,110 @@ public class SystemAdmin {
           "The -persample and -nofilter options are mutually exclusive.");
     }
     StatSpec[] specs = createSpecs(cmdLineSpecs);
-    if (archiveOption != null) {
-      if (directory != null) {
-        throw new IllegalArgumentException(
-            "The -archive= and -dir= options are mutually exclusive.");
+    if (directory != null) {
+      throw new IllegalArgumentException(
+          "The -archive= and -dir= options are mutually exclusive.");
+    }
+    StatArchiveReader reader = null;
+    boolean interrupted = false;
+    try {
+      reader = new StatArchiveReader((File[]) archiveNames.toArray(new File[0]),
+          specs, !monitor);
+      // Runtime.getRuntime().gc(); System.out.println("DEBUG: heap size=" +
+      // (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()));
+      if (specs.length == 0) {
+        if (details) {
+          StatArchiveReader.StatArchiveFile[] archives = reader.getArchives();
+          for (int i = 0; i < archives.length; i++) {
+            System.out.println(archives[i].getArchiveInfo().toString());
+          }
+        }
       }
-      StatArchiveReader reader = null;
-      boolean interrupted = false;
-      try {
-        reader = new StatArchiveReader((File[]) archiveNames.toArray(new File[0]),
-            specs, !monitor);
-        // Runtime.getRuntime().gc(); System.out.println("DEBUG: heap size=" +
-        // (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()));
+      do {
         if (specs.length == 0) {
-          if (details) {
-            StatArchiveReader.StatArchiveFile[] archives = reader.getArchives();
-            for (int i = 0; i < archives.length; i++) {
-              System.out.println(archives[i].getArchiveInfo().toString());
+          Iterator it = reader.getResourceInstList().iterator();
+          while (it.hasNext()) {
+            ResourceInst inst = (ResourceInst) it.next();
+            StatValue values[] = inst.getStatValues();
+            boolean firstTime = true;
+            for (int i = 0; i < values.length; i++) {
+              if (values[i] != null && values[i].hasValueChanged()) {
+                if (firstTime) {
+                  firstTime = false;
+                  System.out.println(inst.toString());
+                }
+                printStatValue(values[i], startTime, endTime, nofilter, persec, persample,
+                    prunezeros, details);
+              }
+            }
+          }
+        } else {
+          Map<CombinedResources, List<StatValue>> allSpecsMap =
+              new HashMap<CombinedResources, List<StatValue>>();
+          for (int i = 0; i < specs.length; i++) {
+            StatValue[] values = reader.matchSpec(specs[i]);
+            if (values.length == 0) {
+              if (!quiet) {
+                System.err.println(String.format("[warning] No stats matched %s.",
+                    specs[i].cmdLineSpec));
+              }
+            } else {
+              Map<CombinedResources, List<StatValue>> specMap =
+                  new HashMap<CombinedResources, List<StatValue>>();
+              for (StatValue v : values) {
+                CombinedResources key = new CombinedResources(v);
+                List<StatArchiveReader.StatValue> list = specMap.get(key);
+                if (list != null) {
+                  list.add(v);
+                } else {
+                  specMap.put(key, new ArrayList<StatValue>(Collections.singletonList(v)));
+                }
+              }
+              if (!quiet) {
+                System.out.println(
+                    String.format("[info] Found %s instances matching %s:",
+                        new Object[] {Integer.valueOf(specMap.size()), specs[i].cmdLineSpec}));
+              }
+              for (Map.Entry<CombinedResources, List<StatValue>> me : specMap.entrySet()) {
+                List<StatArchiveReader.StatValue> list = allSpecsMap.get(me.getKey());
+                if (list != null) {
+                  list.addAll(me.getValue());
+                } else {
+                  allSpecsMap.put(me.getKey(), me.getValue());
+                }
+              }
+            }
+          }
+          for (Map.Entry<CombinedResources, List<StatValue>> me : allSpecsMap.entrySet()) {
+            System.out.println(me.getKey());
+            for (StatValue v : me.getValue()) {
+              printStatValue(v, startTime, endTime, nofilter, persec, persample, prunezeros,
+                  details);
             }
           }
         }
-        do {
-          if (specs.length == 0) {
-            Iterator it = reader.getResourceInstList().iterator();
-            while (it.hasNext()) {
-              ResourceInst inst = (ResourceInst) it.next();
-              StatValue values[] = inst.getStatValues();
-              boolean firstTime = true;
-              for (int i = 0; i < values.length; i++) {
-                if (values[i] != null && values[i].hasValueChanged()) {
-                  if (firstTime) {
-                    firstTime = false;
-                    System.out.println(inst.toString());
-                  }
-                  printStatValue(values[i], startTime, endTime, nofilter, persec, persample,
-                      prunezeros, details);
-                }
-              }
+        if (monitor) {
+          while (!reader.update()) {
+            try {
+              Thread.sleep(1000);
+            } catch (InterruptedException ignore) {
+              interrupted = true;
             }
-          } else {
-            Map<CombinedResources, List<StatValue>> allSpecsMap =
-                new HashMap<CombinedResources, List<StatValue>>();
-            for (int i = 0; i < specs.length; i++) {
-              StatValue[] values = reader.matchSpec(specs[i]);
-              if (values.length == 0) {
-                if (!quiet) {
-                  System.err.println(String.format("[warning] No stats matched %s.",
-                      specs[i].cmdLineSpec));
-                }
-              } else {
-                Map<CombinedResources, List<StatValue>> specMap =
-                    new HashMap<CombinedResources, List<StatValue>>();
-                for (StatValue v : values) {
-                  CombinedResources key = new CombinedResources(v);
-                  List<StatArchiveReader.StatValue> list = specMap.get(key);
-                  if (list != null) {
-                    list.add(v);
-                  } else {
-                    specMap.put(key, new ArrayList<StatValue>(Collections.singletonList(v)));
-                  }
-                }
-                if (!quiet) {
-                  System.out.println(
-                      String.format("[info] Found %s instances matching %s:",
-                          new Object[] {Integer.valueOf(specMap.size()), specs[i].cmdLineSpec}));
-                }
-                for (Map.Entry<CombinedResources, List<StatValue>> me : specMap.entrySet()) {
-                  List<StatArchiveReader.StatValue> list = allSpecsMap.get(me.getKey());
-                  if (list != null) {
-                    list.addAll(me.getValue());
-                  } else {
-                    allSpecsMap.put(me.getKey(), me.getValue());
-                  }
-                }
-              }
-            }
-            for (Map.Entry<CombinedResources, List<StatValue>> me : allSpecsMap.entrySet()) {
-              System.out.println(me.getKey());
-              for (StatValue v : me.getValue()) {
-                printStatValue(v, startTime, endTime, nofilter, persec, persample, prunezeros,
-                    details);
-              }
-            }
-          }
-          if (monitor) {
-            while (!reader.update()) {
-              try {
-                Thread.sleep(1000);
-              } catch (InterruptedException ignore) {
-                interrupted = true;
-              }
-            }
-          }
-        } while (monitor && !interrupted);
-      } catch (IOException ex) {
-        throw new GemFireIOException(
-            String.format("Failed reading %s", archiveOption), ex);
-      } finally {
-        if (reader != null) {
-          try {
-            reader.close();
-          } catch (IOException ignore) {
           }
         }
-        if (interrupted) {
-          Thread.currentThread().interrupt();
+      } while (monitor && !interrupted);
+    } catch (IOException ex) {
+      throw new GemFireIOException(
+          String.format("Failed reading %s", archiveOption), ex);
+    } finally {
+      if (reader != null) {
+        try {
+          reader.close();
+        } catch (IOException ignore) {
         }
+      }
+      if (interrupted) {
+        Thread.currentThread().interrupt();
       }
     }
   }

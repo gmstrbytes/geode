@@ -15,6 +15,7 @@
 package org.apache.geode.management.internal.cli.functions;
 
 import java.io.Serializable;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -29,6 +30,7 @@ public class GatewaySenderFunctionArgs implements Serializable {
   private final String id;
   private final Integer remoteDSId;
   private final Boolean parallel;
+  private final Boolean groupTransactionEvents;
   private final Boolean manualStart;
   private final Integer socketBufferSize;
   private final Integer socketReadTimeout;
@@ -45,11 +47,13 @@ public class GatewaySenderFunctionArgs implements Serializable {
   // array of fully qualified class names of the filters
   private final List<String> gatewayEventFilters;
   private final List<String> gatewayTransportFilters;
+  private final Boolean enforceThreadsConnectSameReceiver;
 
   public GatewaySenderFunctionArgs(CacheConfig.GatewaySender sender) {
     this.id = sender.getId();
     this.remoteDSId = string2int(sender.getRemoteDistributedSystemId());
     this.parallel = sender.isParallel();
+    this.groupTransactionEvents = sender.mustGroupTransactionEvents();
     this.manualStart = sender.isManualStart();
     this.socketBufferSize = string2int(sender.getSocketBufferSize());
     this.socketReadTimeout = string2int(sender.getSocketReadTimeout());
@@ -63,18 +67,24 @@ public class GatewaySenderFunctionArgs implements Serializable {
     this.alertThreshold = string2int(sender.getAlertThreshold());
     this.dispatcherThreads = string2int(sender.getDispatcherThreads());
     this.orderPolicy = sender.getOrderPolicy();
-    this.gatewayEventFilters =
-        Optional.of(sender.getGatewayEventFilters())
-            .map(filters -> filters
-                .stream().map(DeclarableType::getClassName)
-                .collect(Collectors.toList()))
-            .orElse(null);
+    if (sender.areGatewayEventFiltersUpdated()) {
+      this.gatewayEventFilters =
+          Optional.of(sender.getGatewayEventFilters())
+              .map(filters -> filters
+                  .stream().map(DeclarableType::getClassName)
+                  .collect(Collectors.toList()))
+              .orElse(Collections.emptyList());
+    } else {
+      this.gatewayEventFilters = null;
+    }
+
     this.gatewayTransportFilters =
         Optional.of(sender.getGatewayTransportFilters())
             .map(filters -> filters
                 .stream().map(DeclarableType::getClassName)
                 .collect(Collectors.toList()))
             .orElse(null);
+    this.enforceThreadsConnectSameReceiver = sender.getEnforceThreadsConnectSameReceiver();
   }
 
   private Integer string2int(String x) {
@@ -91,6 +101,10 @@ public class GatewaySenderFunctionArgs implements Serializable {
 
   public Boolean isParallel() {
     return this.parallel;
+  }
+
+  public Boolean mustGroupTransactionEvents() {
+    return this.groupTransactionEvents;
   }
 
   public Boolean isManualStart() {
@@ -151,5 +165,9 @@ public class GatewaySenderFunctionArgs implements Serializable {
 
   public List<String> getGatewayTransportFilter() {
     return this.gatewayTransportFilters;
+  }
+
+  public Boolean getEnforceThreadsConnectSameReceiver() {
+    return this.enforceThreadsConnectSameReceiver;
   }
 }

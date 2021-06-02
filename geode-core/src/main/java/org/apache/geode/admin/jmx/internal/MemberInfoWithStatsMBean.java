@@ -14,6 +14,7 @@
  */
 package org.apache.geode.admin.jmx.internal;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.ENABLE_TIME_STATISTICS;
 import static org.apache.geode.distributed.ConfigurationProperties.STATISTIC_SAMPLING_ENABLED;
 
@@ -97,7 +98,7 @@ public class MemberInfoWithStatsMBean extends AbstractDynamicMBean implements No
    * String constant used for a region that is used on admin side just as a root for rootRegions
    * defined on the member
    */
-  private static final String PLACE_HOLDER_ROOT_REGION = "/Root/";
+  private static final String PLACE_HOLDER_ROOT_REGION = SEPARATOR + "Root" + SEPARATOR;
 
   /* String that are used to form QueryExp/ObjectName for querying MBeanServer */
   private static final String REGION_QUERY_EXPRESSION = "*GemFire.Cache*:*,owner={0},type=Region";
@@ -1122,7 +1123,7 @@ public class MemberInfoWithStatsMBean extends AbstractDynamicMBean implements No
     Map<String, ObjectName> pathsToObjName = new HashMap<String, ObjectName>();
 
     if (memberId != null && memberId.trim().length() != 0) {
-      Object[] params = new Object[] {MBeanUtil.makeCompliantMBeanNameProperty(memberId)};
+      Object[] params = new Object[] {MBeanUtils.makeCompliantMBeanNameProperty(memberId)};
       Set<ObjectName> queryNames = queryObjectNames(REGION_QUERY_EXPRESSION, params);
       for (ObjectName objectName : queryNames) {
         pathsToObjName.put(objectName.getKeyProperty("path"), objectName);
@@ -1145,7 +1146,7 @@ public class MemberInfoWithStatsMBean extends AbstractDynamicMBean implements No
     ObjectName[] statObjectNames = new ObjectName[0];
 
     if (memberId != null && memberId.trim().length() != 0) {
-      Object[] params = new Object[] {MBeanUtil.makeCompliantMBeanNameProperty(memberId), name};
+      Object[] params = new Object[] {MBeanUtils.makeCompliantMBeanNameProperty(memberId), name};
       Set<ObjectName> queryNames = queryObjectNames(STATS_QUERY_EXPRESSION, params);
       statObjectNames = new ObjectName[queryNames.size()];
       statObjectNames = queryNames.toArray(statObjectNames);

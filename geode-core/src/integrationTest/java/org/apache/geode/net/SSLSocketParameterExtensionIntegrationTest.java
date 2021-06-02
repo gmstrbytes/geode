@@ -58,6 +58,7 @@ import org.junit.rules.TestName;
 import org.apache.geode.cache.CacheFactory;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.DistributionConfigImpl;
+import org.apache.geode.distributed.internal.tcpserver.HostAndPort;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.net.SocketCreator;
 import org.apache.geode.internal.net.SocketCreatorFactory;
@@ -141,11 +142,12 @@ public class SSLSocketParameterExtensionIntegrationTest {
 
   @Test
   public void securedSocketCheckExtensions() throws Exception {
-    this.serverSocket = this.socketCreator.createServerSocket(0, 0, this.localHost);
+    this.serverSocket = this.socketCreator.forCluster().createServerSocket(0, 0, this.localHost);
     this.serverThread = startServer(this.serverSocket, 15000);
 
     int serverPort = this.serverSocket.getLocalPort();
-    this.clientSocket = this.socketCreator.connectForServer(this.localHost, serverPort);
+    this.clientSocket = this.socketCreator.forCluster()
+        .connect(new HostAndPort(this.localHost.getHostAddress(), serverPort));
 
     SSLSocket sslSocket = (SSLSocket) this.clientSocket;
 
@@ -185,8 +187,9 @@ public class SSLSocketParameterExtensionIntegrationTest {
     Thread serverThread = new Thread(new MyThreadGroup(this.testName.getMethodName()), () -> {
       try {
         Socket socket = serverSocket.accept();
-        SocketCreatorFactory.getSocketCreatorForComponent(CLUSTER).handshakeIfSocketIsSSL(socket,
-            timeoutMillis);
+        SocketCreatorFactory.getSocketCreatorForComponent(CLUSTER).forCluster()
+            .handshakeIfSocketIsSSL(socket,
+                timeoutMillis);
         assertThat(socket.getSoTimeout()).isEqualTo(0);
 
         ObjectInputStream ois = new ObjectInputStream(socket.getInputStream());
@@ -213,17 +216,18 @@ public class SSLSocketParameterExtensionIntegrationTest {
   }
 
   public static class MySSLParameterExtension implements SSLParameterExtension {
-    DistributionConfig config;
+    SSLParameterExtensionContext context;
 
     @Override
-    public void init(DistributionConfig config) {
-      this.config = config;
+    public void init(final SSLParameterExtensionContext seedContext) {
+      context = seedContext;
     }
 
     @Override
     public SSLParameters modifySSLClientSocketParameters(SSLParameters parameters) {
       List<SNIServerName> serverNames = new ArrayList<>(1);
-      SNIHostName serverName = new SNIHostName(String.valueOf(config.getDistributedSystemId()));
+      SNIHostName serverName =
+          new SNIHostName(String.valueOf(context.getDistributedSystemId()));
       serverNames.add(serverName);
       parameters.setServerNames(serverNames);
       return parameters;

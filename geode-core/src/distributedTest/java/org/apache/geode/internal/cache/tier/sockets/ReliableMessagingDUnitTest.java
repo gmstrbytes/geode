@@ -15,8 +15,10 @@
 package org.apache.geode.internal.cache.tier.sockets;
 
 import static java.util.Map.Entry;
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.apache.geode.test.dunit.LogWriterUtils.getLogWriter;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -43,7 +45,6 @@ import org.apache.geode.cache.client.internal.PoolImpl;
 import org.apache.geode.cache.client.internal.QueueStateImpl.SequenceIdAndExpirationObject;
 import org.apache.geode.cache.server.CacheServer;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.cache.ClientServerObserver;
 import org.apache.geode.internal.cache.ClientServerObserverAdapter;
 import org.apache.geode.internal.cache.ClientServerObserverHolder;
@@ -212,7 +213,7 @@ public class ReliableMessagingDUnitTest extends JUnit4DistributedTestCase {
 
   public static void createEntries() throws Exception {
     creationTime = 0;
-    Region r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region r1 = cache.getRegion(SEPARATOR + REGION_NAME);
     String keyPrefix = "server-";
     for (int i = 0; i < 5; i++) {
       r1.create(keyPrefix + i, "val");
@@ -220,7 +221,7 @@ public class ReliableMessagingDUnitTest extends JUnit4DistributedTestCase {
   }
 
   public static void putOnServer() throws Exception {
-    Region r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region r1 = cache.getRegion(SEPARATOR + REGION_NAME);
     String keyPrefix = "server-";
     for (int i = 0; i < 5; i++) {
       r1.put(keyPrefix + i, "val-" + i);
@@ -265,7 +266,7 @@ public class ReliableMessagingDUnitTest extends JUnit4DistributedTestCase {
    * Wait for new value on cache server to become visible in this cache
    */
   public static void waitForServerUpdate() {
-    Region r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region r1 = cache.getRegion(SEPARATOR + REGION_NAME);
     assertNotNull(r1);
     final long maxWaitTime = 60000;
     final long start = System.currentTimeMillis();
@@ -352,7 +353,7 @@ public class ReliableMessagingDUnitTest extends JUnit4DistributedTestCase {
     cache.createRegion(REGION_NAME, attrs);
 
     CacheServer server = cache.addCacheServer();
-    int port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    int port = getRandomAvailableTCPPort();
     server.setPort(port);
     server.setNotifyBySubscription(true);
     server.start();

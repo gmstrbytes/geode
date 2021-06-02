@@ -14,6 +14,7 @@
  */
 package org.apache.geode.cache.client.internal;
 
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.apache.commons.lang3.StringUtils.isEmpty;
 
 import java.net.InetSocketAddress;
@@ -26,8 +27,8 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.Logger;
 
@@ -35,6 +36,7 @@ import org.apache.geode.CancelCriterion;
 import org.apache.geode.CancelException;
 import org.apache.geode.StatisticsFactory;
 import org.apache.geode.SystemFailure;
+import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.annotations.internal.MutableForTesting;
 import org.apache.geode.cache.NoSubscriptionServersAvailableException;
@@ -43,6 +45,7 @@ import org.apache.geode.cache.RegionService;
 import org.apache.geode.cache.client.Pool;
 import org.apache.geode.cache.client.PoolFactory;
 import org.apache.geode.cache.client.ServerConnectivityException;
+import org.apache.geode.cache.client.SocketFactory;
 import org.apache.geode.cache.client.SubscriptionNotEnabledException;
 import org.apache.geode.cache.client.internal.pooling.ConnectionManager;
 import org.apache.geode.cache.client.internal.pooling.ConnectionManagerImpl;
@@ -53,7 +56,8 @@ import org.apache.geode.distributed.PoolCancelledException;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.ServerLocation;
-import org.apache.geode.distributed.internal.tcpserver.LocatorAddress;
+import org.apache.geode.distributed.internal.ServerLocationAndMemberId;
+import org.apache.geode.distributed.internal.tcpserver.HostAndPort;
 import org.apache.geode.internal.admin.ClientStatsManager;
 import org.apache.geode.internal.cache.EventID;
 import org.apache.geode.internal.cache.InternalCache;
@@ -99,6 +103,7 @@ public class PoolImpl implements InternalPool {
   private final String name;
   private final int socketConnectTimeout;
   private final int freeConnectionTimeout;
+  private final int serverConnectionTimeout;
   private final int loadConditioningInterval;
   private final int socketBufferSize;
   @Deprecated
@@ -111,9 +116,9 @@ public class PoolImpl implements InternalPool {
   private final int subscriptionAckInterval;
   private final int subscriptionTimeoutMultiplier;
   private final String serverGroup;
-  private final List<LocatorAddress> locatorAddresses;
-  private final List<InetSocketAddress> locators;
-  private final List<InetSocketAddress> servers;
+  private final List<HostAndPort> locatorAddresses;
+  private final List<HostAndPort> locators;
+  private final List<HostAndPort> servers;
   private final boolean startDisabled;
   private final boolean usedByGateway;
   private final int maxConnections;
@@ -154,9 +159,10 @@ public class PoolImpl implements InternalPool {
   private final AtomicInteger primaryQueueSize = new AtomicInteger(PRIMARY_QUEUE_NOT_AVAILABLE);
 
   private final ThreadsMonitoring threadMonitoring;
+  private final SocketFactory socketFactory;
 
   public static PoolImpl create(PoolManagerImpl pm, String name, Pool attributes,
-      List<LocatorAddress> locatorAddresses, InternalDistributedSystem distributedSystem,
+      List<HostAndPort> locatorAddresses, InternalDistributedSystem distributedSystem,
       InternalCache cache, ThreadsMonitoring tMonitoring) {
     PoolImpl pool =
         new PoolImpl(pm, name, attributes, locatorAddresses, distributedSystem, cache, tMonitoring);
@@ -186,7 +192,7 @@ public class PoolImpl implements InternalPool {
   }
 
   protected PoolImpl(PoolManagerImpl pm, String name, Pool attributes,
-      List<LocatorAddress> locatorAddresses, InternalDistributedSystem distributedSystem,
+      List<HostAndPort> locatorAddresses, InternalDistributedSystem distributedSystem,
       InternalCache cache, ThreadsMonitoring threadMonitoring) {
     this.pm = pm;
     this.name = name;
@@ -201,6 +207,7 @@ public class PoolImpl implements InternalPool {
 
     socketConnectTimeout = attributes.getSocketConnectTimeout();
     freeConnectionTimeout = attributes.getFreeConnectionTimeout();
+    serverConnectionTimeout = attributes.getServerConnectionTimeout();
     loadConditioningInterval = attributes.getLoadConditioningInterval();
     socketBufferSize = attributes.getSocketBufferSize();
     threadLocalConnections = attributes.getThreadLocalConnections();
@@ -217,14 +224,18 @@ public class PoolImpl implements InternalPool {
     subscriptionMessageTrackingTimeout = attributes.getSubscriptionMessageTrackingTimeout();
     subscriptionAckInterval = attributes.getSubscriptionAckInterval();
     subscriptionTimeoutMultiplier = attributes.getSubscriptionTimeoutMultiplier();
+    socketFactory = attributes.getSocketFactory();
     if (subscriptionTimeoutMultiplier < 0) {
       throw new IllegalArgumentException(
           "The subscription timeout multiplier must not be negative");
     }
     serverGroup = attributes.getServerGroup();
     multiuserSecureModeEnabled = attributes.getMultiuserAuthentication();
-    locators = attributes.getLocators();
-    servers = attributes.getServers();
+    locators = attributes.getLocators().stream()
+        .map(x -> new HostAndPort(x.getHostString(), x.getPort())).collect(Collectors.toList());
+    servers = attributes.getServers().stream()
+        .map(x -> new HostAndPort(x.getHostString(), x.getPort())).collect(
+            Collectors.toList());
     startDisabled =
         ((PoolFactoryImpl.PoolAttributes) attributes).startDisabled || !pm.isNormal();
     usedByGateway = ((PoolFactoryImpl.PoolAttributes) attributes).isGateway();
@@ -252,7 +263,8 @@ public class PoolImpl implements InternalPool {
         : new PoolStats(statFactory, getName() + "->"
             + (isEmpty(serverGroup) ? "[any servers]" : "[" + getServerGroup() + "]"));
 
-    source = getSourceImpl(((PoolFactoryImpl.PoolAttributes) attributes).locatorCallback);
+    source =
+        getSourceImpl(((PoolFactoryImpl.PoolAttributes) attributes).locatorCallback, socketFactory);
     endpointManager = new EndpointManagerImpl(name, distributedSystem, cancelCriterion,
         stats);
     connectionFactory = new ConnectionFactoryImpl(source, endpointManager, distributedSystem,
@@ -270,7 +282,7 @@ public class PoolImpl implements InternalPool {
     // Fix for 43468 - make sure we check the cache cancel criterion if we get
     // an exception, by passing in the poolOrCache stopper
     executor = new OpExecutorImpl(manager, queueManager, endpointManager, riTracker, retryAttempts,
-        freeConnectionTimeout, new PoolOrCacheStopper(), this);
+        freeConnectionTimeout, serverConnectionTimeout, new PoolOrCacheStopper(), this);
     if (multiuserSecureModeEnabled) {
       proxyCacheList = new ArrayList<>();
     } else {
@@ -288,6 +300,7 @@ public class PoolImpl implements InternalPool {
     if (p == null)
       return false;
     return getFreeConnectionTimeout() == p.getFreeConnectionTimeout()
+        && getServerConnectionTimeout() == p.getServerConnectionTimeout()
         && getSocketConnectTimeout() == p.getSocketConnectTimeout()
         && getLoadConditioningInterval() == p.getLoadConditioningInterval()
         && getSocketBufferSize() == p.getSocketBufferSize()
@@ -323,8 +336,8 @@ public class PoolImpl implements InternalPool {
     }
 
     final String timerName = "poolTimer-" + getName() + "-";
-    backgroundProcessor = CoreLoggingExecutors.newScheduledThreadPool(timerName,
-        BACKGROUND_TASK_POOL_SIZE, BACKGROUND_TASK_POOL_KEEP_ALIVE, threadMonitoring);
+    backgroundProcessor = CoreLoggingExecutors.newScheduledThreadPool(BACKGROUND_TASK_POOL_SIZE,
+        BACKGROUND_TASK_POOL_KEEP_ALIVE, MILLISECONDS, timerName, threadMonitoring);
     source.start(this);
     connectionFactory.start(backgroundProcessor);
     endpointManager.addListener(new InstantiatorRecoveryListener(backgroundProcessor, this));
@@ -348,7 +361,7 @@ public class PoolImpl implements InternalPool {
 
     if (statisticInterval > 0 && distributedSystem.getConfig().getStatisticSamplingEnabled()) {
       backgroundProcessor.scheduleWithFixedDelay(new PublishClientStatsTask(), statisticInterval,
-          statisticInterval, TimeUnit.MILLISECONDS);
+          statisticInterval, MILLISECONDS);
     }
     // LOG: changed from config to info
     logger.info("Pool {} started with multiuser-authentication={}",
@@ -388,6 +401,11 @@ public class PoolImpl implements InternalPool {
   @Override
   public int getFreeConnectionTimeout() {
     return freeConnectionTimeout;
+  }
+
+  @Override
+  public int getServerConnectionTimeout() {
+    return serverConnectionTimeout;
   }
 
   @Override
@@ -477,7 +495,7 @@ public class PoolImpl implements InternalPool {
 
   @Override
   public List<InetSocketAddress> getLocators() {
-    return locators;
+    return locators.stream().map(x -> x.getSocketInetAddress()).collect(Collectors.toList());
   }
 
   @Override
@@ -487,7 +505,7 @@ public class PoolImpl implements InternalPool {
 
   @Override
   public List<InetSocketAddress> getServers() {
-    return servers;
+    return servers.stream().map(x -> x.getSocketInetAddress()).collect(Collectors.toList());
   }
 
   public GatewaySender getGatewaySender() {
@@ -583,7 +601,7 @@ public class PoolImpl implements InternalPool {
       try {
         if (backgroundProcessor != null) {
           backgroundProcessor.shutdown();
-          if (!backgroundProcessor.awaitTermination(SHUTDOWN_TIMEOUT, TimeUnit.MILLISECONDS)) {
+          if (!backgroundProcessor.awaitTermination(SHUTDOWN_TIMEOUT, MILLISECONDS)) {
             logger.warn("Timeout waiting for background tasks to complete.");
           }
         }
@@ -641,13 +659,14 @@ public class PoolImpl implements InternalPool {
   }
 
 
-  private ConnectionSource getSourceImpl(LocatorDiscoveryCallback locatorDiscoveryCallback) {
+  private ConnectionSource getSourceImpl(LocatorDiscoveryCallback locatorDiscoveryCallback,
+      SocketFactory socketFactory) {
     List<InetSocketAddress> locators = getLocators();
     if (locators.isEmpty()) {
       return new ExplicitConnectionSourceImpl(getServers());
     } else {
       AutoConnectionSourceImpl source = new AutoConnectionSourceImpl(locatorAddresses,
-          getServerGroup(), socketConnectTimeout);
+          getServerGroup(), socketConnectTimeout, socketFactory);
       if (locatorDiscoveryCallback != null) {
         source.setLocatorDiscoveryCallback(locatorDiscoveryCallback);
       }
@@ -675,6 +694,10 @@ public class PoolImpl implements InternalPool {
     if (getFreeConnectionTimeout() != other.getFreeConnectionTimeout()) {
       throw new RuntimeException(
           String.format("Pool %s is different", "connectionTimeout"));
+    }
+    if (getServerConnectionTimeout() != other.getServerConnectionTimeout()) {
+      throw new RuntimeException(
+          String.format("Pool %s is different", "serverConnectionTimeout"));
     }
     if (getLoadConditioningInterval() != other.getLoadConditioningInterval()) {
       throw new RuntimeException(
@@ -867,7 +890,7 @@ public class PoolImpl implements InternalPool {
   }
 
   @Override
-  public Map<ServerLocation, Endpoint> getEndpointMap() {
+  public Map<ServerLocationAndMemberId, Endpoint> getEndpointMap() {
     return endpointManager.getEndpointMap();
   }
 
@@ -917,10 +940,14 @@ public class PoolImpl implements InternalPool {
   }
 
   /**
-   * Test hook that acquires and returns a connection from the pool with a given ServerLocation.
+   * Borrows a connection to a specific server from the pool.. Used by gateway and tests. Any
+   * connection
+   * that is acquired using this method must be returned using returnConnection, even if it is
+   * destroyed.
+   *
    */
   public Connection acquireConnection(ServerLocation loc) {
-    return manager.borrowConnection(loc, false);
+    return manager.borrowConnection(loc, serverConnectionTimeout, false);
   }
 
   /**
@@ -1019,10 +1046,8 @@ public class PoolImpl implements InternalPool {
     return result;
   }
 
-  /**
-   * Test hook that returns an int which the port of the primary server. -1 is returned if we have
-   * no primary.
-   */
+  @Override
+  @VisibleForTesting
   public int getPrimaryPort() {
     int result = -1;
     ServerLocation sl = getPrimary();
@@ -1096,9 +1121,7 @@ public class PoolImpl implements InternalPool {
     return result;
   }
 
-  /**
-   * Test hook to find out current number of connections this pool has.
-   */
+  @Override
   public int getConnectionCount() {
     return manager.getConnectionCount();
   }
@@ -1147,8 +1170,8 @@ public class PoolImpl implements InternalPool {
   /**
    * Returns a list of ServerLocation instances; one for each server we are currently connected to.
    */
-  public List<ServerLocation> getCurrentServers() {
-    Map<ServerLocation, Endpoint> endpointMap = endpointManager.getEndpointMap();
+  public List<ServerLocationAndMemberId> getCurrentServers() {
+    Map<ServerLocationAndMemberId, Endpoint> endpointMap = endpointManager.getEndpointMap();
     return new ArrayList<>(endpointMap.keySet());
   }
 
@@ -1157,10 +1180,10 @@ public class PoolImpl implements InternalPool {
    * connected to.
    */
   public List<String> getCurrentServerNames() {
-    List<ServerLocation> servers = getCurrentServers();
+    List<ServerLocationAndMemberId> servers = getCurrentServers();
     ArrayList<String> result = new ArrayList<>(servers.size());
-    for (ServerLocation sl : servers) {
-      String name = sl.getHostName() + sl.getPort();
+    for (ServerLocationAndMemberId sl : servers) {
+      String name = sl.getServerLocation().getHostName() + sl.getServerLocation().getPort();
       result.add(name);
     }
     return result;
@@ -1196,7 +1219,7 @@ public class PoolImpl implements InternalPool {
       // do nothing.
     }
 
-    Map<ServerLocation, Endpoint> endpoints = endpointManager.getEndpointMap();
+    Map<ServerLocationAndMemberId, Endpoint> endpoints = endpointManager.getEndpointMap();
     for (Endpoint endpoint : endpoints.values()) {
       logger.debug("PoolImpl Simulating crash of endpoint {}", endpoint);
       endpointManager.serverCrashed(endpoint);
@@ -1577,6 +1600,11 @@ public class PoolImpl implements InternalPool {
   @Override
   public int getSubscriptionTimeoutMultiplier() {
     return subscriptionTimeoutMultiplier;
+  }
+
+  @Override
+  public SocketFactory getSocketFactory() {
+    return socketFactory;
   }
 
   public int calculateRetryAttempts(Throwable cause) {

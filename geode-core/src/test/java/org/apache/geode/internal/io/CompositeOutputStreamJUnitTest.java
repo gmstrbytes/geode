@@ -19,7 +19,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyZeroInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -77,11 +77,8 @@ public class CompositeOutputStreamJUnitTest {
     compositeOutputStream.close();
 
     InOrder inOrder = inOrder(mockStreamOne);
-    inOrder.verify(mockStreamOne, times(1)).write(2);
-    inOrder.verify(mockStreamOne, times(1)).write(3);
-    inOrder.verify(mockStreamOne, times(1)).write(4);
-    inOrder.verify(mockStreamOne, times(1)).write(0);
-    inOrder.verify(mockStreamOne, times(1)).write(1);
+    inOrder.verify(mockStreamOne, times(1)).write(new byte[] {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, 2, 3);
+    inOrder.verify(mockStreamOne, times(1)).write(new byte[] {0, 1}, 0, 2);
     inOrder.verify(mockStreamOne, times(1)).write(9);
     inOrder.verify(mockStreamOne, times(2)).flush();
     inOrder.verify(mockStreamOne, times(1)).close();
@@ -101,11 +98,9 @@ public class CompositeOutputStreamJUnitTest {
     cos.close();
 
     InOrder inOrderStreams = inOrder(streamOne, streamTwo);
-    inOrderStreams.verify(streamOne, times(1)).write(2);
-    inOrderStreams.verify(streamOne, times(1)).write(3);
-    inOrderStreams.verify(streamOne, times(1)).write(4);
-    inOrderStreams.verify(streamOne, times(1)).write(0);
-    inOrderStreams.verify(streamOne, times(1)).write(1);
+    inOrderStreams.verify(streamOne, times(1)).write(new byte[] {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, 2,
+        3);
+    inOrderStreams.verify(streamOne, times(1)).write(new byte[] {0, 1}, 0, 2);
     inOrderStreams.verify(streamOne, times(1)).write(9);
     inOrderStreams.verify(streamOne, times(2)).flush();
     inOrderStreams.verify(streamOne, times(1)).close();
@@ -128,11 +123,9 @@ public class CompositeOutputStreamJUnitTest {
     cos.close();
 
     InOrder inOrderStreams = inOrder(streamOne, streamTwo, streamThree);
-    inOrderStreams.verify(streamOne, times(1)).write(2);
-    inOrderStreams.verify(streamOne, times(1)).write(3);
-    inOrderStreams.verify(streamOne, times(1)).write(4);
-    inOrderStreams.verify(streamOne, times(1)).write(0);
-    inOrderStreams.verify(streamOne, times(1)).write(1);
+    inOrderStreams.verify(streamOne, times(1)).write(new byte[] {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, 2,
+        3);
+    inOrderStreams.verify(streamOne, times(1)).write(new byte[] {0, 1}, 0, 2);
     inOrderStreams.verify(streamOne, times(1)).write(9);
     inOrderStreams.verify(streamOne, times(2)).flush();
     inOrderStreams.verify(streamOne, times(1)).close();
@@ -154,11 +147,9 @@ public class CompositeOutputStreamJUnitTest {
     cos.close();
 
     InOrder inOrderStreams = inOrder(streamOne, streamTwo);
-    inOrderStreams.verify(streamOne, times(1)).write(2);
-    inOrderStreams.verify(streamOne, times(1)).write(3);
-    inOrderStreams.verify(streamOne, times(1)).write(4);
-    inOrderStreams.verify(streamOne, times(1)).write(0);
-    inOrderStreams.verify(streamOne, times(1)).write(1);
+    inOrderStreams.verify(streamOne, times(1)).write(new byte[] {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, 2,
+        3);
+    inOrderStreams.verify(streamOne, times(1)).write(new byte[] {0, 1}, 0, 2);
     inOrderStreams.verify(streamOne, times(1)).write(9);
     inOrderStreams.verify(streamOne, times(2)).flush();
     inOrderStreams.verify(streamOne, times(1)).close();
@@ -180,11 +171,9 @@ public class CompositeOutputStreamJUnitTest {
     cos.close();
 
     InOrder inOrderStreams = inOrder(streamOne);
-    inOrderStreams.verify(streamOne, times(1)).write(2);
-    inOrderStreams.verify(streamOne, times(1)).write(3);
-    inOrderStreams.verify(streamOne, times(1)).write(4);
-    inOrderStreams.verify(streamOne, times(1)).write(0);
-    inOrderStreams.verify(streamOne, times(1)).write(1);
+    inOrderStreams.verify(streamOne, times(1)).write(new byte[] {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, 2,
+        3);
+    inOrderStreams.verify(streamOne, times(1)).write(new byte[] {0, 1}, 0, 2);
     inOrderStreams.verify(streamOne, times(1)).write(9);
     inOrderStreams.verify(streamOne, times(2)).flush();
     inOrderStreams.verify(streamOne, times(1)).close();
@@ -208,11 +197,9 @@ public class CompositeOutputStreamJUnitTest {
     cos.close();
 
     InOrder inOrderStreams = inOrder(streamOne, streamTwo);
-    inOrderStreams.verify(streamOne, times(1)).write(2);
-    inOrderStreams.verify(streamOne, times(1)).write(3);
-    inOrderStreams.verify(streamOne, times(1)).write(4);
-    inOrderStreams.verify(streamOne, times(1)).write(0);
-    inOrderStreams.verify(streamOne, times(1)).write(1);
+    inOrderStreams.verify(streamOne, times(1)).write(new byte[] {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, 2,
+        3);
+    inOrderStreams.verify(streamOne, times(1)).write(new byte[] {0, 1}, 0, 2);
     inOrderStreams.verify(streamOne, times(1)).write(9);
     inOrderStreams.verify(streamOne, times(2)).flush();
     inOrderStreams.verify(streamOne, times(1)).close();
@@ -234,13 +221,11 @@ public class CompositeOutputStreamJUnitTest {
     cos.flush();
     cos.close();
 
-    verifyZeroInteractions(streamTwo);
+    verifyNoMoreInteractions(streamTwo);
     InOrder inOrderStreams = inOrder(streamOne);
-    inOrderStreams.verify(streamOne, times(1)).write(2);
-    inOrderStreams.verify(streamOne, times(1)).write(3);
-    inOrderStreams.verify(streamOne, times(1)).write(4);
-    inOrderStreams.verify(streamOne, times(1)).write(0);
-    inOrderStreams.verify(streamOne, times(1)).write(1);
+    inOrderStreams.verify(streamOne, times(1)).write(new byte[] {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, 2,
+        3);
+    inOrderStreams.verify(streamOne, times(1)).write(new byte[] {0, 1}, 0, 2);
     inOrderStreams.verify(streamOne, times(1)).write(9);
     inOrderStreams.verify(streamOne, times(2)).flush();
     inOrderStreams.verify(streamOne, times(1)).close();
@@ -261,7 +246,7 @@ public class CompositeOutputStreamJUnitTest {
     cos.flush();
     cos.close();
 
-    verifyZeroInteractions(streamOne);
+    verifyNoMoreInteractions(streamOne);
   }
 
   @Test
@@ -279,6 +264,6 @@ public class CompositeOutputStreamJUnitTest {
     cos.flush();
     cos.close();
 
-    verifyZeroInteractions(streamOne);
+    verifyNoMoreInteractions(streamOne);
   }
 }

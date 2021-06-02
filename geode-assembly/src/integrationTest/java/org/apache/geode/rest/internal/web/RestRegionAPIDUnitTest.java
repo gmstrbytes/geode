@@ -15,6 +15,7 @@
 
 package org.apache.geode.rest.internal.web;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
@@ -47,6 +48,9 @@ import org.apache.geode.test.junit.rules.RequiresGeodeHome;
 import org.apache.geode.test.junit.rules.ServerStarterRule;
 
 public class RestRegionAPIDUnitTest {
+  @SuppressWarnings("deprecation")
+  private static final String APPLICATION_JSON_UTF8_VALUE = MediaType.APPLICATION_JSON_UTF8_VALUE;
+
   @ClassRule
   public static ServerStarterRule server = new ServerStarterRule()
       .withRestService()
@@ -61,8 +65,8 @@ public class RestRegionAPIDUnitTest {
     getRegionA().clear();
   }
 
-  private Region getRegionA() {
-    return server.getCache().getRegion("/regionA");
+  private <K, V> Region<K, V> getRegionA() {
+    return server.getCache().getRegion(SEPARATOR + "regionA");
   }
 
   public static GeodeDevRestClient restClient;
@@ -79,7 +83,7 @@ public class RestRegionAPIDUnitTest {
   public void getAllResources() {
     restClient.doGetAndAssert("")
         .hasStatusCode(HttpStatus.SC_OK)
-        .hasContentType(MediaType.APPLICATION_JSON.toString())
+        .hasContentType(APPLICATION_JSON_UTF8_VALUE)
         .hasResponseBody().isEqualToIgnoringWhitespace(
             "{\"regions\":[{\"name\":\"regionA\",\"type\":\"REPLICATE\",\"key-constraint\":null,\"value-constraint\":null}]}");
   }
@@ -93,7 +97,7 @@ public class RestRegionAPIDUnitTest {
 
   @Test
   public void getRegionAWhenHasData() throws Exception {
-    Region region = getRegionA();
+    Region<String, Customer> region = getRegionA();
     region.put("customer1", new Customer(1L, "jon", "doe", "123-456-789"));
     region.put("customer2", new Customer(2L, "jane", "doe", "123-456-999"));
 
@@ -106,7 +110,7 @@ public class RestRegionAPIDUnitTest {
 
   @Test
   public void getSingleKey() throws Exception {
-    Region region = getRegionA();
+    Region<String, Customer> region = getRegionA();
     region.put("customer1", new Customer(1L, "jon", "doe", "123-456-789"));
 
     JsonNode jsonObject = restClient.doGetAndAssert("/regionA/customer1")
@@ -121,7 +125,7 @@ public class RestRegionAPIDUnitTest {
       restClient.doPutAndAssert("/regionA/" + key, jsonDocuments.get(key)).statusIsOk();
     }
 
-    Region region = server.getCache().getRegion("regionA");
+    Region<?, ?> region = server.getCache().getRegion("regionA");
     assertThat(region).hasSize(jsonDocuments.size());
   }
 
@@ -130,13 +134,13 @@ public class RestRegionAPIDUnitTest {
     for (int key = 0; key < jsonDocuments.size(); key++) {
       restClient.doPostAndAssert("/regionA?key=" + key, jsonDocuments.get(key)).statusIsOk();
     }
-    Region region = server.getCache().getRegion("regionA");
+    Region<?, ?> region = server.getCache().getRegion("regionA");
     assertThat(region).hasSize(jsonDocuments.size());
   }
 
   @Test
   public void putDuplicateWithoutReplace() {
-    Region region = getRegionA();
+    Region<String, Customer> region = getRegionA();
     region.put("customer1", new Customer(1L, "jon", "doe", "123-456-789"));
 
     // put with the same key and same value
@@ -162,7 +166,7 @@ public class RestRegionAPIDUnitTest {
 
   @Test
   public void putDuplicateWithReplace() {
-    Region region = getRegionA();
+    Region<String, Customer> region = getRegionA();
     region.put("customer1", new Customer(1L, "jon", "doe", "123-456-789"));
 
     // replace with an existing key and different value
@@ -180,7 +184,7 @@ public class RestRegionAPIDUnitTest {
 
   @Test
   public void putWithCAS() {
-    Region region = server.getCache().getRegion("/regionA");
+    Region<?, ?> region = server.getCache().getRegion(SEPARATOR + "regionA");
     // do a regular put first
     restClient.doPutAndAssert("/regionA/customer1",
         "{\"customerId\":1,\"firstName\":\"jon\",\"lastName\":\"doe\"}")
@@ -219,7 +223,7 @@ public class RestRegionAPIDUnitTest {
 
   @Test
   public void deleteAll() {
-    Region region = getRegionA();
+    Region<String, Customer> region = getRegionA();
     region.put("1", new Customer(1L, "jon", "doe", "123-456-789"));
     region.put("2", new Customer(2L, "jane", "doe", "123-456-999"));
     region.put("3", new Customer(3L, "mary", "doe", "123-456-899"));
@@ -230,7 +234,7 @@ public class RestRegionAPIDUnitTest {
 
   @Test
   public void deleteWithKeys() {
-    Region region = getRegionA();
+    Region<String, Customer> region = getRegionA();
     region.put("1", new Customer(1L, "jon", "doe", "123-456-789"));
     region.put("2", new Customer(2L, "jane", "doe", "123-456-999"));
     region.put("3", new Customer(3L, "mary", "doe", "123-456-899"));
@@ -247,7 +251,7 @@ public class RestRegionAPIDUnitTest {
 
   @Test
   public void listKeys() throws Exception {
-    Region region = getRegionA();
+    Region<String, Customer> region = getRegionA();
     region.put("customer1", new Customer(1L, "jon", "doe", "123-456-789"));
     region.put("customer2", new Customer(2L, "jane", "doe", "123-456-999"));
 
@@ -264,7 +268,8 @@ public class RestRegionAPIDUnitTest {
 
     String urlPrefix =
         "/queries/adhoc?q=" + URLEncoder.encode(
-            "SELECT book.displayprice FROM /regionA e, e.store.book book  WHERE book.displayprice > 5",
+            "SELECT book.displayprice FROM " + SEPARATOR
+                + "regionA e, e.store.book book  WHERE book.displayprice > 5",
             "UTF-8");
 
     restClient.doGetAndAssert(urlPrefix).statusIsOk().hasJsonArrayOfDoubles().hasSize(12)
@@ -281,7 +286,8 @@ public class RestRegionAPIDUnitTest {
     // create 5 prepared statements
     for (int i = 0; i < 5; i++) {
       String urlPrefix = "/queries/?id=" + "Query" + i + "&q=" + URLEncoder.encode(
-          "SELECT book.displayprice FROM /regionA e, e.store.book book  WHERE book.displayprice > $1",
+          "SELECT book.displayprice FROM " + SEPARATOR
+              + "regionA e, e.store.book book  WHERE book.displayprice > $1",
           "UTF-8");
       restClient.doPostAndAssert(urlPrefix, "").statusIsOk();
     }

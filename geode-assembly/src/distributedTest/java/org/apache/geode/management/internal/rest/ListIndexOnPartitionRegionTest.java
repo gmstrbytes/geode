@@ -15,6 +15,7 @@
 
 package org.apache.geode.management.internal.rest;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.test.junit.assertions.ClusterManagementListResultAssert.assertManagementListResult;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -26,11 +27,10 @@ import org.junit.Test;
 import org.apache.geode.cache.configuration.CacheConfig;
 import org.apache.geode.cache.configuration.RegionConfig;
 import org.apache.geode.distributed.internal.InternalConfigurationPersistenceService;
-import org.apache.geode.management.api.BaseConnectionConfig;
 import org.apache.geode.management.api.ClusterManagementListResult;
 import org.apache.geode.management.api.ClusterManagementRealizationResult;
 import org.apache.geode.management.api.ClusterManagementService;
-import org.apache.geode.management.client.ClusterManagementServiceBuilder;
+import org.apache.geode.management.cluster.client.ClusterManagementServiceBuilder;
 import org.apache.geode.management.configuration.Index;
 import org.apache.geode.management.configuration.IndexType;
 import org.apache.geode.management.configuration.Region;
@@ -54,8 +54,8 @@ public class ListIndexOnPartitionRegionTest {
     lsRule.startServerVM(2, "group2", locator.getPort());
     lsRule.startServerVM(3, "group3", locator.getPort());
 
-    cms = new ClusterManagementServiceBuilder().setConnectionConfig(
-        new BaseConnectionConfig("localhost", locator.getHttpPort()))
+    cms = new ClusterManagementServiceBuilder()
+        .setPort(locator.getHttpPort())
         .build();
 
     // set up the same region in 3 different groups, one is a proxy region, but with the same name
@@ -73,7 +73,7 @@ public class ListIndexOnPartitionRegionTest {
     config.setGroup("group3");
     cms.create(config);
 
-    locator.waitUntilRegionIsReadyOnExactlyThisManyServers("/testRegion", 3);
+    locator.waitUntilRegionIsReadyOnExactlyThisManyServers(SEPARATOR + "testRegion", 3);
   }
 
   @Test
@@ -82,7 +82,7 @@ public class ListIndexOnPartitionRegionTest {
     Index index = new Index();
     index.setName("index");
     index.setExpression("id");
-    index.setRegionPath("/testRegion");
+    index.setRegionPath(SEPARATOR + "testRegion");
     index.setIndexType(IndexType.KEY);
     cms.create(index);
 
@@ -132,8 +132,8 @@ public class ListIndexOnPartitionRegionTest {
 
     // delete the index
     ClusterManagementRealizationResult deleteResult = cms.delete(index);
-    assertThat(deleteResult.getStatusMessage()).contains("Successfully removed configuration")
-        .contains("group1").contains("group2").contains("group2").doesNotContain("group4");
+    assertThat(deleteResult.getStatusMessage()).contains("Successfully updated configuration")
+        .contains("group1").contains("group2").contains("group3").doesNotContain("group4");
 
     // create the index again
     cms.create(index);

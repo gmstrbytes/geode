@@ -17,31 +17,31 @@ package org.apache.geode.rest.internal.web.controllers.support;
 import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
 
-import org.springframework.util.StringUtils;
-
 import org.apache.geode.cache.execute.FunctionException;
 import org.apache.geode.cache.execute.ResultCollector;
 import org.apache.geode.distributed.DistributedMember;
 
 public class RestServersResultCollector<String, Object> implements ResultCollector<String, Object> {
 
-  private ArrayList resultList = new ArrayList();
+  private ArrayList<String> resultList = new ArrayList<>();
 
   @Override
   public void addResult(DistributedMember memberID, String result) {
-    if (!StringUtils.isEmpty(result)) {
-      this.resultList.add(result);
+    if (result != null && result.toString().length() > 0) {
+      resultList.add(result);
     }
   }
 
   @Override
   public void endResults() {}
 
+  @SuppressWarnings("unchecked")
   @Override
   public Object getResult() throws FunctionException {
     return (Object) resultList;
   }
 
+  @SuppressWarnings("unchecked")
   @Override
   public Object getResult(long timeout, TimeUnit unit) throws FunctionException {
     return (Object) resultList;

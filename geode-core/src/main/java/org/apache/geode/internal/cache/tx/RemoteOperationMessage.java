@@ -14,12 +14,15 @@
  */
 package org.apache.geode.internal.cache.tx;
 
+
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.util.Collection;
+import java.util.List;
 
 import org.apache.logging.log4j.Logger;
+import org.jetbrains.annotations.NotNull;
 
 import org.apache.geode.CancelException;
 import org.apache.geode.DataSerializer;
@@ -168,19 +171,40 @@ public abstract class RemoteOperationMessage extends DistributionMessage
    */
   @Override
   public void process(final ClusterDistributionManager dm) {
+    InternalCache cache = getCache(dm);
+    if (cache == null) {
+      String message = getCacheClosedMessage(dm);
+      ReplyException replyException = new ReplyException(new CacheClosedException(message));
+      sendReply(getSender(), this.processorId, dm, replyException, null, 0);
+      return;
+    }
+
+    if (dm.getSystem().threadOwnsResources()) {
+      // reply inline if thread owns socket.
+      doRemoteOperation(dm, cache);
+      return;
+    }
+
+    if (isTransactional()) {
+      dm.getExecutors().getWaitingThreadPool().execute(() -> doRemoteOperation(dm, cache));
+    } else {
+      // reply inline for non-transactional case.
+      doRemoteOperation(dm, cache);
+    }
+  }
+
+  boolean isTransactional() {
+    return getTXUniqId() != TXManagerImpl.NOTX && canParticipateInTransaction();
+  }
+
+  void doRemoteOperation(ClusterDistributionManager dm, InternalCache cache) {
     Throwable thr = null;
     boolean sendReply = true;
     LocalRegion r = null;
     long startTime = 0;
     try {
-      InternalCache cache = getCache(dm);
       if (checkCacheClosing(cache) || checkDSClosing(dm)) {
-        String message = "Remote cache is closed: " + dm.getId();
-        if (cache == null) {
-          thr = new CacheClosedException(message);
-        } else {
-          thr = cache.getCacheClosedException(message);
-        }
+        thr = cache.getCacheClosedException(getCacheClosedMessage(dm));
         return;
       }
       r = getRegionByPath(cache);
@@ -270,6 +294,11 @@ public abstract class RemoteOperationMessage extends DistributionMessage
         sendReply(getSender(), this.processorId, dm, rex, r, startTime);
       }
     }
+  }
+
+  @NotNull
+  private String getCacheClosedMessage(ClusterDistributionManager dm) {
+    return "Remote cache is closed: " + dm.getId();
   }
 
   protected void checkForSystemFailure() {
@@ -417,18 +446,18 @@ public abstract class RemoteOperationMessage extends DistributionMessage
    */
   protected void appendFields(StringBuffer buff) {
     buff.append("; sender=").append(getSender()).append("; recipients=[");
-    InternalDistributedMember[] recips = getRecipientsArray();
-    for (int i = 0; i < recips.length - 1; i++) {
-      buff.append(recips[i]).append(',');
+    List<InternalDistributedMember> recipients = getRecipients();
+    for (int i = 0; i < recipients.size() - 1; i++) {
+      buff.append(recipients.get(i)).append(',');
     }
-    if (recips.length > 0) {
-      buff.append(recips[recips.length - 1]);
+    if (recipients.size() > 0) {
+      buff.append(recipients.get(recipients.size() - 1));
     }
     buff.append("]; processorId=").append(this.processorId);
   }
 
   public InternalDistributedMember getRecipient() {
-    return getRecipientsArray()[0];
+    return getRecipients().get(0);
   }
 
   public void setOperation(Operation op) {

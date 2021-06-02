@@ -14,6 +14,8 @@
  */
 package org.apache.geode.management.internal.cli.commands;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
+
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.PrintStream;
@@ -21,15 +23,14 @@ import java.io.PrintStream;
 import org.springframework.shell.core.annotation.CliCommand;
 import org.springframework.shell.core.annotation.CliOption;
 
-import org.apache.geode.SystemFailure;
-import org.apache.geode.cache.Region;
 import org.apache.geode.internal.cache.DiskStoreImpl;
 import org.apache.geode.management.cli.CliMetaData;
-import org.apache.geode.management.cli.SingleGfshCommand;
+import org.apache.geode.management.cli.GfshCommand;
 import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.management.internal.i18n.CliStrings;
 
-public class DescribeOfflineDiskStoreCommand extends SingleGfshCommand {
+@SuppressWarnings("deprecation")
+public class DescribeOfflineDiskStoreCommand extends GfshCommand {
   @CliCommand(value = CliStrings.DESCRIBE_OFFLINE_DISK_STORE,
       help = CliStrings.DESCRIBE_OFFLINE_DISK_STORE__HELP)
   @CliMetaData(shellOnly = true, relatedTopic = CliStrings.TOPIC_GEODE_DISKSTORE)
@@ -56,7 +57,7 @@ public class DescribeOfflineDiskStoreCommand extends SingleGfshCommand {
         dirs[i] = new File((diskDirs[i]));
       }
 
-      if (Region.SEPARATOR.equals(regionName)) {
+      if (SEPARATOR.equals(regionName)) {
         return ResultModel.createError(CliStrings.INVALID_REGION_NAME);
       }
 
@@ -66,10 +67,10 @@ public class DescribeOfflineDiskStoreCommand extends SingleGfshCommand {
       DiskStoreImpl.dumpInfo(printStream, diskStoreName, dirs, regionName, listPdxTypes);
       return ResultModel.createInfo(outputStream.toString());
     } catch (VirtualMachineError e) {
-      SystemFailure.initiateFailure(e);
+      org.apache.geode.SystemFailure.initiateFailure(e);
       throw e;
     } catch (Throwable th) {
-      SystemFailure.checkFailure();
+      org.apache.geode.SystemFailure.checkFailure();
       if (th.getMessage() == null) {
         return ResultModel.createError(
             "An error occurred while describing offline disk stores: " + th);

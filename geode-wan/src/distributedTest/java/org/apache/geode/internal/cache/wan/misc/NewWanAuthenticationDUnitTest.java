@@ -14,6 +14,7 @@
  */
 package org.apache.geode.internal.cache.wan.misc;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
 import static org.apache.geode.distributed.ConfigurationProperties.SECURITY_CLIENT_ACCESSOR;
@@ -34,10 +35,10 @@ import org.junit.experimental.categories.Category;
 
 import org.apache.geode.cache.CacheFactory;
 import org.apache.geode.cache.Region;
+import org.apache.geode.cache.wan.internal.GatewaySenderEventRemoteDispatcher;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.DistributedSystem;
 import org.apache.geode.internal.Assert;
-import org.apache.geode.internal.cache.wan.GatewaySenderEventRemoteDispatcher;
 import org.apache.geode.internal.cache.wan.WANTestBase;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.security.AuthInitialize;
@@ -131,7 +132,7 @@ public class NewWanAuthenticationDUnitTest extends WANTestBase {
 
     sender.invoke(() -> doPuts(regionName, 1));
     receiver.invoke(() -> {
-      Region r = cache.getRegion(Region.SEPARATOR + regionName);
+      Region r = cache.getRegion(SEPARATOR + regionName);
       await().untilAsserted(() -> assertTrue(r.size() > 0));
     });
   }
@@ -159,7 +160,7 @@ public class NewWanAuthenticationDUnitTest extends WANTestBase {
     sender.invoke(() -> doPuts(regionName, 1));
 
     receiver.invoke(() -> {
-      Region r = cache.getRegion(Region.SEPARATOR + regionName);
+      Region r = cache.getRegion(SEPARATOR + regionName);
       await().untilAsserted(() -> assertTrue(r.size() > 0));
     });
   }

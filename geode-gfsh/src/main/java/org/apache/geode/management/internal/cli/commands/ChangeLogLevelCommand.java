@@ -27,7 +27,6 @@ import org.springframework.shell.core.annotation.CliOption;
 
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.execute.Execution;
-import org.apache.geode.cache.execute.Function;
 import org.apache.geode.cache.execute.FunctionService;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.logging.internal.log4j.LogLevel;
@@ -53,13 +52,13 @@ public class ChangeLogLevelCommand extends GfshCommand {
   @ResourceOperation(resource = ResourcePermission.Resource.CLUSTER,
       operation = ResourcePermission.Operation.WRITE)
   public ResultModel changeLogLevel(
+      @CliOption(key = CliStrings.CHANGE_LOGLEVEL__LOGLEVEL,
+          optionContext = ConverterHint.LOG_LEVEL, mandatory = true, unspecifiedDefaultValue = "",
+          help = CliStrings.CHANGE_LOGLEVEL__LOGLEVEL__HELP) String logLevel,
       @CliOption(key = {CliStrings.MEMBER, CliStrings.MEMBERS},
           help = CliStrings.CHANGE_LOGLEVEL__MEMBER__HELP) String[] memberIds,
       @CliOption(key = {CliStrings.GROUP, CliStrings.GROUPS}, unspecifiedDefaultValue = "",
-          help = CliStrings.CHANGE_LOGLEVEL__GROUPS__HELP) String[] grps,
-      @CliOption(key = CliStrings.CHANGE_LOGLEVEL__LOGLEVEL,
-          optionContext = ConverterHint.LOG_LEVEL, mandatory = true, unspecifiedDefaultValue = "",
-          help = CliStrings.CHANGE_LOGLEVEL__LOGLEVEL__HELP) String logLevel) {
+          help = CliStrings.CHANGE_LOGLEVEL__GROUPS__HELP) String[] grps) {
 
     if ((memberIds == null || memberIds.length == 0) && (grps == null || grps.length == 0)) {
       return ResultModel.createError(CliStrings.CHANGE_LOGLEVEL__MSG__SPECIFY_GRP_OR_MEMBER);
@@ -93,14 +92,15 @@ public class ChangeLogLevelCommand extends GfshCommand {
           "No members were found matching the given member IDs or groups.");
     }
 
-    Function logFunction = new ChangeLogLevelFunction();
+    ChangeLogLevelFunction logFunction = new ChangeLogLevelFunction();
     FunctionService.registerFunction(logFunction);
     Object[] functionArgs = new Object[1];
     functionArgs[0] = logLevel;
 
     ResultModel result = new ResultModel();
 
-    Execution execution = FunctionService.onMembers(dsMembers).setArguments(functionArgs);
+    @SuppressWarnings("unchecked")
+    Execution<?, ?, ?> execution = FunctionService.onMembers(dsMembers).setArguments(functionArgs);
     if (execution == null) {
       return ResultModel.createError(CliStrings.CHANGE_LOGLEVEL__MSG__CANNOT_EXECUTE);
     }
@@ -120,6 +120,7 @@ public class ChangeLogLevelCommand extends GfshCommand {
         }
 
         if (object != null) {
+          @SuppressWarnings("unchecked")
           Map<String, String> resultMap = (Map<String, String>) object;
           Map.Entry<String, String> entry = resultMap.entrySet().iterator().next();
 

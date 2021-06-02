@@ -14,8 +14,10 @@
  */
 package org.apache.geode.internal.cache.tier.sockets;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.junit.Assert.assertEquals;
 
 import java.util.ArrayList;
@@ -39,7 +41,6 @@ import org.apache.geode.cache.client.PoolManager;
 import org.apache.geode.cache.client.ServerConnectivityException;
 import org.apache.geode.cache.server.CacheServer;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.test.dunit.Assert;
 import org.apache.geode.test.dunit.Host;
 import org.apache.geode.test.dunit.IgnoredException;
@@ -241,7 +242,7 @@ public class InterestResultPolicyDUnitTest extends JUnit4DistributedTestCase {
     RegionAttributes attrs = factory.create();
     cache.createRegion(REGION_NAME, attrs);
     CacheServer server = cache.addCacheServer();
-    int port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    int port = getRandomAvailableTCPPort();
     server.setPort(port);
     server.setNotifyBySubscription(true);
     server.setSocketBufferSize(32768);
@@ -255,7 +256,7 @@ public class InterestResultPolicyDUnitTest extends JUnit4DistributedTestCase {
    * @throws Exception - thrown if any problem occurs while creating entries at server cache
    */
   public static void populateServerCache() throws Exception {
-    Region region1 = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region region1 = cache.getRegion(SEPARATOR + REGION_NAME);
     for (int i = 0; i < PREPOPULATED_ENTRIES; i++) {
       region1.put("key-" + i, "val-" + i);
     }
@@ -295,7 +296,7 @@ public class InterestResultPolicyDUnitTest extends JUnit4DistributedTestCase {
   public static void registerInterest(Object interestPolicy, Object totalKeysToRegister) {
     InterestResultPolicy policy = (InterestResultPolicy) interestPolicy;
     int totalKeys = ((Integer) totalKeysToRegister).intValue();
-    Region region1 = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region region1 = cache.getRegion(SEPARATOR + REGION_NAME);
     LogWriter logger = cache.getLogger();
     logger.fine("Registering interest in " + totalKeys + " keys");
     List keylist = new ArrayList();
@@ -318,7 +319,7 @@ public class InterestResultPolicyDUnitTest extends JUnit4DistributedTestCase {
    * @param interestPolicy - {@link InterestResultPolicy} registered for the region
    */
   public static void verifyResult(Object interestPolicy, Object totalKeysRegistered) {
-    Region region1 = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region region1 = cache.getRegion(SEPARATOR + REGION_NAME);
     int entriesSize = region1.entrySet(false).size();
     int keysSize = region1.keySet().size();
     int valuesSize = region1.values().size();
@@ -352,7 +353,7 @@ public class InterestResultPolicyDUnitTest extends JUnit4DistributedTestCase {
    * @return - total keys
    */
   public static Object getEntryCount() {
-    Region region1 = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region region1 = cache.getRegion(SEPARATOR + REGION_NAME);
     int keysSize = region1.keySet().size();
     return new Integer(keysSize);
   }

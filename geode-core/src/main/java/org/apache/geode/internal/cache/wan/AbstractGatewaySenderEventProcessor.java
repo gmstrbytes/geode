@@ -26,6 +26,7 @@ import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 
 import org.apache.logging.log4j.Logger;
 
@@ -145,13 +146,23 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
    * occurs.
    */
   private int batchSize;
+  private int batchTimeInterval;
 
   public AbstractGatewaySenderEventProcessor(String string,
       GatewaySender sender, ThreadsMonitoring tMonitoring) {
     super(string);
     this.sender = (AbstractGatewaySender) sender;
     this.batchSize = sender.getBatchSize();
+    this.batchTimeInterval = sender.getBatchTimeInterval();
     this.threadMonitoring = tMonitoring;
+  }
+
+  public void setExpectedReceiverUniqueId(String uniqueId) {
+    this.sender.setExpectedReceiverUniqueId(uniqueId);
+  }
+
+  public String getExpectedReceiverUniqueId() {
+    return this.sender.getExpectedReceiverUniqueId();
   }
 
   public Object getRunningStateLock() {
@@ -163,10 +174,27 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
     return getQueue().size();
   }
 
-  protected abstract void initializeMessageQueue(String id);
+  protected abstract void initializeMessageQueue(String id, boolean cleanQueues);
 
-  public abstract void enqueueEvent(EnumListenerEvent operation, EntryEvent event,
-      Object substituteValue) throws IOException, CacheException;
+  public boolean enqueueEvent(EnumListenerEvent operation, EntryEvent event,
+      Object substituteValue) throws IOException, CacheException {
+    return enqueueEvent(operation, event, substituteValue, false, null);
+  }
+
+  /**
+   *
+   * @param operation The operation
+   * @param event The event to be put in the queue
+   * @param substituteValue The substitute value
+   * @param isLastEventInTransaction True if this event is the last one in the
+   *        transaction it belongs to
+   * @param condition If not null, the event will be enqueued only if at least
+   *        one element in the queue matches the predicate
+   * @return False only if the condition is not null and no element in the queue matches it
+   */
+  public abstract boolean enqueueEvent(EnumListenerEvent operation, EntryEvent event,
+      Object substituteValue, boolean isLastEventInTransaction,
+      Predicate<InternalGatewayQueueEvent> condition) throws IOException, CacheException;
 
   protected abstract void rebalance();
 
@@ -174,12 +202,10 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
     return this.isStopped;
   }
 
-  protected void setIsStopped(boolean isStopped) {
+  public void setIsStopped(boolean isStopped) {
+    this.isStopped = isStopped;
     if (isStopped) {
-      this.isStopped = true;
       this.failureLogInterval.clear();
-    } else {
-      this.isStopped = isStopped;
     }
   }
 
@@ -208,7 +234,7 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
   /**
    * Reset the batch id. This method is not synchronized because this dispatcher is the caller
    */
-  protected void resetBatchId() {
+  public void resetBatchId() {
     this.batchId = 0;
     // dont reset first time when first batch is put for dispatch
     // if (this.batchIdToEventsMap.size() == 1) {
@@ -220,11 +246,11 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
     this.resetLastPeekedEvents = true;
   }
 
-  protected int getBatchSize() {
+  public int getBatchSize() {
     return this.batchSize;
   }
 
-  protected void setBatchSize(int batchSize) {
+  public void setBatchSize(int batchSize) {
     int currentBatchSize = this.batchSize;
     if (batchSize <= 0) {
       this.batchSize = 1;
@@ -238,16 +264,20 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
     }
   }
 
+  protected void setBatchTimeInterval(int batchTimeInterval) {
+    this.batchTimeInterval = batchTimeInterval;
+  }
+
   /**
    * Returns the current batch id to be used to identify the next batch.
    *
    * @return the current batch id to be used to identify the next batch
    */
-  protected int getBatchId() {
+  public int getBatchId() {
     return this.batchId;
   }
 
-  protected boolean isConnectionReset() {
+  public boolean isConnectionReset() {
     return this.resetLastPeekedEvents;
   }
 
@@ -409,7 +439,6 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
     final boolean isDebugEnabled = logger.isDebugEnabled();
     final boolean isTraceEnabled = logger.isTraceEnabled();
 
-    final int batchTimeInterval = sender.getBatchTimeInterval();
     final GatewaySenderStats statistics = this.sender.getStatistics();
 
     if (isDebugEnabled) {
@@ -426,6 +455,7 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
 
     for (;;) {
       if (stopped()) {
+        this.resetLastPeekedEvents = true;
         break;
       }
 
@@ -442,6 +472,7 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
         for (;;) {
           // check before sleeping
           if (stopped()) {
+            this.resetLastPeekedEvents = true;
             if (isDebugEnabled) {
               logger.debug(
                   "GatewaySenderEventProcessor is stopped. Returning without peeking events.");
@@ -489,7 +520,7 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
                * Thread.currentThread().interrupt(); } } }
                */
             }
-            events = this.queue.peek(this.batchSize, batchTimeInterval);
+            events = this.queue.peek(this.batchSize, this.batchTimeInterval);
           } catch (InterruptedException e) {
             interrupted = true;
             this.sender.getCancelCriterion().checkCancelInProgress(e);
@@ -654,6 +685,7 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
             }
             // check again, don't do post-processing if we're stopped.
             if (stopped()) {
+              this.resetLastPeekedEvents = true;
               break;
             }
 
@@ -687,7 +719,11 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
                           "During normal processing, unsuccessfully dispatched {} events (batch #{})",
                           conflatedEventsToBeDispatched.size(), getBatchId());
                     }
-                    if (stopped() || resetLastPeekedEvents) {
+                    if (stopped()) {
+                      this.resetLastPeekedEvents = true;
+                      break;
+                    }
+                    if (resetLastPeekedEvents) {
                       break;
                     }
                     try {
@@ -699,7 +735,9 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
                       Thread.currentThread().interrupt();
                     }
                   }
-                  incrementBatchId();
+                  if (!resetLastPeekedEvents) {
+                    incrementBatchId();
+                  }
                 }
               }
             } // unsuccessful batch
@@ -861,15 +899,10 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
           GatewaySenderEventCallbackArgument geCallbackArg = new GatewaySenderEventCallbackArgument(
               event.getRawCallbackArgument(), this.sender.getMyDSId(), allRemoteDSIds);
           event.setCallbackArgument(geCallbackArg);
+          // OFFHEAP: event for pdx type meta data so it should never be off-heap
           GatewaySenderEventImpl pdxSenderEvent =
-              new GatewaySenderEventImpl(EnumListenerEvent.AFTER_UPDATE, event, null); // OFFHEAP:
-                                                                                       // event for
-                                                                                       // pdx type
-                                                                                       // meta data
-                                                                                       // so it
-                                                                                       // should
-                                                                                       // never be
-                                                                                       // off-heap
+              new GatewaySenderEventImpl(EnumListenerEvent.AFTER_UPDATE, event, null, false);
+
           pdxEventsMap.put(typeEntry.getKey(), pdxSenderEvent);
           pdxSenderEventsList.add(pdxSenderEvent);
         }
@@ -961,7 +994,9 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
 
     filteredList.clear();
     eventQueueRemove(events.size());
-    final GatewaySenderStats statistics = this.sender.getStatistics();
+
+    logThresholdExceededAlerts(events);
+
     int queueSize = eventQueueSize();
 
     if (this.eventQueueSizeWarning && queueSize <= AbstractGatewaySender.QUEUE_SIZE_THRESHOLD) {
@@ -1028,24 +1063,27 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
       }
       eventQueueRemove(events.size());
 
-      final GatewaySenderStats statistics = this.sender.getStatistics();
+      logThresholdExceededAlerts(events);
+    }
+  }
 
-      // Log an alert for each event if necessary
-      if (this.sender.getAlertThreshold() > 0) {
-        Iterator it = events.iterator();
-        long currentTime = System.currentTimeMillis();
-        while (it.hasNext()) {
-          Object o = it.next();
-          if (o != null && o instanceof GatewaySenderEventImpl) {
-            GatewaySenderEventImpl ge = (GatewaySenderEventImpl) o;
-            if (ge.getCreationTime() + this.sender.getAlertThreshold() < currentTime) {
-              logger.warn(
-                  "{} event for region={} key={} value={} was in the queue for {} milliseconds",
-                  new Object[] {ge.getOperation(), ge.getRegionPath(), ge.getKey(),
-                      ge.getValueAsString(true), currentTime - ge.getCreationTime()});
-              statistics.incEventsExceedingAlertThreshold();
-            }
+  protected void logThresholdExceededAlerts(List<GatewaySenderEventImpl> events) {
+    // Log an alert for each event if necessary
+    if (getSender().getAlertThreshold() > 0) {
+      long currentTime = System.currentTimeMillis();
+      for (GatewaySenderEventImpl event : events) {
+        try {
+          if (event.getCreationTime() + getSender().getAlertThreshold() < currentTime) {
+            logger.warn(
+                "{} event for region={} key={} value={} was in the queue for {} milliseconds",
+                new Object[] {event.getOperation(), event.getRegionPath(), event.getKey(),
+                    event.getValueAsString(true), currentTime - event.getCreationTime()});
+            getSender().getStatistics().incEventsExceedingAlertThreshold();
           }
+        } catch (Exception e) {
+          logger.warn("Caught the following exception attempting to log threshold exceeded alert:",
+              e);
+          getSender().getStatistics().incEventsExceedingAlertThreshold();
         }
       }
     }
@@ -1240,6 +1278,10 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
       if (this.sender.isPrimary() && this.queue.size() > 0) {
         logger.warn("Destroying GatewayEventDispatcher with actively queued data.");
       }
+      if (resetLastPeekedEvents) {
+        resetLastPeekedEvents();
+        resetLastPeekedEvents = false;
+      }
     } catch (RegionDestroyedException ignore) {
     } catch (CancelException ignore) {
     } catch (CacheException ignore) {
@@ -1359,7 +1401,8 @@ public abstract class AbstractGatewaySenderEventProcessor extends LoggingThread
     }
   }
 
-  protected abstract void enqueueEvent(GatewayQueueEvent event);
+  protected abstract boolean enqueueEvent(GatewayQueueEvent event,
+      Predicate<InternalGatewayQueueEvent> condition);
 
   protected class SenderStopperCallable implements Callable<Boolean> {
     private final AbstractGatewaySenderEventProcessor p;

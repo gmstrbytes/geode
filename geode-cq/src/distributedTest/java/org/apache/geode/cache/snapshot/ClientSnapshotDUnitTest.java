@@ -14,6 +14,7 @@
  */
 package org.apache.geode.cache.snapshot;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.LOG_LEVEL;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -79,7 +80,7 @@ public class ClientSnapshotDUnitTest extends JUnit4CacheTestCase {
         File f = new File(getDiskDirs()[0], "client-export.snapshot.gfd");
         Region<Integer, MyObject> r = getCache().getRegion("clienttest");
 
-        r.getSnapshotService().save(f, SnapshotFormat.GEMFIRE);
+        r.getSnapshotService().save(f, SnapshotFormat.GEODE);
 
         return f;
       }
@@ -120,7 +121,7 @@ public class ClientSnapshotDUnitTest extends JUnit4CacheTestCase {
         File f = new File(getDiskDirs()[0], "client-import.snapshot.gfd");
         Region<Integer, MyObject> r = getCache().getRegion("clienttest");
 
-        r.getSnapshotService().save(f, SnapshotFormat.GEMFIRE);
+        r.getSnapshotService().save(f, SnapshotFormat.GEODE);
 
         return f;
       }
@@ -145,11 +146,12 @@ public class ClientSnapshotDUnitTest extends JUnit4CacheTestCase {
 
         Region<Integer, MyObject> r = getCache().getRegion("clienttest");
         CqQuery cq =
-            r.getRegionService().getQueryService().newCq("SELECT * FROM /clienttest", af.create());
+            r.getRegionService().getQueryService()
+                .newCq("SELECT * FROM " + SEPARATOR + "clienttest", af.create());
         cq.execute();
 
         File f = new File(getDiskDirs()[0], "client-import.snapshot.gfd");
-        r.getSnapshotService().load(f, SnapshotFormat.GEMFIRE);
+        r.getSnapshotService().load(f, SnapshotFormat.GEODE);
 
         return cqtest.get();
       }
@@ -188,7 +190,7 @@ public class ClientSnapshotDUnitTest extends JUnit4CacheTestCase {
     }
 
     File f = new File(getDiskDirs()[0], "client-callback.snapshot.gfd");
-    region.getSnapshotService().save(f, SnapshotFormat.GEMFIRE);
+    region.getSnapshotService().save(f, SnapshotFormat.GEODE);
 
     for (int i = 0; i < count; i++) {
       region.put(i, new MyObject(i, "XXX"));
@@ -224,7 +226,8 @@ public class ClientSnapshotDUnitTest extends JUnit4CacheTestCase {
         });
 
         CqQuery cq =
-            r.getRegionService().getQueryService().newCq("SELECT * FROM /clienttest", af.create());
+            r.getRegionService().getQueryService()
+                .newCq("SELECT * FROM " + SEPARATOR + "clienttest", af.create());
         cq.execute();
 
         return null;
@@ -232,7 +235,7 @@ public class ClientSnapshotDUnitTest extends JUnit4CacheTestCase {
     };
 
     Host.getHost(0).getVM(3).invoke(callbacks);
-    region.getSnapshotService().load(f, SnapshotFormat.GEMFIRE);
+    region.getSnapshotService().load(f, SnapshotFormat.GEODE);
   }
 
   @Test
@@ -246,8 +249,8 @@ public class ClientSnapshotDUnitTest extends JUnit4CacheTestCase {
         r.invalidate(1);
 
         File f = new File(getDiskDirs()[0], "client-invalidate.snapshot.gfd");
-        r.getSnapshotService().save(f, SnapshotFormat.GEMFIRE);
-        r.getSnapshotService().load(f, SnapshotFormat.GEMFIRE);
+        r.getSnapshotService().save(f, SnapshotFormat.GEODE);
+        r.getSnapshotService().load(f, SnapshotFormat.GEODE);
 
         return null;
       }

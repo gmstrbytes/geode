@@ -573,6 +573,30 @@ public class PartitionedRegionTest {
         .hasMessage(PartitionedRegion.DATA_MOVED_BY_REBALANCE).hasCause(exception);
   }
 
+  @Test
+  public void testGetRegionCreateNotification() {
+    partitionedRegion = new PartitionedRegion("region", attributesFactory.create(), null, cache,
+        mock(InternalRegionArguments.class), disabledClock(), ColocationLoggerFactory.create());
+
+    assertThat(partitionedRegion.isRegionCreateNotified()).isFalse();
+
+    partitionedRegion.setRegionCreateNotified(true);
+
+    assertThat(partitionedRegion.isRegionCreateNotified()).isTrue();
+  }
+
+  @Test
+  public void testNotifyRegionCreated() {
+    partitionedRegion = new PartitionedRegion("region", attributesFactory.create(), null, cache,
+        mock(InternalRegionArguments.class), disabledClock(), ColocationLoggerFactory.create());
+
+    assertThat(partitionedRegion.isRegionCreateNotified()).isFalse();
+
+    partitionedRegion.notifyRegionCreated();
+
+    assertThat(partitionedRegion.isRegionCreateNotified()).isTrue();
+  }
+
   private static <K> Set<K> asSet(K... values) {
     Set<K> set = new HashSet<>();
     Collections.addAll(set, values);

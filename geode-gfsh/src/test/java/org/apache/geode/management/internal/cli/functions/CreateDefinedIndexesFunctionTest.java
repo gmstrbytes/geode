@@ -15,6 +15,7 @@
 
 package org.apache.geode.management.internal.cli.functions;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
@@ -39,12 +40,10 @@ import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.cache.execute.ResultSender;
 import org.apache.geode.cache.query.Index;
 import org.apache.geode.cache.query.IndexCreationException;
-import org.apache.geode.cache.query.IndexType;
 import org.apache.geode.cache.query.MultiIndexCreationException;
 import org.apache.geode.cache.query.QueryService;
 import org.apache.geode.cache.query.internal.InternalQueryService;
 import org.apache.geode.cache.query.internal.index.CompactMapRangeIndex;
-import org.apache.geode.cache.query.internal.index.HashIndex;
 import org.apache.geode.cache.query.internal.index.PrimaryKeyIndex;
 import org.apache.geode.internal.cache.execute.FunctionContextImpl;
 import org.apache.geode.management.internal.functions.CliFunctionResult;
@@ -52,15 +51,18 @@ import org.apache.geode.test.fake.Fakes;
 
 public class CreateDefinedIndexesFunctionTest {
   private Cache cache;
+  @SuppressWarnings("rawtypes")
   private Region region1;
+  @SuppressWarnings("rawtypes")
   private Region region2;
-  private FunctionContext context;
+  private FunctionContext<Set<RegionConfig.Index>> context;
   private QueryService queryService;
   private TestResultSender resultSender;
   private Set<RegionConfig.Index> indexDefinitions;
   private CreateDefinedIndexesFunction function;
 
   @Before
+  @SuppressWarnings("deprecation")
   public void setUp() throws Exception {
     cache = Fakes.cache();
     resultSender = new TestResultSender();
@@ -75,32 +77,32 @@ public class CreateDefinedIndexesFunctionTest {
       {
         setName("index1");
         setExpression("value1");
-        setFromClause("/Region1");
-        setType(IndexType.HASH.getName());
+        setFromClause(SEPARATOR + "Region1");
+        setType(org.apache.geode.cache.query.IndexType.HASH.getName());
       }
     });
     indexDefinitions.add(new RegionConfig.Index() {
       {
         setName("index2");
         setExpression("value2");
-        setFromClause("/Region2");
-        setType(IndexType.FUNCTIONAL.getName());
+        setFromClause(SEPARATOR + "Region2");
+        setType(org.apache.geode.cache.query.IndexType.FUNCTIONAL.getName());
       }
     });
     indexDefinitions.add(new RegionConfig.Index() {
       {
         setName("index3");
         setExpression("value3");
-        setFromClause("/Region1");
-        setType(IndexType.PRIMARY_KEY.getName());
+        setFromClause(SEPARATOR + "Region1");
+        setType(org.apache.geode.cache.query.IndexType.PRIMARY_KEY.getName());
       }
     });
   }
 
   @Test
+  @SuppressWarnings("deprecation")
   public void noIndexDefinitionsAsFunctionArgument() throws Exception {
-    context = new FunctionContextImpl(cache, CreateDefinedIndexesFunction.class.getName(),
-        Collections.emptySet(), resultSender);
+    context = createFunctionContext(Collections.emptySet());
 
     function.execute(context);
     List<?> results = resultSender.getResults();
@@ -115,10 +117,10 @@ public class CreateDefinedIndexesFunctionTest {
   }
 
   @Test
+  @SuppressWarnings("deprecation")
   public void noIndexPreviouslyDefinedInQueryService() throws Exception {
     when(queryService.createDefinedIndexes()).thenReturn(Collections.emptyList());
-    context = new FunctionContextImpl(cache, CreateDefinedIndexesFunction.class.getName(),
-        indexDefinitions, resultSender);
+    context = createFunctionContext(indexDefinitions);
 
     function.execute(context);
     List<?> results = resultSender.getResults();
@@ -139,8 +141,7 @@ public class CreateDefinedIndexesFunctionTest {
     exceptions.put("index3", new IndexCreationException("Another Mock Failure."));
     when(queryService.createDefinedIndexes())
         .thenThrow(new MultiIndexCreationException(exceptions));
-    context = new FunctionContextImpl(cache, CreateDefinedIndexesFunction.class.getName(),
-        indexDefinitions, resultSender);
+    context = createFunctionContext(indexDefinitions);
 
     function.execute(context);
     List<?> results = resultSender.getResults();
@@ -166,8 +167,7 @@ public class CreateDefinedIndexesFunctionTest {
   @Test
   public void unexpectedExceptionThrowByQueryService() throws Exception {
     when(queryService.createDefinedIndexes()).thenThrow(new RuntimeException("Mock Exception"));
-    context = new FunctionContextImpl(cache, CreateDefinedIndexesFunction.class.getName(),
-        indexDefinitions, resultSender);
+    context = createFunctionContext(indexDefinitions);
 
     function.execute(context);
     List<?> results = resultSender.getResults();
@@ -181,8 +181,10 @@ public class CreateDefinedIndexesFunctionTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
   public void creationSuccess() throws Exception {
-    Index index1 = mock(HashIndex.class);
+    @SuppressWarnings("deprecation")
+    Index index1 = mock(org.apache.geode.cache.query.internal.index.HashIndex.class);
     when(index1.getName()).thenReturn("index1");
     when(index1.getRegion()).thenReturn(region1);
 
@@ -195,8 +197,7 @@ public class CreateDefinedIndexesFunctionTest {
     when(index3.getRegion()).thenReturn(region1);
 
     when(queryService.createDefinedIndexes()).thenReturn(Arrays.asList(index1, index2, index3));
-    context = new FunctionContextImpl(cache, CreateDefinedIndexesFunction.class.getName(),
-        indexDefinitions, resultSender);
+    context = createFunctionContext(indexDefinitions);
 
     function.execute(context);
     List<?> results = resultSender.getResults();
@@ -210,7 +211,14 @@ public class CreateDefinedIndexesFunctionTest {
     assertThat(((CliFunctionResult) firstIndex).isSuccessful());
   }
 
-  private static class TestResultSender implements ResultSender {
+  @SuppressWarnings("unchecked")
+  private FunctionContext<Set<RegionConfig.Index>> createFunctionContext(
+      Set<RegionConfig.Index> indexDefinitions) {
+    return new FunctionContextImpl(cache, CreateDefinedIndexesFunction.class.getName(),
+        indexDefinitions, resultSender);
+  }
+
+  private static class TestResultSender implements ResultSender<Object> {
 
     private final List<Object> results = new LinkedList<>();
 

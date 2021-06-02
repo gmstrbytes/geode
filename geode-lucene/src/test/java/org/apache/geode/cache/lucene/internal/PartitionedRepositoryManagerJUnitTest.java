@@ -14,6 +14,7 @@
  */
 package org.apache.geode.cache.lucene.internal;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.internal.cache.PartitionedRegionHelper.PR_ROOT_REGION_NAME;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
 import static org.junit.Assert.assertEquals;
@@ -60,6 +61,7 @@ import org.apache.geode.internal.cache.BucketRegion;
 import org.apache.geode.internal.cache.CacheDistributionAdvisor;
 import org.apache.geode.internal.cache.DistributedRegion;
 import org.apache.geode.internal.cache.GemFireCacheImpl;
+import org.apache.geode.internal.cache.InternalRegionFactory;
 import org.apache.geode.internal.cache.PartitionRegionConfig;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.PartitionedRegion.RetryTimeKeeper;
@@ -96,7 +98,7 @@ public class PartitionedRepositoryManagerJUnitTest {
     userRegion = Mockito.mock(PartitionedRegion.class);
     userDataStore = Mockito.mock(PartitionedRegionDataStore.class);
     when(userRegion.getDataStore()).thenReturn(userDataStore);
-    when(cache.getRegion("/testRegion")).thenReturn(userRegion);
+    when(cache.getRegion(SEPARATOR + "testRegion")).thenReturn(userRegion);
     serializer = new HeterogeneousLuceneSerializer();
     DLockService lockService = mock(DLockService.class);
     when(lockService.lock(any(), anyLong(), anyLong())).thenReturn(true);
@@ -130,13 +132,15 @@ public class PartitionedRepositoryManagerJUnitTest {
     when(indexForPR.getIndexStats()).thenReturn(indexStats);
     when(indexForPR.getAnalyzer()).thenReturn(new StandardAnalyzer());
     when(indexForPR.getCache()).thenReturn(cache);
-    when(indexForPR.getRegionPath()).thenReturn("/testRegion");
+    when(indexForPR.getRegionPath()).thenReturn(SEPARATOR + "testRegion");
 
     prRoot = Mockito.mock(DistributedRegion.class);
     CacheDistributionAdvisor cda = mock(CacheDistributionAdvisor.class);
     when(prRoot.getDistributionAdvisor()).thenReturn(cda);
     doNothing().when(cda).addMembershipListener(any());
-    when(cache.createVMRegion(eq(PR_ROOT_REGION_NAME), any(), any())).thenReturn(prRoot);
+    InternalRegionFactory regionFactory = mock(InternalRegionFactory.class);
+    when(regionFactory.create(eq(PR_ROOT_REGION_NAME))).thenReturn(prRoot);
+    when(cache.createInternalRegionFactory(any())).thenReturn(regionFactory);
 
     prConfig = Mockito.mock(PartitionRegionConfig.class);
     when(prConfig.isColocationComplete()).thenReturn(true);

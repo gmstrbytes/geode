@@ -30,6 +30,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -112,6 +113,8 @@ public abstract class AbstractRegion implements InternalRegion, AttributesMutato
   private static final Logger logger = LogService.getLogger();
   private final ReentrantReadWriteLock readWriteLockForCacheLoader = new ReentrantReadWriteLock();
   private final ReentrantReadWriteLock readWriteLockForCacheWriter = new ReentrantReadWriteLock();
+  protected final ConcurrentHashMap<RegionEntry, EntryExpiryTask> entryExpiryTasks =
+      new ConcurrentHashMap<>();
   /**
    * Identifies the static order in which this region was created in relation to other regions or
    * other instances of this region during the life of this JVM.
@@ -738,8 +741,8 @@ public abstract class AbstractRegion implements InternalRegion, AttributesMutato
         // This is for all regions except pdx Region
         if (!isPdxTypesRegion) {
           // Make sure we are distributing to only those senders whose id
-          // is available on this region
-          if (allGatewaySenderIds.contains(sender.getId())) {
+          // is available on this region and whose state is running
+          if (hasRunningGatewaySender(allGatewaySenders, sender)) {
             allRemoteDSIds.add(sender.getRemoteDSId());
           }
         } else { // this else is for PDX region
@@ -1892,5 +1895,14 @@ public abstract class AbstractRegion implements InternalRegion, AttributesMutato
 
   protected interface PoolFinder {
     PoolImpl find(String poolName);
+  }
+
+  static boolean hasRunningGatewaySender(Set<GatewaySender> senders, GatewaySender sender) {
+    return senders.contains(sender) && sender.isRunning();
+  }
+
+  @VisibleForTesting
+  ConcurrentHashMap<RegionEntry, EntryExpiryTask> getEntryExpiryTasks() {
+    return entryExpiryTasks;
   }
 }

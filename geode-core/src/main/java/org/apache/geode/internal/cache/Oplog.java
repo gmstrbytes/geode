@@ -104,8 +104,9 @@ import org.apache.geode.internal.offheap.annotations.Released;
 import org.apache.geode.internal.offheap.annotations.Retained;
 import org.apache.geode.internal.sequencelog.EntryLogger;
 import org.apache.geode.internal.serialization.ByteArrayDataInput;
-import org.apache.geode.internal.serialization.UnsupportedSerializationVersionException;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
+import org.apache.geode.internal.serialization.Versioning;
+import org.apache.geode.internal.serialization.VersioningIO;
 import org.apache.geode.internal.shared.NativeCalls;
 import org.apache.geode.internal.util.BlobHelper;
 import org.apache.geode.logging.internal.log4j.api.LogService;
@@ -151,14 +152,14 @@ public class Oplog implements CompactableOplog, Flushable {
   protected final long oplogId;
 
   /** recovered gemfire version * */
-  protected Version gfversion;
+  protected KnownVersion gfversion;
 
   /**
    * Recovered version of the data. Usually this is same as {@link #gfversion} except for the case
    * of upgrading disk store from previous version in which case the keys/values are carried forward
    * as is and need to be interpreted in load by latest product code if required.
    */
-  protected Version dataVersion;
+  protected KnownVersion dataVersion;
 
   /** Directory in which the file is present* */
   private DirectoryHolder dirHolder;
@@ -729,11 +730,11 @@ public class Oplog implements CompactableOplog, Flushable {
 
   private void writeGemfireVersionRecord(OplogFile olf) throws IOException {
     if (this.gfversion == null) {
-      this.gfversion = Version.CURRENT;
+      this.gfversion = KnownVersion.CURRENT;
     }
-    Version dataVersion = getDataVersionIfOld();
+    KnownVersion dataVersion = getDataVersionIfOld();
     if (dataVersion == null) {
-      dataVersion = Version.CURRENT;
+      dataVersion = KnownVersion.CURRENT;
     }
     // if gfversion and dataVersion are not same, then write a special token
     // version and then write both, else write gfversion as before
@@ -742,7 +743,7 @@ public class Oplog implements CompactableOplog, Flushable {
     if (this.gfversion == dataVersion) {
       writeProductVersionRecord(this.gfversion, olf);
     } else {
-      writeProductVersionRecord(Version.TOKEN, olf);
+      writeProductVersionRecord(KnownVersion.TOKEN, olf);
       clearOpState();
       writeProductVersionRecord(this.gfversion, olf);
       clearOpState();
@@ -750,14 +751,14 @@ public class Oplog implements CompactableOplog, Flushable {
     }
   }
 
-  private void writeProductVersionRecord(Version version, OplogFile olf) throws IOException {
+  private void writeProductVersionRecord(KnownVersion version, OplogFile olf) throws IOException {
     this.opState.initialize(version.ordinal());
     writeOpLogBytes(olf, false, true);
     olf.currSize += getOpStateSize();
     this.dirHolder.incrementTotalOplogSize(getOpStateSize());
   }
 
-  public Version currentRecoveredGFVersion() {
+  public KnownVersion currentRecoveredGFVersion() {
     return this.gfversion;
   }
 
@@ -937,14 +938,14 @@ public class Oplog implements CompactableOplog, Flushable {
         // this.crf.raf.seek(this.crf.currSize);
       } else if (!offline) {
         // drf exists but crf has been deleted (because it was empty).
-        // I don't think the drf needs to be opened. It is only used during
-        // recovery.
-        // At some point the compacter my identify that it can be deleted.
+        // I don't think the drf needs to be opened. It is only used during recovery.
+        // At some point the compacter may identify that it can be deleted.
         this.crf.RAFClosed = true;
         deleteCRF();
         this.closed = true;
         this.deleted.set(true);
       }
+
       this.drf.RAFClosed = true; // since we never open it on a recovered oplog
     } catch (IOException ex) {
       getParent().getCancelCriterion().checkCancelInProgress(ex);
@@ -1649,7 +1650,7 @@ public class Oplog implements CompactableOplog, Flushable {
       long oplogKeyIdHWM = DiskStoreImpl.INVALID_ID;
       int krfEntryCount = 0;
       DataInputStream dis = new DataInputStream(new BufferedInputStream(fis, 1024 * 1024));
-      final Version version = getProductVersionIfOld();
+      final KnownVersion version = getProductVersionIfOld();
       final ByteArrayDataInput in = new ByteArrayDataInput();
       try {
         try {
@@ -1747,35 +1748,42 @@ public class Oplog implements CompactableOplog, Flushable {
                         oplogKeyId));
               }
             }
-            DiskEntry de = drs.getDiskEntry(key);
-            if (de == null) {
-              if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
-                logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE,
-                    "readNewEntry oplogKeyId=<{}> drId={} userBits={} oplogOffset={} valueLen={}",
-                    oplogKeyId, drId, userBits, oplogOffset, valueLength);
-              }
-              DiskEntry.RecoveredEntry re = createRecoveredEntry(valueBytes, valueLength, userBits,
-                  getOplogId(), oplogOffset, oplogKeyId, false, version, in);
-              if (tag != null) {
-                re.setVersionTag(tag);
-              }
-              initRecoveredEntry(drs.getDiskRegionView(), drs.initializeRecoveredEntry(key, re));
-              drs.getDiskRegionView().incRecoveredEntryCount();
-              this.stats.incRecoveredEntryCreates();
-              krfEntryCount++;
-            } else {
-              DiskId curdid = de.getDiskId();
-              // assert curdid.getOplogId() != getOplogId();
-              if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
-                logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE,
-                    "ignore readNewEntry because getOplogId()={} != curdid.getOplogId()={} for drId={} key={}",
-                    getOplogId(), curdid.getOplogId(), drId, key);
+            if (drs != null) {
+              DiskEntry de = drs.getDiskEntry(key);
+              if (de == null) {
+                if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
+                  logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE,
+                      "readNewEntry oplogKeyId=<{}> drId={} userBits={} oplogOffset={} valueLen={}",
+                      oplogKeyId, drId, userBits, oplogOffset, valueLength);
+                }
+                DiskEntry.RecoveredEntry re =
+                    createRecoveredEntry(valueBytes, valueLength, userBits,
+                        getOplogId(), oplogOffset, oplogKeyId, false, version, in);
+                if (tag != null) {
+                  re.setVersionTag(tag);
+                }
+                initRecoveredEntry(drs.getDiskRegionView(), drs.initializeRecoveredEntry(key, re));
+                drs.getDiskRegionView().incRecoveredEntryCount();
+                this.stats.incRecoveredEntryCreates();
+                krfEntryCount++;
+              } else {
+                DiskId curdid = de.getDiskId();
+                // assert curdid.getOplogId() != getOplogId();
+                if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
+                  logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE,
+                      "ignore readNewEntry because getOplogId()={} != curdid.getOplogId()={} for drId={} key={}",
+                      getOplogId(), curdid.getOplogId(), drId, key);
+                }
               }
             }
           }
           keyBytes = DataSerializer.readByteArray(dis);
         } // while
         setRecoverNewEntryId(oplogKeyIdHWM);
+        long tlc = totalLiveCount.get();
+        if (totalCount.get() == 0 && tlc > 0) {
+          totalCount.set(tlc);
+        }
       } catch (IOException ex) {
         try {
           fis.close();
@@ -1835,9 +1843,9 @@ public class Oplog implements CompactableOplog, Flushable {
     CountingDataInputStream dis = null;
     try {
       final LocalRegion currentRegion = LocalRegion.getInitializingRegion();
-      final Version version = getProductVersionIfOld();
+      final KnownVersion version = getProductVersionIfOld();
       final ByteArrayDataInput in = new ByteArrayDataInput();
-      final HeapDataOutputStream hdos = new HeapDataOutputStream(Version.CURRENT);
+      final HeapDataOutputStream hdos = new HeapDataOutputStream(KnownVersion.CURRENT);
       int recordCount = 0;
       boolean foundDiskStoreRecord = false;
       FileInputStream fis = null;
@@ -1940,6 +1948,7 @@ public class Oplog implements CompactableOplog, Flushable {
         if (fis != null) {
           fis.close();
         }
+        hdos.close();
       }
       if (!foundDiskStoreRecord && recordCount > 0) {
         throw new DiskAccessException(
@@ -2034,9 +2043,9 @@ public class Oplog implements CompactableOplog, Flushable {
    * @throws DiskAccessException if this file does not belong to our parent
    */
   private void readGemfireVersionRecord(DataInput dis, File f) throws IOException {
-    Version recoveredGFVersion = readProductVersionRecord(dis, f);
+    KnownVersion recoveredGFVersion = readProductVersionRecord(dis, f);
     final boolean hasDataVersion;
-    if ((hasDataVersion = (recoveredGFVersion == Version.TOKEN))) {
+    if ((hasDataVersion = (recoveredGFVersion == KnownVersion.TOKEN))) {
       // actual GFE version will be the next record in this case
       byte opCode = dis.readByte();
       if (opCode != OPLOG_GEMFIRE_VERSION) {
@@ -2069,14 +2078,14 @@ public class Oplog implements CompactableOplog, Flushable {
     }
   }
 
-  private Version readProductVersionRecord(DataInput dis, File f) throws IOException {
-    Version recoveredGFVersion;
-    short ver = Version.readOrdinal(dis);
-    try {
-      recoveredGFVersion = Version.fromOrdinal(ver);
-    } catch (UnsupportedSerializationVersionException e) {
+  private KnownVersion readProductVersionRecord(DataInput dis, File f) throws IOException {
+    short ver = VersioningIO.readOrdinal(dis);
+    final KnownVersion recoveredGFVersion =
+        Versioning.getKnownVersionOrDefault(
+            Versioning.getVersion(ver), null);
+    if (recoveredGFVersion == null) {
       throw new DiskAccessException(
-          String.format("Unknown version ordinal %s found when recovering Oplogs", ver), e,
+          String.format("Unknown version ordinal %s found when recovering Oplogs", ver),
           getParent());
     }
     if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
@@ -2220,6 +2229,12 @@ public class Oplog implements CompactableOplog, Flushable {
         if (getParent().isOfflineCompacting()) {
           getParent().incLiveEntryCount(getRecoveryMap().size());
         }
+        long tc = totalCount.get();
+        long tlc = totalLiveCount.get();
+        if (getParent().isValidating() && tlc >= 0
+            && tc > tlc) {
+          getParent().incDeadRecordCount(tc - tlc);
+        }
         getParent().incDeadRecordCount(getRecordsSkipped());
       }
       if (getParent().isOfflineCompacting()) {
@@ -2286,7 +2301,7 @@ public class Oplog implements CompactableOplog, Flushable {
    */
   public DiskEntry.RecoveredEntry createRecoveredEntry(byte[] valueBytes, int valueLength,
       byte userBits, long oplogId, long offsetInOplog, long oplogKeyId, boolean recoverValue,
-      Version version, ByteArrayDataInput in) {
+      KnownVersion version, ByteArrayDataInput in) {
     DiskEntry.RecoveredEntry re = null;
     if (recoverValue || EntryBits.isAnyInvalid(userBits) || EntryBits.isTombstone(userBits)) {
       Object value;
@@ -2351,7 +2366,7 @@ public class Oplog implements CompactableOplog, Flushable {
   }
 
   private VersionTag readVersionsFromOplog(DataInput dis) throws IOException {
-    if (Version.GFE_70.compareTo(currentRecoveredGFVersion()) <= 0) {
+    if (KnownVersion.GFE_70.compareTo(currentRecoveredGFVersion()) <= 0) {
       // this version format is for gemfire 7.0
       // if we have different version format in 7.1, it will be handled in
       // "else if"
@@ -2412,7 +2427,8 @@ public class Oplog implements CompactableOplog, Flushable {
    * @param opcode byte whether the id is short/int/long
    */
   private void readNewEntry(CountingDataInputStream dis, byte opcode, OplogEntryIdSet deletedIds,
-      boolean recoverValue, final LocalRegion currentRegion, Version version, ByteArrayDataInput in,
+      boolean recoverValue, final LocalRegion currentRegion, KnownVersion version,
+      ByteArrayDataInput in,
       HeapDataOutputStream hdos) throws IOException {
     final boolean isPersistRecoveryDebugEnabled =
         logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE);
@@ -2539,10 +2555,12 @@ public class Oplog implements CompactableOplog, Flushable {
           if (isPhase1()) {
             CompactionRecord cr = new CompactionRecord(keyBytes, crOffset);
             getRecoveryMap().put(oplogKeyId, cr);
-            drs.getDiskRegionView().incRecoveredEntryCount();
+            if (drs != null) {
+              drs.getDiskRegionView().incRecoveredEntryCount();
+            }
             this.stats.incRecoveredEntryCreates();
           } else { // phase2
-            Assert.assertTrue(p2cr != null, "First pass did not find create a compaction record");
+            Assert.assertNotNull(p2cr, "First pass did not find create a compaction record");
             getOplogSet().getChild().copyForwardForOfflineCompact(oplogKeyId, p2cr.getKeyBytes(),
                 objValue, userBits, drId, tag);
             if (isPersistRecoveryDebugEnabled) {
@@ -2564,29 +2582,31 @@ public class Oplog implements CompactableOplog, Flushable {
                       oplogKeyId));
             }
           }
-          DiskEntry de = drs.getDiskEntry(key);
-          if (de == null) {
-            if (isPersistRecoveryDebugEnabled) {
-              logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE,
-                  "readNewEntry oplogKeyId=<{}> drId={} key={} userBits={} oplogOffset={} valueLen={} tag={}",
-                  oplogKeyId, drId, key, userBits, oplogOffset, valueLength, tag);
-            }
-            DiskEntry.RecoveredEntry re = createRecoveredEntry(objValue, valueLength, userBits,
-                getOplogId(), oplogOffset, oplogKeyId, recoverValue, version, in);
-            if (tag != null) {
-              re.setVersionTag(tag);
-            }
-            initRecoveredEntry(drs.getDiskRegionView(), drs.initializeRecoveredEntry(key, re));
-            drs.getDiskRegionView().incRecoveredEntryCount();
-            this.stats.incRecoveredEntryCreates();
+          if (drs != null) {
+            DiskEntry de = drs.getDiskEntry(key);
+            if (de == null) {
+              if (isPersistRecoveryDebugEnabled) {
+                logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE,
+                    "readNewEntry oplogKeyId=<{}> drId={} key={} userBits={} oplogOffset={} valueLen={} tag={}",
+                    oplogKeyId, drId, key, userBits, oplogOffset, valueLength, tag);
+              }
+              DiskEntry.RecoveredEntry re = createRecoveredEntry(objValue, valueLength, userBits,
+                  getOplogId(), oplogOffset, oplogKeyId, recoverValue, version, in);
+              if (tag != null) {
+                re.setVersionTag(tag);
+              }
+              initRecoveredEntry(drs.getDiskRegionView(), drs.initializeRecoveredEntry(key, re));
+              drs.getDiskRegionView().incRecoveredEntryCount();
+              this.stats.incRecoveredEntryCreates();
 
-          } else {
-            DiskId curdid = de.getDiskId();
-            assert curdid.getOplogId() != getOplogId();
-            if (isPersistRecoveryDebugEnabled) {
-              logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE,
-                  "ignore readNewEntry because getOplogId()={} != curdid.getOplogId()={} for drId={} key={}",
-                  getOplogId(), curdid.getOplogId(), drId, key);
+            } else {
+              DiskId curdid = de.getDiskId();
+              assert curdid.getOplogId() != getOplogId();
+              if (isPersistRecoveryDebugEnabled) {
+                logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE,
+                    "ignore readNewEntry because getOplogId()={} != curdid.getOplogId()={} for drId={} key={}",
+                    getOplogId(), curdid.getOplogId(), drId, key);
+              }
             }
           }
         }
@@ -2601,7 +2621,7 @@ public class Oplog implements CompactableOplog, Flushable {
    * @param opcode byte whether the id is short/int/long
    */
   private void readModifyEntry(CountingDataInputStream dis, byte opcode, OplogEntryIdSet deletedIds,
-      boolean recoverValue, LocalRegion currentRegion, Version version, ByteArrayDataInput in,
+      boolean recoverValue, LocalRegion currentRegion, KnownVersion version, ByteArrayDataInput in,
       HeapDataOutputStream hdos) throws IOException {
     final boolean isPersistRecoveryDebugEnabled =
         logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE);
@@ -2717,7 +2737,7 @@ public class Oplog implements CompactableOplog, Flushable {
           incSkipped(); // we are going to compact the previous record away
           cr.update(crOffset);
         } else { // phase2
-          Assert.assertTrue(p2cr != null, "First pass did not find create a compaction record");
+          Assert.assertNotNull(p2cr, "First pass did not find create a compaction record");
           getOplogSet().getChild().copyForwardForOfflineCompact(oplogKeyId, p2cr.getKeyBytes(),
               objValue, userBits, drId, tag);
           if (isPersistRecoveryDebugEnabled) {
@@ -2730,38 +2750,40 @@ public class Oplog implements CompactableOplog, Flushable {
       } else {
         // Check the actual region to see if it has this key from
         // a previous recovered oplog.
-        DiskEntry de = drs.getDiskEntry(key);
+        if (drs != null) {
+          DiskEntry de = drs.getDiskEntry(key);
 
-        // This may actually be create, if the previous create or modify
-        // of this entry was cleared through the RVV clear.
-        if (de == null) {
-          DiskRegionView drv = drs.getDiskRegionView();
-          // and create an entry
-          DiskEntry.RecoveredEntry re = createRecoveredEntry(objValue, valueLength, userBits,
-              getOplogId(), oplogOffset, oplogKeyId, recoverValue, version, in);
-          if (tag != null) {
-            re.setVersionTag(tag);
+          // This may actually be create, if the previous create or modify
+          // of this entry was cleared through the RVV clear.
+          if (de == null) {
+            DiskRegionView drv = drs.getDiskRegionView();
+            // and create an entry
+            DiskEntry.RecoveredEntry re = createRecoveredEntry(objValue, valueLength, userBits,
+                getOplogId(), oplogOffset, oplogKeyId, recoverValue, version, in);
+            if (tag != null) {
+              re.setVersionTag(tag);
+            }
+            if (isPersistRecoveryDebugEnabled) {
+              logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE,
+                  "readModEntryWK init oplogKeyId=<{}> drId={} key=<{}> oplogOffset={} userBits={} valueLen={} tag={}",
+                  oplogKeyId, drId, key, oplogOffset, userBits, valueLength, tag);
+            }
+            initRecoveredEntry(drv, drs.initializeRecoveredEntry(key, re));
+            drs.getDiskRegionView().incRecoveredEntryCount();
+            this.stats.incRecoveredEntryCreates();
+
+          } else {
+            DiskEntry.RecoveredEntry re = createRecoveredEntry(objValue, valueLength, userBits,
+                getOplogId(), oplogOffset, oplogKeyId, recoverValue, version, in);
+            if (tag != null) {
+              re.setVersionTag(tag);
+            }
+            de = drs.updateRecoveredEntry(key, re);
+            updateRecoveredEntry(drs.getDiskRegionView(), de, re);
+
+            this.stats.incRecoveredEntryUpdates();
+
           }
-          if (isPersistRecoveryDebugEnabled) {
-            logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE,
-                "readModEntryWK init oplogKeyId=<{}> drId={} key=<{}> oplogOffset={} userBits={} valueLen={} tag={}",
-                oplogKeyId, drId, key, oplogOffset, userBits, valueLength, tag);
-          }
-          initRecoveredEntry(drv, drs.initializeRecoveredEntry(key, re));
-          drs.getDiskRegionView().incRecoveredEntryCount();
-          this.stats.incRecoveredEntryCreates();
-
-        } else {
-          DiskEntry.RecoveredEntry re = createRecoveredEntry(objValue, valueLength, userBits,
-              getOplogId(), oplogOffset, oplogKeyId, recoverValue, version, in);
-          if (tag != null) {
-            re.setVersionTag(tag);
-          }
-          de = drs.updateRecoveredEntry(key, re);
-          updateRecoveredEntry(drs.getDiskRegionView(), de, re);
-
-          this.stats.incRecoveredEntryUpdates();
-
         }
       }
     } else {
@@ -2791,7 +2813,7 @@ public class Oplog implements CompactableOplog, Flushable {
     }
   }
 
-  private void validateValue(byte[] valueBytes, byte userBits, Version version,
+  private void validateValue(byte[] valueBytes, byte userBits, KnownVersion version,
       ByteArrayDataInput in) {
     if (getParent().isValidating()) {
       if (EntryBits.isSerialized(userBits)) {
@@ -2818,7 +2840,7 @@ public class Oplog implements CompactableOplog, Flushable {
    */
   private void readModifyEntryWithKey(CountingDataInputStream dis, byte opcode,
       OplogEntryIdSet deletedIds, boolean recoverValue, final LocalRegion currentRegion,
-      Version version, ByteArrayDataInput in, HeapDataOutputStream hdos) throws IOException {
+      KnownVersion version, ByteArrayDataInput in, HeapDataOutputStream hdos) throws IOException {
     long oplogOffset = -1;
 
     byte userBits = dis.readByte();
@@ -2934,10 +2956,12 @@ public class Oplog implements CompactableOplog, Flushable {
         if (isPhase1()) {
           CompactionRecord cr = new CompactionRecord(keyBytes, crOffset);
           getRecoveryMap().put(oplogKeyId, cr);
-          drs.getDiskRegionView().incRecoveredEntryCount();
+          if (drs != null) {
+            drs.getDiskRegionView().incRecoveredEntryCount();
+          }
           this.stats.incRecoveredEntryCreates();
         } else { // phase2
-          Assert.assertTrue(p2cr != null, "First pass did not find create a compaction record");
+          Assert.assertNotNull(p2cr, "First pass did not find create a compaction record");
           getOplogSet().getChild().copyForwardForOfflineCompact(oplogKeyId, p2cr.getKeyBytes(),
               objValue, userBits, drId, tag);
           if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
@@ -2958,34 +2982,37 @@ public class Oplog implements CompactableOplog, Flushable {
         }
         // Check the actual region to see if it has this key from
         // a previous recovered oplog.
-        DiskEntry de = drs.getDiskEntry(key);
-        if (de == null) {
-          DiskRegionView drv = drs.getDiskRegionView();
-          // and create an entry
-          DiskEntry.RecoveredEntry re = createRecoveredEntry(objValue, valueLength, userBits,
-              getOplogId(), oplogOffset, oplogKeyId, recoverValue, version, in);
-          if (tag != null) {
-            re.setVersionTag(tag);
-          }
-          if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
-            logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE,
-                "readModEntryWK init oplogKeyId=<{}> drId={} key={} oplogOffset={} userBits={} valueLen={} tag={}",
-                oplogKeyId, drId, key, oplogOffset, userBits, valueLength, tag);
-          }
-          initRecoveredEntry(drv, drs.initializeRecoveredEntry(key, re));
-          drs.getDiskRegionView().incRecoveredEntryCount();
-          this.stats.incRecoveredEntryCreates();
+        if (drs != null) {
+          DiskEntry de = drs.getDiskEntry(key);
+          if (de == null) {
+            DiskRegionView drv = drs.getDiskRegionView();
+            // and create an entry
+            DiskEntry.RecoveredEntry re = createRecoveredEntry(objValue, valueLength, userBits,
+                getOplogId(), oplogOffset, oplogKeyId, recoverValue, version, in);
+            if (tag != null) {
+              re.setVersionTag(tag);
+            }
+            if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
+              logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE,
+                  "readModEntryWK init oplogKeyId=<{}> drId={} key={} oplogOffset={} userBits={} valueLen={} tag={}",
+                  oplogKeyId, drId, key, oplogOffset, userBits, valueLength, tag);
+            }
+            initRecoveredEntry(drv, drs.initializeRecoveredEntry(key, re));
+            drs.getDiskRegionView().incRecoveredEntryCount();
+            this.stats.incRecoveredEntryCreates();
 
-        } else {
-          DiskId curdid = de.getDiskId();
-          assert curdid
-              .getOplogId() != getOplogId() : "Mutiple ModEntryWK in the same oplog for getOplogId()="
-                  + getOplogId() + " , curdid.getOplogId()=" + curdid.getOplogId() + " , for drId="
-                  + drId + " , key=" + key;
-          if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
-            logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE,
-                "ignore readModEntryWK because getOplogId()={} != curdid.getOplogId()={} for drId={} key={}",
-                getOplogId(), curdid.getOplogId(), drId, key);
+          } else {
+            DiskId curdid = de.getDiskId();
+            assert curdid
+                .getOplogId() != getOplogId() : "Mutiple ModEntryWK in the same oplog for getOplogId()="
+                    + getOplogId() + " , curdid.getOplogId()=" + curdid.getOplogId()
+                    + " , for drId="
+                    + drId + " , key=" + key;
+            if (logger.isTraceEnabled(LogMarker.PERSIST_RECOVERY_VERBOSE)) {
+              logger.trace(LogMarker.PERSIST_RECOVERY_VERBOSE,
+                  "ignore readModEntryWK because getOplogId()={} != curdid.getOplogId()={} for drId={} key={}",
+                  getOplogId(), curdid.getOplogId(), drId, key);
+            }
           }
         }
       }
@@ -3330,11 +3357,11 @@ public class Oplog implements CompactableOplog, Flushable {
    * Return the number of bytes needed to encode the given long. Value returned will be >= 1 and <=
    * 8.
    */
-  static int bytesNeeded(long v) {
+  static byte bytesNeeded(long v) {
     if (v < 0) {
       v = ~v;
     }
-    return ((64 - Long.numberOfLeadingZeros(v)) / 8) + 1;
+    return (byte) (((64 - Long.numberOfLeadingZeros(v)) / 8) + 1);
   }
 
   /**
@@ -3581,7 +3608,7 @@ public class Oplog implements CompactableOplog, Flushable {
             logger.trace(LogMarker.PERSIST_WRITES_VERBOSE,
                 "basicCreate: id=<{}> key=<{}> valueOffset={} userBits={} valueLen={} valueBytes={} drId={} versionTag={} oplog#{}",
                 abs(id.getKeyId()), entry.getKey(), startPosForSynchOp, userBits,
-                (value != null ? value.getLength() : 0), value.getBytesAsString(), dr.getId(), tag,
+                value.getLength(), value.getBytesAsString(), dr.getId(), tag,
                 getOplogId());
           }
           id.setOffsetInOplog(startPosForSynchOp);
@@ -3910,20 +3937,20 @@ public class Oplog implements CompactableOplog, Flushable {
     // write both gemfire and data versions if the two are different else write
     // only gemfire version; a token distinguishes the two cases while reading
     // like in writeGemFireVersionRecord
-    Version dataVersion = getDataVersionIfOld();
+    KnownVersion dataVersion = getDataVersionIfOld();
     if (dataVersion == null) {
-      dataVersion = Version.CURRENT;
+      dataVersion = KnownVersion.CURRENT;
     }
     if (this.gfversion == dataVersion) {
-      this.gfversion.writeOrdinal(this.krf.dos, false);
+      VersioningIO.writeOrdinal(this.krf.dos, this.gfversion.ordinal(), false);
     } else {
-      Version.TOKEN.writeOrdinal(this.krf.dos, false);
+      VersioningIO.writeOrdinal(this.krf.dos, KnownVersion.TOKEN.ordinal(), false);
       this.krf.dos.writeByte(END_OF_RECORD_ID);
       this.krf.dos.writeByte(OPLOG_GEMFIRE_VERSION);
-      this.gfversion.writeOrdinal(this.krf.dos, false);
+      VersioningIO.writeOrdinal(this.krf.dos, this.gfversion.ordinal(), false);
       this.krf.dos.writeByte(END_OF_RECORD_ID);
       this.krf.dos.writeByte(OPLOG_GEMFIRE_VERSION);
-      dataVersion.writeOrdinal(this.krf.dos, false);
+      VersioningIO.writeOrdinal(this.krf.dos, dataVersion.ordinal(), false);
     }
     this.krf.dos.writeByte(END_OF_RECORD_ID);
 
@@ -5351,7 +5378,7 @@ public class Oplog implements CompactableOplog, Flushable {
               this.stats.incOplogReads();
               bb = new BytesAndBits(valueBytes, userBits);
               // also set the product version for an older product
-              final Version version = getProductVersionIfOld();
+              final KnownVersion version = getProductVersionIfOld();
               if (version != null) {
                 bb.setVersion(version);
               }
@@ -5651,7 +5678,7 @@ public class Oplog implements CompactableOplog, Flushable {
       if (!olf.f.exists())
         return;
       assert olf.RAFClosed;
-      if (!olf.RAFClosed || olf.raf != null) {
+      if (olf.raf != null) {
         try {
           olf.raf.close();
           olf.RAFClosed = true;
@@ -6191,7 +6218,7 @@ public class Oplog implements CompactableOplog, Flushable {
 
   private byte[] serializeRVVs(Map<Long, AbstractDiskRegion> drMap, boolean gcRVV)
       throws IOException {
-    HeapDataOutputStream out = new HeapDataOutputStream(Version.CURRENT);
+    HeapDataOutputStream out = new HeapDataOutputStream(KnownVersion.CURRENT);
 
     // Filter out any regions that do not have versioning enabled
     drMap = new HashMap<Long, AbstractDiskRegion>(drMap);
@@ -6322,7 +6349,7 @@ public class Oplog implements CompactableOplog, Flushable {
 
   private byte[] serializeVersionTag(int entryVersion, long regionVersion,
       VersionSource versionMember, long timestamp, int dsId) throws IOException {
-    HeapDataOutputStream out = new HeapDataOutputStream(4 + 8 + 4 + 8 + 4, Version.CURRENT);
+    HeapDataOutputStream out = new HeapDataOutputStream(4 + 8 + 4 + 8 + 4, KnownVersion.CURRENT);
     serializeVersionTag(entryVersion, regionVersion, versionMember, timestamp, dsId, out);
     return out.toByteArray();
   }
@@ -6352,7 +6379,7 @@ public class Oplog implements CompactableOplog, Flushable {
     }
   }
 
-  private Object deserializeKey(byte[] keyBytes, final Version version,
+  private Object deserializeKey(byte[] keyBytes, final KnownVersion version,
       final ByteArrayDataInput in) {
     if (!getParent().isOffline() || !PdxWriterImpl.isPdx(keyBytes)) {
       return EntryEventImpl.deserialize(keyBytes, version, in);
@@ -6363,47 +6390,31 @@ public class Oplog implements CompactableOplog, Flushable {
 
   /**
    * If this OpLog is from an older version of the product, then return that
-   * {@link Version} else
+   * {@link KnownVersion} else
    * return null.
    */
-  public Version getProductVersionIfOld() {
-    final Version version = this.gfversion;
-    if (version == null) {
-      // check for the case of diskstore upgrade from 6.6 to >= 7.0
-      if (getParent().isUpgradeVersionOnly()) {
-        // assume previous release version
-        return Version.GFE_66;
-      } else {
-        return null;
-      }
-    } else if (version == Version.CURRENT) {
+  public KnownVersion getProductVersionIfOld() {
+    final KnownVersion version = this.gfversion;
+    if (version == KnownVersion.CURRENT) {
       return null;
-    } else {
-      // version changed so return that for VersionedDataStream
-      return version;
     }
+
+    // version changed so return that for VersionedDataStream
+    return version;
   }
 
   /**
    * If this OpLog has data that was written by an older version of the product, then return that
-   * {@link Version} else return null.
+   * {@link KnownVersion} else return null.
    */
-  public Version getDataVersionIfOld() {
-    final Version version = this.dataVersion;
-    if (version == null) {
-      // check for the case of diskstore upgrade from 6.6 to >= 7.0
-      if (getParent().isUpgradeVersionOnly()) {
-        // assume previous release version
-        return Version.GFE_66;
-      } else {
-        return null;
-      }
-    } else if (version == Version.CURRENT) {
+  public KnownVersion getDataVersionIfOld() {
+    final KnownVersion version = this.dataVersion;
+    if (version == KnownVersion.CURRENT) {
       return null;
-    } else {
-      // version changed so return that for VersionedDataStream
-      return version;
     }
+
+    // version changed so return that for VersionedDataStream
+    return version;
   }
 
   public enum OPLOG_TYPE {
@@ -6575,7 +6586,7 @@ public class Oplog implements CompactableOplog, Flushable {
         flushNoSync(olf);
       }
       // don't compress since we setup fixed size of buffers
-      Version.writeOrdinal(bb, ordinal, false);
+      VersioningIO.writeOrdinal(bb, ordinal, false);
     }
 
     private void writeInt(OplogFile olf, int v) throws IOException {
@@ -6651,7 +6662,7 @@ public class Oplog implements CompactableOplog, Flushable {
         long delta = calcDelta(oplogKeyId, this.opCode);
         this.deltaIdBytesLength = bytesNeeded(delta);
         this.size += this.deltaIdBytesLength;
-        this.opCode += (this.deltaIdBytesLength & 0xFF) - 1;
+        this.opCode += (byte) ((this.deltaIdBytesLength & 0xFF) - 1);
         for (int i = this.deltaIdBytesLength - 1; i >= 0; i--) {
           this.deltaIdBytes[i] = (byte) (delta & 0xFF);
           delta >>= 8;
@@ -6748,7 +6759,7 @@ public class Oplog implements CompactableOplog, Flushable {
         long delta = calcDelta(keyId, this.opCode);
         this.deltaIdBytesLength = bytesNeeded(delta);
         this.size += this.deltaIdBytesLength;
-        this.opCode += (byte) (this.deltaIdBytesLength & 0xFF) - 1;
+        this.opCode += (byte) ((this.deltaIdBytesLength & 0xFF) - 1);
         for (int i = this.deltaIdBytesLength - 1; i >= 0; i--) {
           this.deltaIdBytes[i] = (byte) (delta & 0xFF);
           delta >>= 8;
@@ -6779,7 +6790,7 @@ public class Oplog implements CompactableOplog, Flushable {
         this.drIdLength = 1;
         this.drIdBytes[0] = (byte) drId;
       } else {
-        byte bytesNeeded = (byte) Oplog.bytesNeeded(drId);
+        byte bytesNeeded = bytesNeeded(drId);
         this.drIdLength = bytesNeeded + 1;
         this.drIdBytes[0] = bytesNeeded;
         for (int i = bytesNeeded; i >= 1; i--) {
@@ -6846,11 +6857,12 @@ public class Oplog implements CompactableOplog, Flushable {
           write(olf, this.drIdBytes, this.drIdLength);
           bytesWritten += this.drIdLength;
         }
-        assert this.versionsBytes.length > 0;
-        write(olf, this.versionsBytes, this.versionsBytes.length);
-        bytesWritten += this.versionsBytes.length;
+        if (this.versionsBytes != null && this.versionsBytes.length > 0) {
+          write(olf, this.versionsBytes, this.versionsBytes.length);
+          bytesWritten += this.versionsBytes.length;
+        }
       } else {
-        if (this.notToUseUserBits == false) {
+        if (!this.notToUseUserBits) {
           writeByte(olf, this.userBits);
           bytesWritten++;
         }
@@ -7220,7 +7232,8 @@ public class Oplog implements CompactableOplog, Flushable {
 
     @Override
     public boolean fillInValue(InternalRegion region, InitialImageOperation.Entry entry,
-        ByteArrayDataInput in, DistributionManager distributionManager, final Version version) {
+        ByteArrayDataInput in, DistributionManager distributionManager,
+        final KnownVersion version) {
       return false;
     }
 

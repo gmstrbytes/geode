@@ -21,14 +21,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.StringReader;
 import java.io.StringWriter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.regex.Matcher;
@@ -40,6 +44,7 @@ import org.junit.experimental.categories.Category;
 import org.junit.rules.ErrorCollector;
 
 import org.apache.geode.LogWriter;
+import org.apache.geode.internal.util.IOUtils;
 import org.apache.geode.test.dunit.ThreadUtils;
 import org.apache.geode.test.junit.categories.LoggingTest;
 
@@ -49,7 +54,7 @@ import org.apache.geode.test.junit.categories.LoggingTest;
 @Category(LoggingTest.class)
 public class MergeLogFilesIntegrationTest {
 
-  private static final long TIMEOUT_MILLIS = getTimeout().getValueInMS();
+  private static final long TIMEOUT_MILLIS = getTimeout().toMillis();
 
   private final Object lock = new Object();
 
@@ -106,6 +111,33 @@ public class MergeLogFilesIntegrationTest {
     }
 
     assertThat(lastValue).isEqualTo(999);
+  }
+
+  @Test
+  public void testDircountZero() throws Exception {
+    final String file = MergeLogFilesIntegrationTest.class
+        .getResource("MergeLogFilesIntegrationTest.txt").getPath();
+    final String path = new File(file).getParentFile().getPath();
+    final String resourcePath1 = IOUtils.appendToPath(path, "dir1", "systemlog.txt");
+    final String resourcePath2 = IOUtils.appendToPath(path, "dir2", "systemlog.txt");
+    final List<File> files = Arrays.asList(
+        new File(resourcePath1),
+        new File(resourcePath2));
+    Map<String, MergeLogFiles.DisplayNameAndFileStream> logFiles =
+        MergeLogFiles.getStringDisplayNameAndFileStreamMap(
+            files,
+            0, false, null);
+    try {
+      assertThat(logFiles.size()).isEqualTo(2);
+    } finally {
+      logFiles.values().stream().forEach(displayNameAndFileStream -> {
+        try {
+          displayNameAndFileStream.getInputStream().close();
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
+      });
+    }
   }
 
   /**

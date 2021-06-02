@@ -14,6 +14,7 @@
  */
 package org.apache.geode.management.internal.cli.commands;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -53,7 +54,7 @@ import org.apache.geode.management.internal.cli.functions.ListIndexFunction;
  * @see org.apache.geode.management.internal.cli.commands.DestroyIndexCommand
  * @see org.apache.geode.management.internal.cli.commands.ListIndexCommand
  * @see org.apache.geode.management.internal.cli.domain.IndexDetails
- * @see org.apache.geode.management.internal.cli.functions.ListIndexFunction
+ * @see ListIndexFunction
  * @see org.junit.Test
  * @since GemFire 7.0
  */
@@ -74,7 +75,7 @@ public class ListIndexCommandJUnitTest {
   }
 
   private IndexDetails createIndexDetails(final String memberId, final String indexName) {
-    return new IndexDetails(memberId, "/Employees", indexName);
+    return new IndexDetails(memberId, SEPARATOR + "Employees", indexName);
   }
 
   @Test

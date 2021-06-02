@@ -28,22 +28,23 @@ import org.junit.Test;
 
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.internal.cache.execute.FunctionContextImpl;
-import org.apache.geode.internal.util.DriverJarUtil;
+import org.apache.geode.internal.util.DriverJarUtils;
 import org.apache.geode.management.internal.functions.CliFunctionResult;
 
 public class DeregisterDriverFunctionTest {
   private DeregisterDriverFunction function;
   private FunctionContext<Object[]> context;
-  private DriverJarUtil util;
+  private DriverJarUtils util;
   private final String DRIVER_CLASS_NAME = "Test.Driver.Name";
 
+  @SuppressWarnings("unchecked")
   @Before
   public void setUp() {
     context = mock(FunctionContextImpl.class);
     function = spy(new DeregisterDriverFunction());
     when(context.getArguments()).thenReturn(new Object[] {DRIVER_CLASS_NAME});
     when(context.getMemberName()).thenReturn("Test Member Name");
-    util = mock(DriverJarUtil.class);
+    util = mock(DriverJarUtils.class);
     doReturn(util).when(function).getDriverJarUtil();
   }
 
@@ -51,7 +52,7 @@ public class DeregisterDriverFunctionTest {
   public void testExecuteFunctionDoesNotReturnError() {
     CliFunctionResult functionResult = function.executeFunction(context);
     assertThat(functionResult.getStatusMessage())
-        .contains(DRIVER_CLASS_NAME + " was succesfully deregistered.");
+        .contains(DRIVER_CLASS_NAME + " was successfully deregistered.");
     assertThat(functionResult.getStatus()).contains(CliFunctionResult.StatusState.OK.toString());
   }
 

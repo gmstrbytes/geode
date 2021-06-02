@@ -20,17 +20,20 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.Socket;
 import java.net.SocketAddress;
+import java.util.Map;
 import java.util.Properties;
 
 import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.cache.UnsupportedVersionException;
 import org.apache.geode.internal.cache.InternalCache;
+import org.apache.geode.internal.cache.tier.Command;
 import org.apache.geode.internal.cache.tier.CommunicationMode;
-import org.apache.geode.internal.serialization.UnsupportedSerializationVersionException;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.VersionedDataInputStream;
 import org.apache.geode.internal.serialization.VersionedDataOutputStream;
+import org.apache.geode.internal.serialization.Versioning;
+import org.apache.geode.internal.serialization.VersioningIO;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 
 class ClientRegistrationMetadata {
@@ -41,14 +44,14 @@ class ClientRegistrationMetadata {
   private ClientProxyMembershipID clientProxyMembershipID;
   private byte clientConflation;
   private Properties clientCredentials;
-  private Version clientVersion;
+  private KnownVersion clientVersion;
   private DataInputStream dataInputStream;
   private DataOutputStream dataOutputStream;
 
   ClientRegistrationMetadata(final InternalCache cache, final Socket socket) {
     this.cache = cache;
     this.socket = socket;
-    this.socketMessageWriter = new SocketMessageWriter();
+    socketMessageWriter = new SocketMessageWriter();
   }
 
   boolean initialize() throws IOException {
@@ -103,7 +106,7 @@ class ClientRegistrationMetadata {
     return clientCredentials;
   }
 
-  Version getClientVersion() {
+  KnownVersion getClientVersion() {
     return clientVersion;
   }
 
@@ -114,53 +117,49 @@ class ClientRegistrationMetadata {
   private boolean getAndValidateClientVersion(final Socket socket,
       final DataInputStream dataInputStream, final DataOutputStream dataOutputStream)
       throws IOException {
-    short clientVersionOrdinal = Version.readOrdinal(dataInputStream);
+    short clientVersionOrdinal = VersioningIO.readOrdinal(dataInputStream);
 
-    try {
-      clientVersion = Version.fromOrdinal(clientVersionOrdinal);
-      if (CommandInitializer.getCommands(clientVersion) == null) {
-        throw new UnsupportedSerializationVersionException("Client version {} is not supported");
+    clientVersion = Versioning.getKnownVersionOrDefault(
+        Versioning.getVersion(clientVersionOrdinal), null);
+
+    final String message;
+    if (clientVersion == null) {
+      message = KnownVersion.unsupportedVersionMessage(clientVersionOrdinal);
+    } else {
+      final Map<Integer, Command> commands =
+          CommandInitializer.getDefaultInstance().get(clientVersion);
+      if (commands == null) {
+        message = "No commands registered for version " + clientVersion + ".";
+      } else {
+        if (logger.isDebugEnabled()) {
+          logger.debug("{}: Registering client with version: {}", this, clientVersion);
+        }
+        return true;
       }
-      if (isVersionOlderThan57(clientVersion)) {
-        throw new IOException(new UnsupportedVersionException(clientVersionOrdinal));
-      }
-      if (logger.isDebugEnabled()) {
-        logger.debug("{}: Registering client with version: {}", this, clientVersion);
-      }
-    } catch (UnsupportedSerializationVersionException e) {
-      UnsupportedVersionException unsupportedVersionException =
-          new UnsupportedVersionException(e.getMessage());
-      SocketAddress socketAddress = socket.getRemoteSocketAddress();
-
-      if (socketAddress != null) {
-        String sInfo = " Client: " + socketAddress.toString() + ".";
-        unsupportedVersionException = new UnsupportedVersionException(e.getMessage() + sInfo);
-      }
-
-      logger.warn(
-          "CacheClientNotifier: Registering client version is unsupported.  Error details: ",
-          unsupportedVersionException);
-
-      socketMessageWriter.writeException(dataOutputStream,
-          CommunicationMode.UnsuccessfulServerToClient.getModeNumber(),
-          unsupportedVersionException, null);
-
-      return false;
     }
 
-    return true;
+    UnsupportedVersionException unsupportedVersionException =
+        new UnsupportedVersionException(message);
+    SocketAddress socketAddress = socket.getRemoteSocketAddress();
+
+    if (socketAddress != null) {
+      String sInfo = " Client: " + socketAddress.toString() + ".";
+      unsupportedVersionException = new UnsupportedVersionException(message + sInfo);
+    }
+
+    logger.warn(
+        "CacheClientNotifier: Registering client version is unsupported.  Error details: ",
+        unsupportedVersionException);
+
+    socketMessageWriter.writeException(dataOutputStream,
+        CommunicationMode.UnsuccessfulServerToClient.getModeNumber(),
+        unsupportedVersionException, null);
+
+    return false;
   }
 
-  private boolean doesClientSupportExtractOverrides() {
-    return clientVersion.compareTo(Version.GFE_603) >= 0;
-  }
-
-  private boolean oldClientRequiresVersionedStreams(final Version clientVersion) {
-    return Version.CURRENT.compareTo(clientVersion) > 0;
-  }
-
-  private boolean isVersionOlderThan57(final Version clientVersion) {
-    return Version.GFE_57.compareTo(clientVersion) > 0;
+  private boolean oldClientRequiresVersionedStreams(final KnownVersion clientVersion) {
+    return KnownVersion.CURRENT.compareTo(clientVersion) > 0;
   }
 
   private void getAndValidateClientProxyMembershipID()
@@ -174,13 +173,8 @@ class ClientRegistrationMetadata {
 
   private boolean getAndValidateClientConflation()
       throws IOException {
-    if (doesClientSupportExtractOverrides()) {
-      byte[] overrides =
-          Handshake.extractOverrides(new byte[] {(byte) dataInputStream.read()});
-      clientConflation = overrides[0];
-    } else {
-      clientConflation = (byte) dataInputStream.read();
-    }
+    final byte[] overrides = Handshake.extractOverrides(new byte[] {(byte) dataInputStream.read()});
+    clientConflation = overrides[0];
 
     switch (clientConflation) {
       case Handshake.CONFLATION_DEFAULT:

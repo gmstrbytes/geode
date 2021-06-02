@@ -51,8 +51,8 @@ import org.apache.geode.internal.offheap.annotations.Retained;
 import org.apache.geode.internal.offheap.annotations.Unretained;
 import org.apache.geode.internal.serialization.DataSerializableFixedID;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
-import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.pdx.PdxSerializationException;
 import org.apache.geode.util.internal.GeodeGlossary;
@@ -94,6 +94,8 @@ public class TXEntryState implements Releasable {
   private Object pendingValue;
 
   private byte[] serializedPendingValue;
+
+  private EntryEventImpl pendingCallback;
 
   /**
    * Remember the callback argument for listener invocation
@@ -1939,6 +1941,14 @@ public class TXEntryState implements Releasable {
     return this.modSerialNum;
   }
 
+  public EntryEventImpl getPendingCallback() {
+    return pendingCallback;
+  }
+
+  public void setPendingCallback(EntryEventImpl pendingCallback) {
+    this.pendingCallback = pendingCallback;
+  }
+
   /**
    * Just like an EntryEventImpl but also has access to TxEntryState to make it Comparable
    *
@@ -1970,7 +1980,7 @@ public class TXEntryState implements Releasable {
 
     @Override
     public boolean equals(Object o) {
-      if (o == null || !(o instanceof TxEntryEventImpl))
+      if (!(o instanceof TxEntryEventImpl))
         return false;
       return compareTo(o) == 0;
     }
@@ -2077,7 +2087,7 @@ public class TXEntryState implements Releasable {
     public DistTxThinEntryState() {}
 
     @Override
-    public Version[] getSerializationVersions() {
+    public KnownVersion[] getSerializationVersions() {
       return null;
     }
 

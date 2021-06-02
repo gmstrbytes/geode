@@ -14,8 +14,10 @@
  */
 package org.apache.geode.internal.cache.ha;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
@@ -49,7 +51,6 @@ import org.apache.geode.cache.server.CacheServer;
 import org.apache.geode.cache.util.CacheListenerAdapter;
 import org.apache.geode.cache30.ClientServerTestCase;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.cache.EventID;
 import org.apache.geode.internal.cache.EventIDHolder;
 import org.apache.geode.test.dunit.Host;
@@ -199,7 +200,7 @@ public class EventIdOptimizationDUnitTest extends JUnit4DistributedTestCase {
     }
     CacheServer server = cache.addCacheServer();
     assertNotNull(server);
-    int port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    int port = getRandomAvailableTCPPort();
     server.setPort(port);
     server.setNotifyBySubscription(true);
     server.start();
@@ -289,7 +290,7 @@ public class EventIdOptimizationDUnitTest extends JUnit4DistributedTestCase {
    */
   public static void generateEventsByPutOperation() throws Exception {
     Connection connection = pool.acquireConnection();
-    String regionName = Region.SEPARATOR + REGION_NAME;
+    String regionName = SEPARATOR + REGION_NAME;
     ServerRegionProxy srp = new ServerRegionProxy(regionName, pool);
 
     for (int i = 0; i < eventIds.length; i++) {
@@ -306,7 +307,7 @@ public class EventIdOptimizationDUnitTest extends JUnit4DistributedTestCase {
    */
   public static void generateEventsByDestroyEntryOperation() throws Exception {
     Connection connection = pool.acquireConnection();
-    String regionName = Region.SEPARATOR + REGION_NAME;
+    String regionName = SEPARATOR + REGION_NAME;
     ServerRegionProxy srp = new ServerRegionProxy(regionName, pool);
 
     for (int i = 0; i < eventIds.length; i++) {
@@ -328,7 +329,7 @@ public class EventIdOptimizationDUnitTest extends JUnit4DistributedTestCase {
    */
   public static void generateEventsByDestroyRegionOperation() throws Exception {
     Connection connection = pool.acquireConnection();
-    String regionName = Region.SEPARATOR + REGION_NAME;
+    String regionName = SEPARATOR + REGION_NAME;
 
     for (int i = 0; i < 1; i++) {
       ServerRegionProxy srp = new ServerRegionProxy(regionName + i, pool);
@@ -348,7 +349,7 @@ public class EventIdOptimizationDUnitTest extends JUnit4DistributedTestCase {
    */
   public static void generateEventsByClearRegionOperation() throws Exception {
     Connection connection = pool.acquireConnection();
-    String regionName = Region.SEPARATOR + REGION_NAME;
+    String regionName = SEPARATOR + REGION_NAME;
     ServerRegionProxy srp = new ServerRegionProxy(regionName, pool);
 
     for (int i = 0; i < eventIds.length; i++) {
@@ -424,7 +425,7 @@ public class EventIdOptimizationDUnitTest extends JUnit4DistributedTestCase {
     LogWriterUtils.getLogWriter()
         .info("Validation complete on client2, goin to unregister listeners");
 
-    Region region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region region = cache.getRegion(SEPARATOR + REGION_NAME);
     if (region != null && !region.isDestroyed()) {
       try {
         AttributesMutator mutator = region.getAttributesMutator();
@@ -434,7 +435,7 @@ public class EventIdOptimizationDUnitTest extends JUnit4DistributedTestCase {
     }
 
     for (int i = 0; i < eventIds.length; i++) {
-      region = cache.getRegion(Region.SEPARATOR + REGION_NAME + i);
+      region = cache.getRegion(SEPARATOR + REGION_NAME + i);
       if (region != null && !region.isDestroyed()) {
         try {
           AttributesMutator mutator = region.getAttributesMutator();

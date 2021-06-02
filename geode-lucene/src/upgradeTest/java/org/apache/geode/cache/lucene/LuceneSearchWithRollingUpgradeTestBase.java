@@ -14,6 +14,7 @@
  */
 package org.apache.geode.cache.lucene;
 
+import static org.apache.geode.distributed.ConfigurationProperties.HTTP_SERVICE_PORT;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
 import static org.apache.geode.test.dunit.Assert.fail;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -55,7 +56,7 @@ import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.LocalRegion;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.test.awaitility.GeodeAwaitility;
 import org.apache.geode.test.dunit.DistributedTestUtils;
@@ -112,6 +113,8 @@ public abstract class LuceneSearchWithRollingUpgradeTestBase extends JUnit4Distr
     props.setProperty(DistributionConfig.LOCATORS_NAME, locatorsString);
     props.setProperty(DistributionConfig.LOG_LEVEL_NAME, DUnitLauncher.logLevel);
     props.setProperty(DistributionConfig.ENABLE_CLUSTER_CONFIGURATION_NAME, "true");
+    // Turn off HTTP service, otherwise second (and subsequent) locators will see a port conflict
+    props.setProperty(HTTP_SERVICE_PORT, String.valueOf(0));
     return props;
   }
 
@@ -133,7 +136,7 @@ public abstract class LuceneSearchWithRollingUpgradeTestBase extends JUnit4Distr
     VM rollClient = Host.getHost(0).getVM(VersionManager.CURRENT_VERSION, oldClient.getId());
     rollClient.invoke(invokeCreateClientCache(getClientSystemProperties(), hostNames, locatorPorts,
         subscriptionEnabled, singleHopEnabled));
-    rollClient.invoke(invokeAssertVersion(Version.CURRENT_ORDINAL));
+    rollClient.invoke(invokeAssertVersion(KnownVersion.CURRENT_ORDINAL));
     return rollClient;
   }
 
@@ -345,7 +348,7 @@ public abstract class LuceneSearchWithRollingUpgradeTestBase extends JUnit4Distr
     VM rollServer = Host.getHost(0).getVM(VersionManager.CURRENT_VERSION, oldServer.getId());
     rollServer.invoke(invokeCreateCache(locatorPorts == null ? getSystemPropertiesPost71()
         : getSystemPropertiesPost71(locatorPorts)));
-    rollServer.invoke(invokeAssertVersion(Version.CURRENT_ORDINAL));
+    rollServer.invoke(invokeAssertVersion(KnownVersion.CURRENT_ORDINAL));
     return rollServer;
   }
 
@@ -715,9 +718,27 @@ public abstract class LuceneSearchWithRollingUpgradeTestBase extends JUnit4Distr
     Method getDistributedMemberMethod = ds.getClass().getMethod("getDistributedMember");
     getDistributedMemberMethod.setAccessible(true);
     Object member = getDistributedMemberMethod.invoke(ds);
-    Method getVersionObjectMethod = member.getClass().getMethod("getVersionObject");
-    getVersionObjectMethod.setAccessible(true);
-    Object thisVersion = getVersionObjectMethod.invoke(member);
+
+    Method getVersionMethod;
+    /*
+     * The method to get the version from an InternalDistributedMember has changed over time:
+     *
+     * 1. getVersionObject()
+     * 2. getVersionOrdinalObject()
+     * 3. getVersion()
+     */
+    try {
+      getVersionMethod = member.getClass().getMethod("getVersion");
+    } catch (final NoSuchMethodException e) {
+      try {
+        getVersionMethod = member.getClass().getMethod("getVersionOrdinalObject");
+      } catch (final NoSuchMethodException e2) {
+        getVersionMethod = member.getClass().getMethod("getVersionObject");
+      }
+    }
+
+    getVersionMethod.setAccessible(true);
+    Object thisVersion = getVersionMethod.invoke(member);
     Method getOrdinalMethod = thisVersion.getClass().getMethod("ordinal");
     getOrdinalMethod.setAccessible(true);
     short thisOrdinal = (Short) getOrdinalMethod.invoke(thisVersion);

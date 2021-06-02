@@ -24,6 +24,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.function.Predicate;
 
 import org.apache.logging.log4j.Logger;
 
@@ -47,6 +48,7 @@ import org.apache.geode.internal.cache.wan.AbstractGatewaySenderEventProcessor;
 import org.apache.geode.internal.cache.wan.GatewaySenderEventDispatcher;
 import org.apache.geode.internal.cache.wan.GatewaySenderEventImpl;
 import org.apache.geode.internal.cache.wan.GatewaySenderException;
+import org.apache.geode.internal.cache.wan.InternalGatewayQueueEvent;
 import org.apache.geode.internal.monitoring.ThreadsMonitoring;
 import org.apache.geode.logging.internal.executors.LoggingExecutors;
 import org.apache.geode.logging.internal.log4j.api.LogService;
@@ -72,14 +74,14 @@ public class ConcurrentParallelGatewaySenderEventProcessor
   final int nDispatcher;
 
   public ConcurrentParallelGatewaySenderEventProcessor(AbstractGatewaySender sender,
-      ThreadsMonitoring tMonitoring) {
+      ThreadsMonitoring tMonitoring, boolean cleanQueues) {
     super("Event Processor for GatewaySender_" + sender.getId(), sender, tMonitoring);
     // initializeMessageQueue(sender.getId());
     logger.info("ConcurrentParallelGatewaySenderEventProcessor: dispatcher threads {}",
         sender.getDispatcherThreads());
 
     nDispatcher = sender.getDispatcherThreads();
-    /**
+    /*
      * We have to divide the buckets/shadowPRs here. So that the individual processors can start
      * with a set of events to deal with In case of shadowPR getting created it will have to attach
      * itself to one of the processors when they are created.
@@ -102,25 +104,26 @@ public class ConcurrentParallelGatewaySenderEventProcessor
       logger.debug("The target PRs are {} Dispatchers: {}", targetRs, nDispatcher);
     }
 
-    createProcessors(sender.getDispatcherThreads(), targetRs);
+    createProcessors(sender.getDispatcherThreads(), targetRs, cleanQueues);
 
     // this.queue = parallelQueue;
     this.queue = new ConcurrentParallelGatewaySenderQueue(sender, this.processors);
   }
 
-  protected void createProcessors(int dispatcherThreads, Set<Region> targetRs) {
+  protected void createProcessors(int dispatcherThreads, Set<Region> targetRs,
+      boolean cleanQueues) {
     processors = new ParallelGatewaySenderEventProcessor[sender.getDispatcherThreads()];
     if (logger.isDebugEnabled()) {
       logger.debug("Creating AsyncEventProcessor");
     }
     for (int i = 0; i < sender.getDispatcherThreads(); i++) {
       processors[i] = new ParallelGatewaySenderEventProcessor(sender, targetRs, i,
-          sender.getDispatcherThreads(), getThreadMonitorObj());
+          sender.getDispatcherThreads(), getThreadMonitorObj(), cleanQueues);
     }
   }
 
   @Override
-  protected void initializeMessageQueue(String id) {
+  protected void initializeMessageQueue(String id, boolean cleanQueues) {
     // nothing
   }
 
@@ -131,16 +134,22 @@ public class ConcurrentParallelGatewaySenderEventProcessor
   }
 
   @Override
-  public void enqueueEvent(EnumListenerEvent operation, EntryEvent event, Object substituteValue)
+  public boolean enqueueEvent(EnumListenerEvent operation, EntryEvent event, Object substituteValue)
       throws IOException, CacheException {
-    Region region = event.getRegion();
-    // int bucketId = PartitionedRegionHelper.getHashKey((EntryOperation)event);
+    return enqueueEvent(operation, event, substituteValue, false, null);
+  }
+
+  @Override
+  public boolean enqueueEvent(EnumListenerEvent operation, EntryEvent event, Object substituteValue,
+      boolean isLastEventInTransaction, Predicate<InternalGatewayQueueEvent> condition)
+      throws IOException, CacheException {
     int bucketId = ((EntryEventImpl) event).getEventId().getBucketID();
     if (bucketId < 0) {
-      return;
+      return true;
     }
     int pId = bucketId % this.nDispatcher;
-    this.processors[pId].enqueueEvent(operation, event, substituteValue);
+    return this.processors[pId].enqueueEvent(operation, event, substituteValue,
+        isLastEventInTransaction, condition);
   }
 
   @Override
@@ -245,8 +254,8 @@ public class ConcurrentParallelGatewaySenderEventProcessor
     }
 
     ExecutorService stopperService = LoggingExecutors.newFixedThreadPool(
-        "ConcurrentParallelGatewaySenderEventProcessor Stopper Thread",
-        true, processors.length);
+        processors.length, "ConcurrentParallelGatewaySenderEventProcessor Stopper Thread",
+        true);
     try {
       List<Future<Boolean>> futures = stopperService.invokeAll(stopperCallables);
       for (Future<Boolean> f : futures) {
@@ -255,7 +264,7 @@ public class ConcurrentParallelGatewaySenderEventProcessor
           if (logger.isDebugEnabled()) {
             logger.debug(
                 "ConcurrentParallelGatewaySenderEventProcessor: {} stopped dispatching: {}",
-                (b ? "Successfully" : "Unsuccesfully"), this);
+                (b ? "Successfully" : "Unsuccessfully"), this);
           }
         } catch (ExecutionException e) {
           // we don't expect any exception but if caught then eat it and log warning
@@ -342,9 +351,10 @@ public class ConcurrentParallelGatewaySenderEventProcessor
   }
 
   @Override
-  protected void enqueueEvent(GatewayQueueEvent event) {
+  protected boolean enqueueEvent(GatewayQueueEvent event,
+      Predicate<InternalGatewayQueueEvent> condition) {
     int pId = ((GatewaySenderEventImpl) event).getBucketId() % this.nDispatcher;
-    this.processors[pId].enqueueEvent(event);
+    return this.processors[pId].enqueueEvent(event, condition);
   }
 
   private ThreadsMonitoring getThreadMonitorObj() {

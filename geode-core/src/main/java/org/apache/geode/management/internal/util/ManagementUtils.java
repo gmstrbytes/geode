@@ -14,6 +14,8 @@
  */
 package org.apache.geode.management.internal.util;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
+
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileFilter;
@@ -44,10 +46,10 @@ import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.internal.DistributionManager;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.ClassPathLoader;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.execute.AbstractExecution;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.classloader.ClassPathLoader;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.management.DistributedRegionMXBean;
 import org.apache.geode.management.ManagementService;
 import org.apache.geode.management.internal.MBeanJMXAdapter;
@@ -67,15 +69,21 @@ public class ManagementUtils {
         cache.getDistributionManager().getNormalDistributionManagerIds());
   }
 
+  public static Set<DistributedMember> getAllLocators(InternalCache cache) {
+    return new HashSet<DistributedMember>(
+        cache.getDistributionManager().getLocatorDistributionManagerIds());
+  }
+
   /**
    * Returns a set of all the members of the distributed system of a specific version excluding
    * locators.
    */
   @SuppressWarnings("unchecked")
   public static Set<DistributedMember> getNormalMembersWithSameOrNewerVersion(InternalCache cache,
-      Version version) {
+      KnownVersion version) {
     return getAllNormalMembers(cache).stream().filter(
-        member -> ((InternalDistributedMember) member).getVersionObject().compareTo(version) >= 0)
+        member -> ((InternalDistributedMember) member).getVersion()
+            .compareTo(version) >= 0)
         .collect(Collectors.toSet());
   }
 
@@ -209,8 +217,8 @@ public class ManagementUtils {
       return Collections.emptySet();
     }
 
-    if (!region.startsWith(Region.SEPARATOR)) {
-      region = Region.SEPARATOR + region;
+    if (!region.startsWith(SEPARATOR)) {
+      region = SEPARATOR + region;
     }
 
     DistributedRegionMXBean regionMXBean =

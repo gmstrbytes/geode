@@ -14,6 +14,8 @@
  */
 package org.apache.geode.management.internal.cli.functions;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -44,11 +46,11 @@ import org.apache.geode.cache.query.internal.IndexTrackingQueryObserver;
 import org.apache.geode.cache.query.internal.QueryObserver;
 import org.apache.geode.cache.query.internal.QueryObserverHolder;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.internal.ClassPathLoader;
 import org.apache.geode.internal.NanoTimer;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.execute.InternalFunction;
+import org.apache.geode.internal.classloader.ClassPathLoader;
 import org.apache.geode.internal.security.SecurityService;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.management.internal.cli.domain.DataCommandRequest;
@@ -63,18 +65,19 @@ import org.apache.geode.util.internal.GeodeJsonMapper;
 /**
  * @since GemFire 7.0
  */
-public class DataCommandFunction implements InternalFunction {
+public class DataCommandFunction implements InternalFunction<DataCommandRequest> {
   private static final Logger logger = LogService.getLogger();
 
   private static final long serialVersionUID = 1L;
 
   private boolean optimizeForWrite = false;
 
-  private static final int NESTED_JSON_LENGTH = 20;
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.DataCommandFunction";
 
   @Override
   public String getId() {
-    return DataCommandFunction.class.getName();
+    return ID;
   }
 
   @Override
@@ -101,11 +104,11 @@ public class DataCommandFunction implements InternalFunction {
   }
 
   @Override
-  public void execute(FunctionContext functionContext) {
+  public void execute(FunctionContext<DataCommandRequest> functionContext) {
     try {
       InternalCache cache =
           ((InternalCache) functionContext.getCache()).getCacheForProcessingClientRequests();
-      DataCommandRequest request = (DataCommandRequest) functionContext.getArguments();
+      DataCommandRequest request = functionContext.getArguments();
       if (logger.isDebugEnabled()) {
         logger.debug("Executing function : \n{}\n on member {}", request,
             System.getProperty("memberName"));
@@ -303,7 +306,7 @@ public class DataCommandFunction implements InternalFunction {
           if (logger.isDebugEnabled()) {
             logger.debug("Removed key {} successfully", key);
           }
-          Object array[] = getClassAndJson(value);
+          Object[] array = getClassAndJson(value);
           DataCommandResult result =
               DataCommandResult.createRemoveResult(key, array[1], null, null, true);
           if (array[0] != null) {
@@ -380,7 +383,7 @@ public class DataCommandFunction implements InternalFunction {
         if (logger.isDebugEnabled()) {
           logger.debug("Get for key {} value {}", key, value);
         }
-        Object array[] = getClassAndJson(value);
+        Object[] array = getClassAndJson(value);
         if (value != null) {
           DataCommandResult result =
               DataCommandResult.createGetResult(key, array[1], null, null, true);
@@ -420,7 +423,7 @@ public class DataCommandFunction implements InternalFunction {
       // Recursively find the keys starting from the specified region path.
       List<String> regionPaths = getAllRegionPaths(cache, true);
       for (String path : regionPaths) {
-        if (path.startsWith(regionPath) || path.startsWith(Region.SEPARATOR + regionPath)) {
+        if (path.startsWith(regionPath) || path.startsWith(SEPARATOR + regionPath)) {
           Region targetRegion = cache.getRegion(path);
           listOfRegionsStartingWithRegionPath.add(targetRegion);
         }
@@ -515,7 +518,6 @@ public class DataCommandFunction implements InternalFunction {
     }
   }
 
-  @SuppressWarnings({"rawtypes"})
   public DataCommandResult put(String key, String value, boolean putIfAbsent, String keyClass,
       String valueClass, String regionName, InternalCache cache) {
 
@@ -534,7 +536,7 @@ public class DataCommandFunction implements InternalFunction {
           false);
     }
 
-    Region region = cache.getRegion(regionName);
+    Region<Object, Object> region = cache.getRegion(regionName);
     if (region == null) {
       return DataCommandResult.createPutResult(key, null, null,
           CliStrings.format(CliStrings.PUT__MSG__REGION_NOT_FOUND, regionName), false);
@@ -563,7 +565,7 @@ public class DataCommandFunction implements InternalFunction {
       } else {
         returnValue = region.put(keyObject, valueObject);
       }
-      Object array[] = getClassAndJson(returnValue);
+      Object[] array = getClassAndJson(returnValue);
       DataCommandResult result = DataCommandResult.createPutResult(key, array[1], null, null, true);
       if (array[0] != null) {
         result.setValueClass((String) array[0]);
@@ -663,18 +665,20 @@ public class DataCommandFunction implements InternalFunction {
       time = (NanoTimer.getTime() - startTime) / 1.0e6f;
     }
 
-    if (observer != null && observer instanceof IndexTrackingQueryObserver) {
+    if (observer instanceof IndexTrackingQueryObserver) {
       IndexTrackingQueryObserver indexObserver = (IndexTrackingQueryObserver) observer;
-      Map usedIndexes = indexObserver.getUsedIndexes();
+      @SuppressWarnings("unchecked")
+      Map<Object, Object> usedIndexes = indexObserver.getUsedIndexes();
       indexObserver.reset();
-      StringBuffer buf = new StringBuffer();
+      StringBuilder buf = new StringBuilder();
       buf.append(" indexesUsed(");
       buf.append(usedIndexes.size());
       buf.append(")");
       if (usedIndexes.size() > 0) {
         buf.append(":");
-        for (Iterator itr = usedIndexes.entrySet().iterator(); itr.hasNext();) {
-          Map.Entry entry = (Map.Entry) itr.next();
+        for (Iterator<Map.Entry<Object, Object>> itr = usedIndexes.entrySet().iterator(); itr
+            .hasNext();) {
+          Map.Entry<Object, Object> entry = itr.next();
           buf.append(entry.getKey().toString()).append(entry.getValue());
           if (itr.hasNext()) {
             buf.append(",");

@@ -14,6 +14,7 @@
  */
 package org.apache.geode.cache.query.cq.internal;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.cache.RegionShortcut.PARTITION;
 import static org.apache.geode.cache.RegionShortcut.REPLICATE;
 import static org.apache.geode.distributed.ConfigurationProperties.SERIALIZABLE_OBJECT_FILTER;
@@ -21,6 +22,7 @@ import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.Serializable;
+import java.lang.reflect.Method;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -49,7 +51,7 @@ import org.apache.geode.test.junit.categories.SecurityTest;
 import org.apache.geode.test.junit.runners.CategoryWithParameterizedRunnerFactory;
 
 /**
- * Verifies that users can tamper the {@link ExecutionContext}.
+ * Verifies that users can not tamper the {@link ExecutionContext}.
  * It needs to be part of the {@link org.apache.geode.cache.query.cq.internal} package because the
  * method {@link CqQueryImpl#getQueryExecutionContext()} has package access.
  */
@@ -101,7 +103,8 @@ public class CqSecurityExecutionContextTamperingDistributedTest implements Seria
 
   @Test
   public void executionContextShouldNotBeModifiableForCqQueriesWithMethodInvocations() {
-    String query = "SELECT * FROM /" + regionName + " r WHERE r." + attributeAccessor + " = 'Beth'";
+    String query =
+        "SELECT * FROM " + SEPARATOR + regionName + " r WHERE r." + attributeAccessor + " = 'Beth'";
 
     client.invoke(() -> {
       TestCqListener cqListener = new TestCqListener();
@@ -121,8 +124,9 @@ public class CqSecurityExecutionContextTamperingDistributedTest implements Seria
       assertThat(internalCache.getCqService().getAllCqs().size()).isEqualTo(1);
       CqQueryImpl cqQueryImpl =
           (CqQueryImpl) internalCache.getCqService().getAllCqs().iterator().next();
-      ExecutionContextTamperer.tamperContextCache(cqQueryImpl.getQueryExecutionContext(),
-          "org.apache.geode.security.query.data.QueryTestObject.getName", true);
+      Method method = QueryTestObject.class.getMethod("getName");
+      ExecutionContextTamperer.tamperContextCache(cqQueryImpl.getQueryExecutionContext(), method,
+          true);
 
       Region<String, QueryTestObject> region = ClusterStartupRule.getCache().getRegion(regionName);
       region.put("1", new QueryTestObject(1, "Beth"));

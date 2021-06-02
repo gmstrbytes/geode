@@ -29,6 +29,7 @@ import java.rmi.registry.Registry;
 import java.rmi.server.RMIClientSocketFactory;
 import java.rmi.server.RMIServerSocketFactory;
 import java.rmi.server.UnicastRemoteObject;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -54,9 +55,9 @@ import org.apache.geode.GemFireConfigException;
 import org.apache.geode.cache.internal.HttpService;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.internal.GemFireVersion;
-import org.apache.geode.internal.admin.SSLConfig;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.inet.LocalHostUtil;
+import org.apache.geode.internal.net.SSLConfig;
 import org.apache.geode.internal.net.SSLConfigurationFactory;
 import org.apache.geode.internal.net.SocketCreator;
 import org.apache.geode.internal.net.SocketCreatorFactory;
@@ -73,6 +74,7 @@ import org.apache.geode.management.internal.security.AccessControlMBean;
 import org.apache.geode.management.internal.security.MBeanServerWrapper;
 import org.apache.geode.management.internal.security.ResourceConstants;
 import org.apache.geode.management.internal.unsafe.ReadOpFileAccessController;
+import org.apache.geode.security.AuthTokenEnabledComponents;
 
 /**
  * Agent implementation that controls the JMX server end points for JMX clients to connect, such as
@@ -86,6 +88,7 @@ import org.apache.geode.management.internal.unsafe.ReadOpFileAccessController;
 public class ManagementAgent {
 
   private static final Logger logger = LogService.getLogger();
+  public static final String SPRING_PROFILES_ACTIVE = "spring.profiles.active";
 
   /**
    * True if running. Protected by synchronizing on this Manager instance. I used synchronization
@@ -105,6 +108,8 @@ public class ManagementAgent {
   private int port;
   private RemoteStreamExporter remoteStreamExporter = null;
 
+  private final JmxRmiSerialFilter serialFilter;
+
   /**
    * This system property is set to true when the embedded HTTP server is started so that the
    * embedded pulse webapp can use a local MBeanServer instead of a remote JMX connection.
@@ -115,10 +120,12 @@ public class ManagementAgent {
   private static final String PULSE_USESSL_MANAGER = "pulse.useSSL.manager";
   private static final String PULSE_USESSL_LOCATOR = "pulse.useSSL.locator";
 
-  public ManagementAgent(DistributionConfig config, InternalCache cache) {
+  public ManagementAgent(DistributionConfig config, InternalCache cache,
+      JmxRmiSerialFilter serialFilter) {
     this.config = config;
     this.cache = cache;
     this.securityService = cache.getSecurityService();
+    this.serialFilter = serialFilter;
   }
 
   public synchronized boolean isRunning() {
@@ -127,6 +134,7 @@ public class ManagementAgent {
 
 
   public synchronized void startAgent() {
+    serialFilter.configureSerialFilter();
     loadWebApplications();
 
     if (!this.running && this.config.getJmxManagerPort() != 0) {
@@ -193,8 +201,17 @@ public class ManagementAgent {
       }
     } else {
       String pwFile = this.config.getJmxManagerPasswordFile();
-      if (securityService.isIntegratedSecurity() || StringUtils.isNotBlank(pwFile)) {
-        System.setProperty("spring.profiles.active", "pulse.authentication.gemfire");
+      if (securityService.isIntegratedSecurity()) {
+        String[] authTokenEnabledComponents = config.getSecurityAuthTokenEnabledComponents();
+        boolean pulseOauth = Arrays.stream(authTokenEnabledComponents)
+            .anyMatch(AuthTokenEnabledComponents::hasPulse);
+        if (pulseOauth) {
+          System.setProperty(SPRING_PROFILES_ACTIVE, "pulse.authentication.oauth");
+        } else {
+          System.setProperty(SPRING_PROFILES_ACTIVE, "pulse.authentication.gemfire");
+        }
+      } else if (StringUtils.isNotBlank(pwFile)) {
+        System.setProperty(SPRING_PROFILES_ACTIVE, "pulse.authentication.gemfire");
       }
     }
 
@@ -227,8 +244,8 @@ public class ManagementAgent {
               SocketCreatorFactory.getSocketCreatorForComponent(SecurableCommunicationChannel.JMX);
           final SocketCreator locatorSocketCreator = SocketCreatorFactory
               .getSocketCreatorForComponent(SecurableCommunicationChannel.LOCATOR);
-          System.setProperty(PULSE_USESSL_MANAGER, jmxSocketCreator.useSSL() + "");
-          System.setProperty(PULSE_USESSL_LOCATOR, locatorSocketCreator.useSSL() + "");
+          System.setProperty(PULSE_USESSL_MANAGER, jmxSocketCreator.forClient().useSSL() + "");
+          System.setProperty(PULSE_USESSL_LOCATOR, locatorSocketCreator.forClient().useSSL() + "");
 
           serviceAttributes.put(HttpService.GEODE_SSLCONFIG_SERVLET_CONTEXT_PARAM,
               createSslProps());
@@ -311,7 +328,7 @@ public class ManagementAgent {
     final String hostname;
     final InetAddress bindAddr;
     if (StringUtils.isBlank(this.config.getJmxManagerBindAddress())) {
-      hostname = LocalHostUtil.getLocalHost().getHostName();
+      hostname = LocalHostUtil.getLocalHostName();
       bindAddr = null;
     } else {
       hostname = this.config.getJmxManagerBindAddress();
@@ -326,7 +343,7 @@ public class ManagementAgent {
     final SocketCreator socketCreator =
         SocketCreatorFactory.getSocketCreatorForComponent(SecurableCommunicationChannel.JMX);
 
-    final boolean ssl = socketCreator.useSSL();
+    final boolean ssl = socketCreator.forClient().useSSL();
 
     if (logger.isDebugEnabled()) {
       logger.debug("Starting jmx manager agent on port {}{}", port,
@@ -513,7 +530,7 @@ public class ManagementAgent {
 
     @Override
     public ServerSocket createServerSocket(int port) throws IOException {
-      return this.sc.createServerSocket(port, TCPConduit.getBackLog(), this.bindAddr);
+      return this.sc.forCluster().createServerSocket(port, TCPConduit.getBackLog(), this.bindAddr);
     }
   }
 }

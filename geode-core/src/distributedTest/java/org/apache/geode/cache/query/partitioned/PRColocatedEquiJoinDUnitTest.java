@@ -14,11 +14,13 @@
  */
 package org.apache.geode.cache.query.partitioned;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.cache.query.Utils.createNewPortfoliosAndPositions;
 import static org.apache.geode.cache.query.Utils.createPortfoliosAndPositions;
 import static org.apache.geode.distributed.ConfigurationProperties.SERIALIZABLE_OBJECT_FILTER;
 import static org.apache.geode.test.dunit.IgnoredException.addIgnoredException;
 import static org.apache.geode.test.dunit.Invoke.invokeInEveryVM;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -231,7 +233,8 @@ public class PRColocatedEquiJoinDUnitTest extends CacheTestCase {
                 .onRegion((getCache().getRegion(name) instanceof PartitionedRegion)
                     ? getCache().getRegion(name) : getCache().getRegion(coloName))
                 .setArguments("Select " + (queries[j].contains("ORDER BY") ? "DISTINCT" : "")
-                    + " * from /" + name + " r1, /" + coloName + " r2 where " + queries[j])
+                    + " * from " + SEPARATOR + name + " r1, " + SEPARATOR + coloName + " r2 where "
+                    + queries[j])
                 .execute(func).getResult();
 
             r[j][0] = ((ArrayList) funcResult).get(0);
@@ -267,13 +270,13 @@ public class PRColocatedEquiJoinDUnitTest extends CacheTestCase {
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRCreate(name, redundancy,
         Portfolio.class));
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(name, "IdIndex1",
-        "r1.ID", "/" + name + " r1", null));
+        "r1.ID", SEPARATOR + name + " r1", null));
 
     // Creating Colocated Region DataStore node on the VM0.
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRColocatedCreate(coloName,
         redundancy, name));
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(coloName, "IdIndex2",
-        "r2.id", "/" + coloName + " r2", null));
+        "r2.id", SEPARATOR + coloName + " r2", null));
 
     // Creating local region on vm0 to compare the results of query.
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForLocalRegionCreation(localName,
@@ -323,9 +326,9 @@ public class PRColocatedEquiJoinDUnitTest extends CacheTestCase {
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRCreate(name, redundancy,
         Portfolio.class));
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(name, "IdIndex1",
-        "r1.ID", "/" + name + " r1", null));
+        "r1.ID", SEPARATOR + name + " r1", null));
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(name, "IdIndex11",
-        "r1.status", "/" + name + " r1", null));
+        "r1.status", SEPARATOR + name + " r1", null));
 
     // Creating Colocated Region DataStore node on the VM0.
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRColocatedCreate(coloName,
@@ -433,14 +436,14 @@ public class PRColocatedEquiJoinDUnitTest extends CacheTestCase {
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRCreate(name, redundancy,
         Portfolio.class));
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(name, "IdIndex1",
-        "r1.ID", "/" + name + " r1", null));
+        "r1.ID", SEPARATOR + name + " r1", null));
 
     // Creating Colocated Region DataStore node on the VM0.
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForLocalRegionCreation(coloName,
         NewPortfolio.class));
 
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(coloName, "IdIndex2",
-        "r2.id", "/" + coloName + " r2", null));
+        "r2.id", SEPARATOR + coloName + " r2", null));
 
     // Creating local region on vm0 to compare the results of query.
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForLocalRegionCreation(localName,
@@ -492,9 +495,9 @@ public class PRColocatedEquiJoinDUnitTest extends CacheTestCase {
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRCreate(name, redundancy,
         Portfolio.class));
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(name, "IdIndex1",
-        "r1.ID", "/" + name + " r1", null));
+        "r1.ID", SEPARATOR + name + " r1", null));
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(name, "IdIndex11",
-        "r1.status", "/" + name + " r1", null));
+        "r1.status", SEPARATOR + name + " r1", null));
 
     // Creating Colocated Region DataStore node on the VM0.
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForLocalRegionCreation(coloName,
@@ -600,14 +603,14 @@ public class PRColocatedEquiJoinDUnitTest extends CacheTestCase {
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRCreate(coloName, redundancy,
         NewPortfolio.class));
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(coloName, "IdIndex1",
-        "r2.id", "/" + coloName + " r2", null));
+        "r2.id", SEPARATOR + coloName + " r2", null));
 
     // Creating Colocated Region DataStore node on the VM0.
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForLocalRegionCreation(name,
         Portfolio.class));
 
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(name, "IdIndex2",
-        "r1.ID", "/" + name + " r1", null));
+        "r1.ID", SEPARATOR + name + " r1", null));
 
     // Creating local region on vm0 to compare the results of query.
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForLocalRegionCreation(localName,
@@ -661,7 +664,7 @@ public class PRColocatedEquiJoinDUnitTest extends CacheTestCase {
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForLocalRegionCreation(name,
         Portfolio.class));
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(name, "IdIndex1",
-        "r1.ID", "/" + name + " r1", null));
+        "r1.ID", SEPARATOR + name + " r1", null));
 
     // Creating local region on vm0 to compare the results of query.
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForLocalRegionCreation(localName,
@@ -761,22 +764,15 @@ public class PRColocatedEquiJoinDUnitTest extends CacheTestCase {
       addIgnoredException(ReplyException.class.getName());
 
       QueryService qs = getCache().getQueryService();
-      try {
+      assertThatThrownBy(() -> {
         for (int i = 0; i < queries.length; i++) {
           getCache().getLogger().info("About to execute local query: " + queries[i]);
-          r[i][1] = qs.newQuery("Select " + (queries[i].contains("ORDER BY") ? "DISTINCT" : "")
-              + " * from /" + name + " r1, /" + coloName + " r2 where " + queries[i]).execute();
+          r[i][1] = qs.newQuery("Select " + " * from " + SEPARATOR + name + " r1, " + SEPARATOR
+              + coloName + " r2 where " + queries[i]).execute();
         }
-        fail("Expected UnsupportedOperationException");
-
-      } catch (UnsupportedOperationException e) {
-        if (!e.getMessage().equalsIgnoreCase(
-            String.format(
-                "A query on a Partitioned Region ( %s ) may not reference any other region if query is NOT executed within a Function",
-                name))) {
-          throw e;
-        }
-      }
+      }).isInstanceOf(UnsupportedOperationException.class)
+          .hasMessageContaining("A query on a Partitioned Region").hasMessageContaining(
+              "may not reference any other region if query is NOT executed within a Function");
     });
   }
 
@@ -791,14 +787,14 @@ public class PRColocatedEquiJoinDUnitTest extends CacheTestCase {
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRCreate(name, redundancy,
         Portfolio.class));
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(name, "IdIndex1",
-        "r1.ID", "/" + name + " r1", null));
+        "r1.ID", SEPARATOR + name + " r1", null));
 
     // Creating Colocated Region DataStore node on the VM0.
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForLocalRegionCreation(coloName,
         NewPortfolio.class));
 
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(coloName, "IdIndex2",
-        "r2.id", "/" + coloName + " r2, r2.positions.values pos2", null));
+        "r2.id", SEPARATOR + coloName + " r2, r2.positions.values pos2", null));
 
     // Creating local region on vm0 to compare the results of query.
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForLocalRegionCreation(localName,
@@ -838,14 +834,14 @@ public class PRColocatedEquiJoinDUnitTest extends CacheTestCase {
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRCreate(name, redundancy,
         Portfolio.class));
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(name, "IdIndex1",
-        "r1.ID", "/" + name + " r1", null));
+        "r1.ID", SEPARATOR + name + " r1", null));
 
     // Creating Colocated Region DataStore node on the VM0.
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForLocalRegionCreation(coloName,
         Portfolio.class));
 
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(coloName, "IdIndex2",
-        "pos2.id", "/" + coloName + " r2, r2.positions.values pos2", null));
+        "pos2.id", SEPARATOR + coloName + " r2, r2.positions.values pos2", null));
 
     // Creating local region on vm0 to compare the results of query.
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForLocalRegionCreation(localName,
@@ -886,27 +882,27 @@ public class PRColocatedEquiJoinDUnitTest extends CacheTestCase {
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRCreate(name, redundancy,
         Portfolio.class));
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(name, "IdIndex1",
-        "r1.ID", "/" + name + " r1", null));
+        "r1.ID", SEPARATOR + name + " r1", null));
 
     // Creating Colocated Region DataStore node on the VM0.
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForLocalRegionWithAsyncIndexCreation(
         coloName, NewPortfolio.class));
 
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(coloName, "IdIndex2",
-        "r2.id", "/" + coloName + " r2", null));
+        "r2.id", SEPARATOR + coloName + " r2", null));
 
     // Creating local region on vm0 to compare the results of query.
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForLocalRegionCreation(localName,
         Portfolio.class));
 
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(name, "IdIndex3",
-        "r1.ID", "/" + localName + " r1", null));
+        "r1.ID", SEPARATOR + localName + " r1", null));
 
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForLocalRegionCreation(coloLocalName,
         NewPortfolio.class));
 
     vm0.invoke(prQueryDUnitHelper.getCacheSerializableRunnableForPRIndexCreate(coloName, "IdIndex4",
-        "r2.id", "/" + coloLocalName + " r2", null));
+        "r2.id", SEPARATOR + coloLocalName + " r2", null));
 
     // Generating portfolio object array to be populated across the PR's & Local Regions
     Portfolio[] portfolio = createPortfoliosAndPositions(cntDest);
@@ -991,7 +987,8 @@ public class PRColocatedEquiJoinDUnitTest extends CacheTestCase {
               .onRegion((getCache().getRegion(name) instanceof PartitionedRegion)
                   ? getCache().getRegion(name) : getCache().getRegion(coloName))
               .setArguments("Select " + (queries[j].contains("ORDER BY") ? "DISTINCT" : "")
-                  + " * from /" + name + " r1, /" + coloName + " r2 where " + queries[j])
+                  + " * from " + SEPARATOR + name + " r1, " + SEPARATOR + coloName + " r2 where "
+                  + queries[j])
               .execute(func).getResult();
 
           r[j][0] = ((ArrayList) funcResult).get(0);

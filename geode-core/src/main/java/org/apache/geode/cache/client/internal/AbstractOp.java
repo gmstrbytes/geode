@@ -15,6 +15,7 @@
 
 package org.apache.geode.cache.client.internal;
 
+import java.io.IOException;
 import java.net.SocketTimeoutException;
 
 import org.apache.logging.log4j.Logger;
@@ -32,7 +33,7 @@ import org.apache.geode.internal.cache.tier.sockets.Part;
 import org.apache.geode.internal.cache.tier.sockets.ServerConnection;
 import org.apache.geode.internal.logging.log4j.LogMarker;
 import org.apache.geode.internal.serialization.ByteArrayDataInput;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
@@ -49,7 +50,7 @@ public abstract class AbstractOp implements Op {
   private boolean allowDuplicateMetadataRefresh;
 
   protected AbstractOp(int msgType, int msgParts) {
-    msg = new Message(msgParts, Version.CURRENT);
+    msg = new Message(msgParts, KnownVersion.CURRENT);
     getMessage().setMessageType(msgType);
   }
 
@@ -125,7 +126,7 @@ public abstract class AbstractOp implements Op {
         }
         userId = id;
       }
-      try (HeapDataOutputStream hdos = new HeapDataOutputStream(Version.CURRENT)) {
+      try (HeapDataOutputStream hdos = new HeapDataOutputStream(KnownVersion.CURRENT)) {
         hdos.writeLong(cnx.getConnectionID());
         hdos.writeLong(userId);
         getMessage().setSecurePart(((ConnectionImpl) cnx).encryptBytes(hdos.toByteArray()));
@@ -158,8 +159,9 @@ public abstract class AbstractOp implements Op {
         return;
       }
       byte[] bytes = ((ConnectionImpl) cnx).decryptBytes(partBytes);
-      ByteArrayDataInput dis = new ByteArrayDataInput(bytes);
-      cnx.setConnectionID(dis.readLong());
+      try (ByteArrayDataInput dis = new ByteArrayDataInput(bytes)) {
+        cnx.setConnectionID(dis.readLong());
+      }
     }
   }
 
@@ -215,7 +217,7 @@ public abstract class AbstractOp implements Op {
    * By default just create a normal one part msg. Subclasses can override this.
    */
   protected Message createResponseMessage() {
-    return new Message(1, Version.CURRENT);
+    return new Message(1, KnownVersion.CURRENT);
   }
 
   protected Object processResponse(Message m, Connection con) throws Exception {
@@ -345,7 +347,7 @@ public abstract class AbstractOp implements Op {
         Part part = msg.getPart(0);
         throw new ServerOperationException(part.getString());
       } else {
-        throw new InternalGemFireError("Unexpected message type " + MessageType.getString(msgType));
+        throw new IOException("Unexpected message type " + MessageType.getString(msgType));
       }
     }
   }

@@ -17,7 +17,6 @@ package org.apache.geode.management.internal.cli.functions;
 
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.IOException;
 import java.io.Serializable;
 import java.nio.file.Path;
 import java.text.ParseException;
@@ -30,15 +29,13 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.Logger;
 
-import org.apache.geode.cache.AttributesFactory;
-import org.apache.geode.cache.DataPolicy;
 import org.apache.geode.cache.Region;
-import org.apache.geode.cache.Scope;
+import org.apache.geode.cache.RegionShortcut;
 import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.InternalCacheForClientAccess;
-import org.apache.geode.internal.cache.InternalRegionArguments;
+import org.apache.geode.internal.cache.InternalRegionFactory;
 import org.apache.geode.internal.cache.execute.InternalFunction;
 import org.apache.geode.logging.internal.log4j.LogLevel;
 import org.apache.geode.logging.internal.log4j.api.LogService;
@@ -46,7 +43,6 @@ import org.apache.geode.management.internal.cli.commands.ExportLogsCommand;
 import org.apache.geode.management.internal.cli.util.ExportLogsCacheWriter;
 import org.apache.geode.management.internal.cli.util.LogExporter;
 import org.apache.geode.management.internal.cli.util.LogFilter;
-import org.apache.geode.management.internal.configuration.domain.Configuration;
 
 /**
  * this function extracts the logs using a LogExporter which creates a zip file, and then writes the
@@ -55,7 +51,7 @@ import org.apache.geode.management.internal.configuration.domain.Configuration;
  *
  * The function only extracts .log and .gfs files under server's working directory
  */
-public class ExportLogsFunction implements InternalFunction {
+public class ExportLogsFunction implements InternalFunction<ExportLogsFunction.Args> {
   private static final Logger logger = LogService.getLogger();
 
   public static final String EXPORT_LOGS_REGION = "__exportLogsRegion";
@@ -63,18 +59,27 @@ public class ExportLogsFunction implements InternalFunction {
   private static final long serialVersionUID = 1L;
   private static final int BUFFER_SIZE = 1024;
 
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.ExportLogsFunction";
+
   @Override
-  public void execute(final FunctionContext context) {
+  public String getId() {
+    return ID;
+  }
+
+  @Override
+  public void execute(final FunctionContext<Args> context) {
     try {
       InternalCache cache = (InternalCache) context.getCache();
       DistributionConfig config = cache.getInternalDistributedSystem().getConfig();
 
+      @SuppressWarnings("deprecation")
       String memberId = cache.getDistributedSystem().getMemberId();
       logger.info("ExportLogsFunction started for member {}", memberId);
 
-      Region exportLogsRegion = createOrGetExistingExportLogsRegion(false, cache);
+      Region<String, byte[]> exportLogsRegion = createOrGetExistingExportLogsRegion(false, cache);
 
-      Args args = (Args) context.getArguments();
+      Args args = context.getArguments();
       File baseLogFile = null;
       File baseStatsFile = null;
 
@@ -119,31 +124,28 @@ public class ExportLogsFunction implements InternalFunction {
     }
   }
 
-  public static Region createOrGetExistingExportLogsRegion(boolean isInitiatingMember,
-      InternalCache cache) throws IOException, ClassNotFoundException {
+  public static Region<String, byte[]> createOrGetExistingExportLogsRegion(
+      boolean isInitiatingMember,
+      InternalCache cache) {
 
     InternalCacheForClientAccess cacheForClientAccess = cache.getCacheForProcessingClientRequests();
-    Region exportLogsRegion = cacheForClientAccess.getInternalRegion(EXPORT_LOGS_REGION);
+    Region<String, byte[]> exportLogsRegion =
+        cacheForClientAccess.getInternalRegion(EXPORT_LOGS_REGION);
     if (exportLogsRegion == null) {
-      AttributesFactory<String, Configuration> regionAttrsFactory = new AttributesFactory<>();
-      regionAttrsFactory.setDataPolicy(DataPolicy.EMPTY);
-      regionAttrsFactory.setScope(Scope.DISTRIBUTED_ACK);
-
+      InternalRegionFactory<String, byte[]> regionFactory =
+          cacheForClientAccess.createInternalRegionFactory(RegionShortcut.REPLICATE_PROXY);
       if (isInitiatingMember) {
-        regionAttrsFactory.setCacheWriter(new ExportLogsCacheWriter());
+        regionFactory.setCacheWriter(new ExportLogsCacheWriter());
       }
-      InternalRegionArguments internalArgs = new InternalRegionArguments();
-      internalArgs.setIsUsedForMetaRegion(true);
-      exportLogsRegion =
-          cacheForClientAccess.createInternalRegion(EXPORT_LOGS_REGION, regionAttrsFactory.create(),
-              internalArgs);
+      regionFactory.setIsUsedForMetaRegion(true);
+      exportLogsRegion = regionFactory.create(EXPORT_LOGS_REGION);
     }
 
     return exportLogsRegion;
   }
 
   public static void destroyExportLogsRegion(InternalCache cache) {
-    Region exportLogsRegion =
+    Region<?, ?> exportLogsRegion =
         cache.getCacheForProcessingClientRequests().getInternalRegion(EXPORT_LOGS_REGION);
     if (exportLogsRegion == null) {
       return;

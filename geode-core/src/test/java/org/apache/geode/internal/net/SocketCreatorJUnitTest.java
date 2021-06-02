@@ -15,22 +15,28 @@
 package org.apache.geode.internal.net;
 
 import static org.apache.geode.test.util.ResourceUtils.createTempFileFromResource;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
+import static org.mockito.ArgumentMatchers.isA;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.net.BindException;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLEngine;
+import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
+import org.mockito.ArgumentCaptor;
 
-import org.apache.geode.internal.admin.SSLConfig;
 import org.apache.geode.test.junit.categories.MembershipTest;
 
 @Category({MembershipTest.class})
@@ -55,7 +61,7 @@ public class SocketCreatorJUnitTest {
     final SSLSocket socket = mock(SSLSocket.class);
 
     final int timeout = 1938236;
-    socketCreator.handshakeIfSocketIsSSL(socket, timeout);
+    socketCreator.forCluster().handshakeIfSocketIsSSL(socket, timeout);
     verify(socket).setSoTimeout(timeout);
   }
 
@@ -65,7 +71,7 @@ public class SocketCreatorJUnitTest {
     final Socket socket = mock(Socket.class);
     final int timeout = 1938236;
 
-    socketCreator.handshakeIfSocketIsSSL(socket, timeout);
+    socketCreator.forCluster().handshakeIfSocketIsSSL(socket, timeout);
     verify(socket, never()).setSoTimeout(timeout);
   }
 
@@ -85,10 +91,10 @@ public class SocketCreatorJUnitTest {
 
     ServerSocket serverSocket = null;
     try {
-      serverSocket = socketCreator.createServerSocket(11234, 10, inetAddress);
+      serverSocket = socketCreator.forCluster().createServerSocket(11234, 10, inetAddress);
       assertThatExceptionOfType(BindException.class).isThrownBy(() -> {
         // call twice on the same port to trigger exception
-        socketCreator.createServerSocket(11234, 10, inetAddress);
+        socketCreator.forCluster().createServerSocket(11234, 10, inetAddress);
       }).withMessageContaining("11234")
           .withMessageContaining(InetAddress.getLocalHost().getHostAddress());
     } finally {
@@ -96,6 +102,53 @@ public class SocketCreatorJUnitTest {
         serverSocket.close();
       }
     }
+  }
+
+  @Test
+  public void configureSSLEngine() {
+    SSLConfig config = new SSLConfig.Builder().setCiphers("someCipher").setEnabled(true)
+        .setProtocols("someProtocol").setRequireAuth(true).setKeystore("someKeystore.jks")
+        .setAlias("someAlias").setTruststore("someTruststore.jks")
+        .setEndpointIdentificationEnabled(true).build();
+    SSLContext context = mock(SSLContext.class);
+    SSLParameters parameters = mock(SSLParameters.class);
+
+    SocketCreator socketCreator = new SocketCreator(config, context);
+
+    SSLEngine engine = mock(SSLEngine.class);
+    when(engine.getSSLParameters()).thenReturn(parameters);
+
+    socketCreator.configureSSLEngine(engine, "somehost", 12345, true);
+
+    verify(engine).setUseClientMode(isA(Boolean.class));
+    verify(engine).setSSLParameters(parameters);
+    verify(engine, never()).setNeedClientAuth(isA(Boolean.class));
+
+    ArgumentCaptor<String[]> stringArrayCaptor = ArgumentCaptor.forClass(String[].class);
+    verify(engine).setEnabledProtocols(stringArrayCaptor.capture());
+    assertThat(stringArrayCaptor.getValue()).containsExactly("someProtocol");
+    verify(engine).setEnabledCipherSuites(stringArrayCaptor.capture());
+    assertThat(stringArrayCaptor.getValue()).containsExactly("someCipher");
+  }
+
+  @Test
+  public void configureSSLEngineUsingAny() {
+    SSLConfig config = new SSLConfig.Builder().setCiphers("any").setEnabled(true)
+        .setProtocols("any").setRequireAuth(true).setKeystore("someKeystore.jks")
+        .setAlias("someAlias").setTruststore("someTruststore.jks")
+        .setEndpointIdentificationEnabled(true).build();
+    SSLContext context = mock(SSLContext.class);
+    SSLParameters parameters = mock(SSLParameters.class);
+
+    SocketCreator socketCreator = new SocketCreator(config, context);
+
+    SSLEngine engine = mock(SSLEngine.class);
+    when(engine.getSSLParameters()).thenReturn(parameters);
+
+    socketCreator.configureSSLEngine(engine, "somehost", 12345, true);
+
+    verify(engine, never()).setEnabledCipherSuites(isA(String[].class));
+    verify(engine, never()).setEnabledProtocols(isA(String[].class));
   }
 
   private String getSingleKeyKeystore() {

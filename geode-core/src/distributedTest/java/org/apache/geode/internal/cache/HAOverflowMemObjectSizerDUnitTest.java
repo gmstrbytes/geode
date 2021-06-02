@@ -14,8 +14,10 @@
  */
 package org.apache.geode.internal.cache;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
@@ -38,7 +40,6 @@ import org.apache.geode.cache.server.CacheServer;
 import org.apache.geode.cache30.ClientServerTestCase;
 import org.apache.geode.distributed.DistributedSystem;
 import org.apache.geode.distributed.internal.InternalLocator;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.cache.eviction.EvictionController;
 import org.apache.geode.internal.cache.eviction.MemoryLRUController;
 import org.apache.geode.internal.cache.tier.sockets.ClientUpdateMessageImpl;
@@ -135,7 +136,7 @@ public class HAOverflowMemObjectSizerDUnitTest extends JUnit4DistributedTestCase
     assertNotNull(region);
     CacheServer server1 = cache.addCacheServer();
     assertNotNull(server1);
-    int port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    int port = getRandomAvailableTCPPort();
     server1.setPort(port);
     server1.setNotifyBySubscription(notification.booleanValue());
     server1.getClientSubscriptionConfig().setCapacity(capacity);
@@ -146,7 +147,7 @@ public class HAOverflowMemObjectSizerDUnitTest extends JUnit4DistributedTestCase
      * storing capacity controller reference
      */
     cc = ((VMLRURegionMap) ((LocalRegion) cache.getRegion(
-        Region.SEPARATOR + CacheServerImpl.generateNameForClientMsgsRegion(port))).entries)
+        SEPARATOR + CacheServerImpl.generateNameForClientMsgsRegion(port))).entries)
             .getEvictionController();
     return new Integer(server1.getPort());
   }
@@ -225,7 +226,7 @@ public class HAOverflowMemObjectSizerDUnitTest extends JUnit4DistributedTestCase
    */
   public static void sizerTestForMemCapacityController(Integer port) {
     region = cache.getRegion(
-        Region.SEPARATOR + CacheServerImpl.generateNameForClientMsgsRegion(port.intValue()));
+        SEPARATOR + CacheServerImpl.generateNameForClientMsgsRegion(port.intValue()));
     assertNotNull(region);
     Set entries = region.entrySet();
     assertTrue(entries.size() > 0);
@@ -278,7 +279,7 @@ public class HAOverflowMemObjectSizerDUnitTest extends JUnit4DistributedTestCase
   public static void performPut(Long lowerLimit, Long higerlimit) {
     assertNotNull(lowerLimit);
     assertNotNull(higerlimit);
-    LocalRegion region = (LocalRegion) cache.getRegion(Region.SEPARATOR + regionName);
+    LocalRegion region = (LocalRegion) cache.getRegion(SEPARATOR + regionName);
     assertNotNull(region);
     for (long i = lowerLimit.longValue(); i < higerlimit.longValue(); i++) {
       region.put(new Long(i), new Long(i));

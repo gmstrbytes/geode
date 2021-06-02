@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import org.apache.shiro.subject.Subject;
 import org.springframework.shell.core.CommandMarker;
@@ -33,7 +34,7 @@ import org.apache.geode.distributed.ConfigurationPersistenceService;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.internal.InternalLocator;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.management.ManagementService;
 import org.apache.geode.management.api.ClusterManagementService;
 import org.apache.geode.management.internal.cli.shell.Gfsh;
@@ -59,6 +60,14 @@ public abstract class GfshCommand implements CommandMarker {
     return gfsh.isConnectedAndReady();
   }
 
+  /**
+   * For those commands that could possibly change the cluster configuration, they need to
+   * override this method to return true.
+   */
+  public boolean affectsClusterConfiguration() {
+    return false;
+  }
+
   public void authorize(ResourcePermission.Resource resource,
       ResourcePermission.Operation operation, ResourcePermission.Target target) {
     cache.getSecurityService().authorize(resource, operation, target);
@@ -81,10 +90,12 @@ public abstract class GfshCommand implements CommandMarker {
     return cache.getCacheForProcessingClientRequests();
   }
 
+  @SuppressWarnings("unchecked")
   public <T extends ManagementService> T getManagementService() {
     return (T) ManagementService.getExistingManagementService(cache);
   }
 
+  @SuppressWarnings("unchecked")
   public <T extends ConfigurationPersistenceService> T getConfigurationPersistenceService() {
     InternalLocator locator = InternalLocator.getLocator();
     return locator == null ? null : (T) locator.getConfigurationPersistenceService();
@@ -145,10 +156,11 @@ public abstract class GfshCommand implements CommandMarker {
   /**
    * Get All members >= a specific version, excluding locators
    */
-  public Set<DistributedMember> getNormalMembersWithSameOrNewerVersion(Version version) {
+  public Set<DistributedMember> getNormalMembersWithSameOrNewerVersion(KnownVersion version) {
     return ManagementUtils.getNormalMembersWithSameOrNewerVersion(cache, version);
   }
 
+  @SuppressWarnings("rawtypes")
   public Execution getMembersFunctionExecutor(final Set<DistributedMember> members) {
     return FunctionService.onMembers(members);
   }
@@ -158,6 +170,17 @@ public abstract class GfshCommand implements CommandMarker {
    */
   public Set<DistributedMember> findMembers(String[] groups, String[] members) {
     return ManagementUtils.findMembers(groups, members, cache);
+  }
+
+  public Set<DistributedMember> findAllOtherLocators() {
+    Set<DistributedMember> allLocators = findAllLocators();
+    String thisId = getCache().getDistributedSystem().getDistributedMember().getId();
+    return allLocators.stream().filter(m -> !(m.getId().equals(thisId)))
+        .collect(Collectors.toSet());
+  }
+
+  public Set<DistributedMember> findAllLocators() {
+    return ManagementUtils.getAllLocators(cache);
   }
 
   /**
@@ -198,26 +221,26 @@ public abstract class GfshCommand implements CommandMarker {
     return ManagementUtils.getRegionAssociatedMembers(regionPath, cache, false);
   }
 
-  public ResultCollector<?, ?> executeFunction(Function function, Object args,
+  public ResultCollector<?, ?> executeFunction(Function<?> function, Object args,
       final Set<DistributedMember> targetMembers) {
     return ManagementUtils.executeFunction(function, args, targetMembers);
   }
 
-  public ResultCollector<?, ?> executeFunction(Function function, Object args,
+  public ResultCollector<?, ?> executeFunction(Function<?> function, Object args,
       final DistributedMember targetMember) {
     return executeFunction(function, args, Collections.singleton(targetMember));
   }
 
-  public CliFunctionResult executeFunctionAndGetFunctionResult(Function function, Object args,
+  public CliFunctionResult executeFunctionAndGetFunctionResult(Function<?> function, Object args,
       final DistributedMember targetMember) {
-    ResultCollector rc = executeFunction(function, args, Collections.singleton(targetMember));
+    ResultCollector<?, ?> rc = executeFunction(function, args, Collections.singleton(targetMember));
     List<CliFunctionResult> results = CliFunctionResult.cleanResults((List<?>) rc.getResult());
     return results.size() > 0 ? results.get(0) : null;
   }
 
-  public List<CliFunctionResult> executeAndGetFunctionResult(Function function, Object args,
+  public List<CliFunctionResult> executeAndGetFunctionResult(Function<?> function, Object args,
       Set<DistributedMember> targetMembers) {
-    ResultCollector rc = executeFunction(function, args, targetMembers);
+    ResultCollector<?, ?> rc = executeFunction(function, args, targetMembers);
     return CliFunctionResult.cleanResults((List<?>) rc.getResult());
   }
 

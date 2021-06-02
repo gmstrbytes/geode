@@ -49,6 +49,23 @@ limitations under the License.
                             </li>
                         </ul>
                     </li>
+                    <li class="has_submenu">
+                       <a href="/docs/guide/<%=vars.product_version_nodot%>/getting_started/upgrade/upgrade_overview.html">Upgrading <%=vars.product_name_long%></a>
+                       <ul>
+                           <li>
+                               <a href="/docs/guide/<%=vars.product_version_nodot%>/getting_started/upgrade/upgrade_planning.html">Planning an Upgrade</a>
+                           </li>
+                           <li>
+                               <a href="/docs/guide/<%=vars.product_version_nodot%>/getting_started/upgrade/upgrade_rolling.html">Rolling Upgrade</a>
+                           </li>
+                           <li>
+                               <a href="/docs/guide/<%=vars.product_version_nodot%>/getting_started/upgrade/upgrade_offline.html">Offline Upgrade</a>
+                           </li>
+                           <li>
+                               <a href="/docs/guide/<%=vars.product_version_nodot%>/getting_started/upgrade/upgrade_clients.html">Upgrading Clients</a>
+                           </li>
+                       </ul>
+                    </li>
                     <li>
                         <a href="/docs/guide/<%=vars.product_version_nodot%>/getting_started/15_minute_quickstart_gfsh.html">Apache Geode in 15 Minutes or Less</a>
                     </li>
@@ -201,6 +218,9 @@ limitations under the License.
                         <ul>
                             <li>
                                 <a href="/docs/guide/<%=vars.product_version_nodot%>/basic_config/data_entries_custom_classes/managing_data_entries.html">Managing Data Entries</a>
+                            </li>
+                            <li>
+                                <a href="/docs/guide/<%=vars.product_version_nodot%>/basic_config/data_entries_custom_classes/copy_on_read.html">Copy on Read Behavior</a>
                             </li>
                             <li>
                                 <a href="/docs/guide/<%=vars.product_version_nodot%>/basic_config/data_entries_custom_classes/using_custom_classes.html">Requirements for Using Custom Classes in Data Caching</a>
@@ -683,9 +703,6 @@ limitations under the License.
                                     <li>
                                         <a href="/docs/guide/<%=vars.product_version_nodot%>/managing/monitor_tune/system_member_performance_garbage.html">Garbage Collection and System Performance</a>
                                     </li>
-                                    <li>
-                                        <a href="/docs/guide/<%=vars.product_version_nodot%>/managing/monitor_tune/system_member_performance_connection_thread_settings.html">Connection Thread Settings and Performance</a>
-                                    </li>
                                 </ul>
                             </li>
                             <li class="has_submenu">
@@ -930,6 +947,9 @@ limitations under the License.
                             </li>
                             <li>
                                 <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/partitioned_regions/checking_region_redundancy.html">Checking Redundancy in Partitioned Regions</a>
+                            </li>
+                            <li>
+                                <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/partitioned_regions/restoring_region_redundancy.html">Restoring Redundancy in Partitioned Regions</a>
                             </li>
                             <li>
                                 <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/partitioned_regions/moving_partitioned_data.html">Moving Partitioned Region Data to Another Member</a>
@@ -1215,17 +1235,14 @@ limitations under the License.
                         <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/querying_basics/chapter_overview.html">Querying</a>
                         <ul>
                             <li>
-                                <a href="/docs/guide/<%=vars.product_version_nodot%>/getting_started/querying_quick_reference.html">Geode Querying FAQ and Examples</a>
+                                <a href="/docs/guide/<%=vars.product_version_nodot%>/getting_started/querying_quick_reference.html">Querying FAQ and Examples</a>
+                            </li>
+                            <li>
+                                <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/querying_basics/query_basics.html">Querying with OQL</a>
                             </li>
                             <li class="has_submenu">
-                                <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/querying_basics/query_basics.html">Querying with OQL</a>
+                                <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/querying_basics/running_a_query.html">Writing and Executing a Query in OQL</a>
                                 <ul>
-                                    <li>
-                                        <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/querying_basics/oql_compared_to_sql.html">Advantages of OQL</a>
-                                    </li>
-                                    <li>
-                                        <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/querying_basics/running_a_query.html">Writing and Executing a Query in Geode</a>
-                                    </li>
                                     <li class="has_submenu">
                                         <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/querying_basics/what_is_a_query_string.html">Building a Query String</a>
                                         <ul>
@@ -1294,6 +1311,9 @@ limitations under the License.
                                     </li>
                                     <li>
                                         <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/query_additional/using_query_bind_parameters.html">Using Query Bind Parameters</a>
+                                    </li>
+                                    <li>
+                                        <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/query_additional/querying-a-specific-member.html">Querying a Specific Member</a>
                                     </li>
                                     <li class="has_submenu">
                                         <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/querying_basics/querying_partitioned_regions.html">
@@ -1407,8 +1427,32 @@ limitations under the License.
                             </li>
                         </ul>
                     </li>
+                    <li class="has_submenu">
+                        <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/geode_apis_compatible_with_redis.html"><%=vars.product_name%> APIs Compatible with Redis (Experimental)</a>
+                        <ul>
+                            <li>
+                                <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/geode_apis_compatible_with_redis.html#using-the-api">Using <%=vars.product_name%> APIs Compatible with Redis</a>
+                            </li>
+                            <li>
+                                <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/geode_apis_compatible_with_redis.html#supported-commands">Supported Redis Commands</a>
+                            </li>
+                            <li>
+                                <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/geode_apis_compatible_with_redis.html#advantages-over-redis">Advantages of <%=vars.product_name%> over Redis</a>
+                            </li>
+                            <li>
+                                <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/geode_apis_compatible_with_redis.html#expiration-accuracy">Expiration Accuracy</a>
+                            </li>
+                             <li>
+                              <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/geode_apis_compatible_with_redis.html#high-availability-model">High Availability Model</a>
+                            </li>
+                            <li>
+                              <a href="/docs/guide/<%=vars.product_version_nodot%>/developing/geode_apis_compatible_with_redis.html#loss-of-connections">Loss of Connections</a>
+                            </li>
+                        </ul>
+                    </li>
                 </ul>
             </li>
+
             <li class="has_submenu">
                 <a href="/docs/guide/<%=vars.product_version_nodot%>/rest_apps/book_intro.html">Developing REST Applications for Apache Geode</a>
                 <ul>
@@ -1931,6 +1975,9 @@ gfsh</a>
                                     <li>
                                         <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/gfsh/command-pages/remove.html">remove</a>
                                     </li>
+                                    <li>
+                                        <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/gfsh/command-pages/restore.html">restore redundancy</a>
+                                    </li>
                                     <li class="has_submenu">
                                         <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/gfsh/command-pages/resume.html">resume</a>
                                         <ul>
@@ -2024,6 +2071,9 @@ gfsh</a>
                                             </li>
                                             <li>
                                                 <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/gfsh/command-pages/status.html#topic_E96D0EFA513C4CD79B833FCCDD69C832">status locator</a>
+                                            </li>
+                                            <li>
+                                                <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/gfsh/command-pages/status.html#topic_status_redundancy">status redundancy</a>
                                             </li>
                                             <li>
                                                 <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/gfsh/command-pages/status.html#topic_E5DB49044978404D9D6B1971BF5D400D">status server</a>
@@ -2180,20 +2230,6 @@ gfsh</a>
                         </ul>
                     </li>
                     <li class="has_submenu">
-                        <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/redis_adapter.html">Geode Redis Adapter</a>
-                        <ul>
-                            <li>
-                                <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/redis_adapter.html#using-the-redis-adapter">Using the Redis Adapter</a>
-                            </li>
-                            <li>
-                                <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/redis_adapter.html#how-the-redis-adapter-works">How the Redis Adapter Works</a>
-                            </li>
-                            <li>
-                                <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/redis_adapter.html#advantages-of-geode-over-redis">Advantages of Geode over a Redis Server</a>
-                            </li>
-                        </ul>
-                    </li>
-                    <li class="has_submenu">
                         <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/lucene_integration.html">Apache Lucene Integration</a>
                         <ul>
                             <li>
@@ -2212,7 +2248,7 @@ gfsh</a>
                             </li>
                             <li>
                                 <a href="/docs/guide/<%=vars.product_version_nodot%>/tools_modules/micrometer/micrometer-meters.html">Micrometer Meters and Tags</a>
-                            </li>                    
+                            </li>
                         </ul>
                     </li>
                 </ul>

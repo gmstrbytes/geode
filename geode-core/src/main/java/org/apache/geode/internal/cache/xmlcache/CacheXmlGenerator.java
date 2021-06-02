@@ -45,6 +45,7 @@ import javax.xml.transform.TransformerFactory;
 import javax.xml.transform.sax.SAXSource;
 import javax.xml.transform.stream.StreamResult;
 
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.xml.sax.Attributes;
 import org.xml.sax.ContentHandler;
 import org.xml.sax.DTDHandler;
@@ -55,6 +56,7 @@ import org.xml.sax.SAXException;
 import org.xml.sax.XMLReader;
 import org.xml.sax.helpers.AttributesImpl;
 
+import org.apache.geode.CancelException;
 import org.apache.geode.InternalGemFireException;
 import org.apache.geode.annotations.Immutable;
 import org.apache.geode.cache.AttributesFactory;
@@ -397,6 +399,9 @@ public class CacheXmlGenerator extends CacheXml implements XMLReader {
       pw.flush();
 
     } catch (Exception ex) {
+      if (ExceptionUtils.getRootCause(ex) instanceof CancelException) {
+        throw (CancelException) ExceptionUtils.getRootCause(ex);
+      }
       throw new RuntimeException("An Exception was thrown while generating XML.", ex);
     }
   }
@@ -1148,6 +1153,10 @@ public class CacheXmlGenerator extends CacheXml implements XMLReader {
         atts.addAttribute("", "", FREE_CONNECTION_TIMEOUT, "",
             String.valueOf(cp.getFreeConnectionTimeout()));
       if (generateDefaults()
+          || cp.getServerConnectionTimeout() != PoolFactory.DEFAULT_SERVER_CONNECTION_TIMEOUT)
+        atts.addAttribute("", "", SERVER_CONNECTION_TIMEOUT, "",
+            String.valueOf(cp.getServerConnectionTimeout()));
+      if (generateDefaults()
           || cp.getLoadConditioningInterval() != PoolFactory.DEFAULT_LOAD_CONDITIONING_INTERVAL)
         atts.addAttribute("", "", LOAD_CONDITIONING_INTERVAL, "",
             String.valueOf(cp.getLoadConditioningInterval()));
@@ -1210,7 +1219,7 @@ public class CacheXmlGenerator extends CacheXml implements XMLReader {
       {
         for (InetSocketAddress addr : cp.getLocators()) {
           AttributesImpl sAtts = new AttributesImpl();
-          sAtts.addAttribute("", "", HOST, "", addr.getHostName());
+          sAtts.addAttribute("", "", HOST, "", addr.getHostString());
           sAtts.addAttribute("", "", PORT, "", String.valueOf(addr.getPort()));
           handler.startElement("", LOCATOR, LOCATOR, sAtts);
           handler.endElement("", LOCATOR, LOCATOR);
@@ -1219,10 +1228,15 @@ public class CacheXmlGenerator extends CacheXml implements XMLReader {
       {
         for (InetSocketAddress addr : cp.getServers()) {
           AttributesImpl sAtts = new AttributesImpl();
-          sAtts.addAttribute("", "", HOST, "", addr.getHostName());
+          sAtts.addAttribute("", "", HOST, "", addr.getHostString());
           sAtts.addAttribute("", "", PORT, "", String.valueOf(addr.getPort()));
           handler.startElement("", SERVER, SERVER, sAtts);
           handler.endElement("", SERVER, SERVER);
+        }
+        if (version.compareTo(CacheXmlVersion.GEODE_1_0) >= 0) {
+          if (cp.getSocketFactory() != PoolFactory.DEFAULT_SOCKET_FACTORY) {
+            generate(SOCKET_FACTORY, cp.getSocketFactory());
+          }
         }
       }
       handler.endElement("", "", CONNECTION_POOL);
@@ -1368,6 +1382,26 @@ public class CacheXmlGenerator extends CacheXml implements XMLReader {
     if (sender.getOrderPolicy() != null) {
       if (generateDefaults() || !sender.getOrderPolicy().equals(GatewaySender.DEFAULT_ORDER_POLICY))
         atts.addAttribute("", "", ORDER_POLICY, "", String.valueOf(sender.getOrderPolicy()));
+    }
+
+    // group-transaction-events
+    if (version.compareTo(CacheXmlVersion.GEODE_1_0) >= 0) {
+      if (generateDefaults()
+          || sender
+              .mustGroupTransactionEvents() != GatewaySender.DEFAULT_MUST_GROUP_TRANSACTION_EVENTS) {
+        atts.addAttribute("", "", GROUP_TRANSACTION_EVENTS, "",
+            String.valueOf(sender.mustGroupTransactionEvents()));
+      }
+    }
+
+    // enforce-threads-connect-same-receiver
+    if (version.compareTo(CacheXmlVersion.GEODE_1_0) >= 0) {
+      if (generateDefaults()
+          || sender
+              .getEnforceThreadsConnectSameReceiver() != GatewaySender.DEFAULT_ENFORCE_THREADS_CONNECT_SAME_RECEIVER) {
+        atts.addAttribute("", "", ENFORCE_THREADS_CONNECT_SAME_RECEIVER, "",
+            String.valueOf(sender.getEnforceThreadsConnectSameReceiver()));
+      }
     }
 
     handler.startElement("", GATEWAY_SENDER, GATEWAY_SENDER, atts);

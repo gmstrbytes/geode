@@ -32,7 +32,7 @@ import org.apache.geode.cache.configuration.DeclarableType;
 import org.apache.geode.cache.wan.GatewaySender.OrderPolicy;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.management.DistributedSystemMXBean;
 import org.apache.geode.management.cli.CliMetaData;
@@ -59,14 +59,6 @@ public class CreateGatewaySenderCommand extends SingleGfshCommand {
       operation = ResourcePermission.Operation.MANAGE, target = ResourcePermission.Target.GATEWAY)
   public ResultModel createGatewaySender(
 
-      @CliOption(key = {CliStrings.GROUP, CliStrings.GROUPS},
-          optionContext = ConverterHint.MEMBERGROUP,
-          help = CliStrings.CREATE_GATEWAYSENDER__GROUP__HELP) String[] onGroups,
-
-      @CliOption(key = {CliStrings.MEMBER, CliStrings.MEMBERS},
-          optionContext = ConverterHint.MEMBERIDNAME,
-          help = CliStrings.CREATE_GATEWAYSENDER__MEMBER__HELP) String[] onMember,
-
       @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__ID,
           mandatory = true,
           help = CliStrings.CREATE_GATEWAYSENDER__ID__HELP) String id,
@@ -75,13 +67,28 @@ public class CreateGatewaySenderCommand extends SingleGfshCommand {
           mandatory = true,
           help = CliStrings.CREATE_GATEWAYSENDER__REMOTEDISTRIBUTEDSYSTEMID__HELP) Integer remoteDistributedSystemId,
 
+      @CliOption(key = {CliStrings.GROUP, CliStrings.GROUPS},
+          optionContext = ConverterHint.MEMBERGROUP,
+          help = CliStrings.CREATE_GATEWAYSENDER__GROUP__HELP) String[] onGroups,
+
+      @CliOption(key = {CliStrings.MEMBER, CliStrings.MEMBERS},
+          optionContext = ConverterHint.MEMBERIDNAME,
+          help = CliStrings.CREATE_GATEWAYSENDER__MEMBER__HELP) String[] onMember,
+
+
+      @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__GROUPTRANSACTIONEVENTS,
+          specifiedDefaultValue = "true",
+          unspecifiedDefaultValue = "false",
+          help = CliStrings.CREATE_GATEWAYSENDER__GROUPTRANSACTIONEVENTS__HELP) boolean groupTransactionEvents,
+
       @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__PARALLEL,
           specifiedDefaultValue = "true",
           unspecifiedDefaultValue = "false",
           help = CliStrings.CREATE_GATEWAYSENDER__PARALLEL__HELP) boolean parallel,
 
       // Users must avoid this feature, it might cause data loss and other issues during startup.
-      @Deprecated @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__MANUALSTART,
+      @SuppressWarnings("deprecation") @CliOption(
+          key = CliStrings.CREATE_GATEWAYSENDER__MANUALSTART,
           unspecifiedDefaultValue = "false",
           help = CliStrings.CREATE_GATEWAYSENDER__MANUALSTART__HELP) Boolean manualStart,
 
@@ -131,14 +138,20 @@ public class CreateGatewaySenderCommand extends SingleGfshCommand {
           help = CliStrings.CREATE_GATEWAYSENDER__GATEWAYEVENTFILTER__HELP) String[] gatewayEventFilters,
 
       @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__GATEWAYTRANSPORTFILTER,
-          help = CliStrings.CREATE_GATEWAYSENDER__GATEWAYTRANSPORTFILTER__HELP) String[] gatewayTransportFilter) {
+          help = CliStrings.CREATE_GATEWAYSENDER__GATEWAYTRANSPORTFILTER__HELP) String[] gatewayTransportFilter,
+
+      @CliOption(key = CliStrings.CREATE_GATEWAYSENDER__ENFORCE_THREADS_CONNECT_SAME_RECEIVER,
+          specifiedDefaultValue = "true",
+          unspecifiedDefaultValue = "false",
+          help = CliStrings.CREATE_GATEWAYSENDER__ENFORCE_THREADS_CONNECT_SAME_RECEIVER__HELP) Boolean enforceThreadsConnectSameReceiver) {
 
     CacheConfig.GatewaySender configuration =
         buildConfiguration(id, remoteDistributedSystemId, parallel, manualStart,
             socketBufferSize, socketReadTimeout, enableBatchConflation, batchSize,
             batchTimeInterval, enablePersistence, diskStoreName, diskSynchronous, maxQueueMemory,
             alertThreshold, dispatcherThreads, orderPolicy == null ? null : orderPolicy.name(),
-            gatewayEventFilters, gatewayTransportFilter);
+            gatewayEventFilters, gatewayTransportFilter, groupTransactionEvents,
+            enforceThreadsConnectSameReceiver);
 
     GatewaySenderFunctionArgs gatewaySenderFunctionArgs =
         new GatewaySenderFunctionArgs(configuration);
@@ -201,7 +214,8 @@ public class CreateGatewaySenderCommand extends SingleGfshCommand {
 
   private boolean verifyAllCurrentVersion(Set<DistributedMember> members) {
     return members.stream().allMatch(
-        member -> ((InternalDistributedMember) member).getVersionObject().equals(Version.CURRENT));
+        member -> ((InternalDistributedMember) member).getVersion()
+            .equals(KnownVersion.CURRENT));
   }
 
   private CacheConfig.GatewaySender buildConfiguration(String id, Integer remoteDSId,
@@ -220,7 +234,9 @@ public class CreateGatewaySenderCommand extends SingleGfshCommand {
       Integer dispatcherThreads,
       String orderPolicy,
       String[] gatewayEventFilters,
-      String[] gatewayTransportFilters) {
+      String[] gatewayTransportFilters,
+      Boolean groupTransactionEvents,
+      Boolean enforceThreadsConnectSameReceiver) {
     CacheConfig.GatewaySender sender = new CacheConfig.GatewaySender();
     sender.setId(id);
     sender.setRemoteDistributedSystemId(int2string(remoteDSId));
@@ -238,13 +254,14 @@ public class CreateGatewaySenderCommand extends SingleGfshCommand {
     sender.setAlertThreshold(int2string(alertThreshold));
     sender.setDispatcherThreads(int2string(dispatcherThreads));
     sender.setOrderPolicy(orderPolicy);
+    sender.setGroupTransactionEvents(groupTransactionEvents);
     if (gatewayEventFilters != null) {
       sender.getGatewayEventFilters().addAll((stringsToDeclarableTypes(gatewayEventFilters)));
     }
     if (gatewayTransportFilters != null) {
       sender.getGatewayTransportFilters().addAll(stringsToDeclarableTypes(gatewayTransportFilters));
     }
-
+    sender.setEnforceThreadsConnectSameReceiver(enforceThreadsConnectSameReceiver);
     return sender;
   }
 
@@ -269,6 +286,16 @@ public class CreateGatewaySenderCommand extends SingleGfshCommand {
           (OrderPolicy) parseResult.getParamValue(CliStrings.CREATE_GATEWAYSENDER__ORDERPOLICY);
       Integer dispatcherThreads =
           (Integer) parseResult.getParamValue(CliStrings.CREATE_GATEWAYSENDER__DISPATCHERTHREADS);
+      Boolean groupTransactionEvents =
+          (Boolean) parseResult
+              .getParamValue(CliStrings.CREATE_GATEWAYSENDER__GROUPTRANSACTIONEVENTS);
+      Boolean batchConflationEnabled =
+          (Boolean) parseResult
+              .getParamValue(CliStrings.CREATE_GATEWAYSENDER__ENABLEBATCHCONFLATION);
+      Boolean enforceThreadsConnectSameReceiver =
+          (Boolean) parseResult
+              .getParamValue(
+                  CliStrings.CREATE_GATEWAYSENDER__ENFORCE_THREADS_CONNECT_SAME_RECEIVER);
 
       if (dispatcherThreads != null && dispatcherThreads > 1 && orderPolicy == null) {
         return ResultModel.createError(
@@ -278,6 +305,25 @@ public class CreateGatewaySenderCommand extends SingleGfshCommand {
       if (parallel && orderPolicy == OrderPolicy.THREAD) {
         return ResultModel.createError(
             "Parallel Gateway Sender can not be created with THREAD OrderPolicy");
+      }
+
+      if (!parallel && dispatcherThreads != null && dispatcherThreads > 1
+          && groupTransactionEvents) {
+        return ResultModel.createError(
+            "Serial Gateway Sender cannot be created with --group-transaction-events when --dispatcher-threads is greater than 1.");
+      }
+
+      if (groupTransactionEvents && batchConflationEnabled) {
+        return ResultModel.createError(
+            "Gateway Sender cannot be created with both --group-transaction-events and --enable-batch-conflation.");
+      }
+
+      if (parallel && enforceThreadsConnectSameReceiver) {
+        return ResultModel
+            .createError(
+                "Option --" + CliStrings.CREATE_GATEWAYSENDER__ENFORCE_THREADS_CONNECT_SAME_RECEIVER
+                    + " only applies to serial gateway senders.");
+
       }
 
       return ResultModel.createInfo("");

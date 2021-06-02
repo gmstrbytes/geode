@@ -14,6 +14,7 @@
  */
 package org.apache.geode.management.internal.cli;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.ArrayList;
@@ -40,22 +41,62 @@ public class GfshParserJUnitTest {
 
   @Test
   public void testSplitUserInputDoubleQuotes() {
-    input = "query --query=\"select * from /region\"";
+    input = "query --query=\"select * from " + SEPARATOR + "region\"";
     tokens = GfshParser.splitUserInput(input);
     assertThat(tokens.size()).isEqualTo(3);
     assertThat(tokens.get(0)).isEqualTo("query");
     assertThat(tokens.get(1)).isEqualTo("--query");
-    assertThat(tokens.get(2)).isEqualTo("\"select * from /region\"");
+    assertThat(tokens.get(2)).isEqualTo("\"select * from " + SEPARATOR + "region\"");
   }
 
   @Test
   public void testSplitUserInputSingleQuotes() {
-    input = "query --query='select * from /region'";
+    input = "query --query='select * from " + SEPARATOR + "region'";
     tokens = GfshParser.splitUserInput(input);
     assertThat(tokens.size()).isEqualTo(3);
     assertThat(tokens.get(0)).isEqualTo("query");
     assertThat(tokens.get(1)).isEqualTo("--query");
-    assertThat(tokens.get(2)).isEqualTo("'select * from /region'");
+    assertThat(tokens.get(2)).isEqualTo("'select * from " + SEPARATOR + "region'");
+  }
+
+  @Test
+  public void testQuerySplitUserInputDoubleQuotesWithoutEquals() {
+    input = "query --query \"select * from " + SEPARATOR + "region\"";
+    tokens = GfshParser.splitUserInput(input);
+    assertThat(tokens.size()).isEqualTo(3);
+    assertThat(tokens.get(0)).isEqualTo("query");
+    assertThat(tokens.get(1)).isEqualTo("--query");
+    assertThat(tokens.get(2)).isEqualTo("\"select * from " + SEPARATOR + "region\"");
+  }
+
+  @Test
+  public void testQuerySplitUserInputSingleQuotesWithoutEquals() {
+    input = "query --query 'select * from " + SEPARATOR + "region'";
+    tokens = GfshParser.splitUserInput(input);
+    assertThat(tokens.size()).isEqualTo(3);
+    assertThat(tokens.get(0)).isEqualTo("query");
+    assertThat(tokens.get(1)).isEqualTo("--query");
+    assertThat(tokens.get(2)).isEqualTo("'select * from " + SEPARATOR + "region'");
+  }
+
+  @Test
+  public void testQuerySplitUserInputWithEqualsInQuery() {
+    input = "query --query 'select * from " + SEPARATOR + "region r where r <= 5'";
+    tokens = GfshParser.splitUserInput(input);
+    assertThat(tokens.size()).isEqualTo(3);
+    assertThat(tokens.get(0)).isEqualTo("query");
+    assertThat(tokens.get(1)).isEqualTo("--query");
+    assertThat(tokens.get(2)).isEqualTo("'select * from " + SEPARATOR + "region r where r <= 5'");
+  }
+
+  @Test
+  public void testQuerySplitUserInputWithDoubleEqualsInQuery() {
+    input = "query --query 'select * from " + SEPARATOR + "region r where r == 5'";
+    tokens = GfshParser.splitUserInput(input);
+    assertThat(tokens.size()).isEqualTo(3);
+    assertThat(tokens.get(0)).isEqualTo("query");
+    assertThat(tokens.get(1)).isEqualTo("--query");
+    assertThat(tokens.get(2)).isEqualTo("'select * from " + SEPARATOR + "region r where r == 5'");
   }
 
   @Test
@@ -82,6 +123,18 @@ public class GfshParserJUnitTest {
   }
 
   @Test
+  public void testSplitUserInputWithJWithNoEquals() {
+    input =
+        "start server --name=server1  --J \"-Dgemfire.start-dev-rest-api=true\" --J '-Dgemfire.http-service-port=8080' --J '-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=30000'";
+    tokens = GfshParser.splitUserInput(input);
+    assertThat(tokens.size()).isEqualTo(10);
+    assertThat(tokens.get(5)).isEqualTo("\"-Dgemfire.start-dev-rest-api=true\"");
+    assertThat(tokens.get(7)).isEqualTo("'-Dgemfire.http-service-port=8080'");
+    assertThat(tokens.get(9))
+        .isEqualTo("'-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=30000'");
+  }
+
+  @Test
   public void splitWithWhiteSpacesExceptQuoted() {
     input = "create region --cache-writer=\"my.abc{'k1' : 'v   1', 'k2' : 'v2'}\"";
     tokens = GfshParser.splitUserInput(input);
@@ -93,6 +146,16 @@ public class GfshParserJUnitTest {
   public void testSplitUserInputWithJNoQuotes() {
     input =
         "start server --name=server1  --J=-Dgemfire.start-dev-rest-api=true --J=-Dgemfire.http-service-port=8080";
+    tokens = GfshParser.splitUserInput(input);
+    assertThat(tokens.size()).isEqualTo(8);
+    assertThat(tokens.get(5)).isEqualTo("-Dgemfire.start-dev-rest-api=true");
+    assertThat(tokens.get(7)).isEqualTo("-Dgemfire.http-service-port=8080");
+  }
+
+  @Test
+  public void testSplitUserInputWithJNoQuotesNoEquals() {
+    input =
+        "start server --name=server1  --J -Dgemfire.start-dev-rest-api=true --J -Dgemfire.http-service-port=8080";
     tokens = GfshParser.splitUserInput(input);
     assertThat(tokens.size()).isEqualTo(8);
     assertThat(tokens.get(5)).isEqualTo("-Dgemfire.start-dev-rest-api=true");
@@ -153,7 +216,7 @@ public class GfshParserJUnitTest {
 
   @Test
   public void spaceOrEmptyStringIsParsedCorrectly() {
-    input = "alter region --name=/Person --cache-writer='' --cache-loader=' '";
+    input = "alter region --name=" + SEPARATOR + "Person --cache-writer='' --cache-loader=' '";
     tokens = GfshParser.splitUserInput(input);
     assertThat(tokens.size()).isEqualTo(8);
     assertThat(tokens.get(7)).isEqualTo("' '");

@@ -24,6 +24,7 @@ import javax.servlet.http.HttpServletRequest;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
@@ -34,7 +35,7 @@ import org.apache.geode.tools.pulse.internal.data.Repository;
 /**
  * Class MemberHeapUsageService
  *
- * This class contains implementations of getting Memeber's current Heap Usage and its trend over
+ * This class contains implementations of getting Member's current Heap Usage and its trend over
  * the time.
  *
  * @since GemFire version 7.5
@@ -45,12 +46,18 @@ import org.apache.geode.tools.pulse.internal.data.Repository;
 public class MemberHeapUsageService implements PulseService {
 
   private final ObjectMapper mapper = new ObjectMapper();
+  private final Repository repository;
+
+  @Autowired
+  public MemberHeapUsageService(Repository repository) {
+    this.repository = repository;
+  }
 
   @Override
   public ObjectNode execute(final HttpServletRequest request) throws Exception {
 
     // get cluster object
-    Cluster cluster = Repository.get().getCluster();
+    Cluster cluster = repository.getCluster();
 
     // json object to be sent as response
     ObjectNode responseJSON = mapper.createObjectNode();
@@ -63,7 +70,7 @@ public class MemberHeapUsageService implements PulseService {
 
     if (clusterMember != null) {
       // response
-      responseJSON.put("heapUsageTrend", mapper.valueToTree(
+      responseJSON.set("heapUsageTrend", mapper.valueToTree(
           clusterMember.getMemberStatisticTrend(Cluster.Member.MEMBER_STAT_HEAP_USAGE_SAMPLE)));
       responseJSON.put("currentHeapUsage", clusterMember.getCurrentHeapSize());
     }

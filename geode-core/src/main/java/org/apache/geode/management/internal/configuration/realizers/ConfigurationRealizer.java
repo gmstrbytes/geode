@@ -17,6 +17,7 @@
 package org.apache.geode.management.internal.configuration.realizers;
 
 import org.apache.geode.annotations.Experimental;
+import org.apache.geode.cache.configuration.CacheElement;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.management.api.RealizationResult;
 import org.apache.geode.management.configuration.AbstractConfiguration;
@@ -29,7 +30,7 @@ import org.apache.geode.management.runtime.RuntimeInfo;
  */
 @Experimental
 public interface ConfigurationRealizer<T extends AbstractConfiguration<R>, R extends RuntimeInfo> {
-  RealizationResult create(T config, InternalCache cache);
+  RealizationResult create(T config, InternalCache cache) throws Exception;
 
   default boolean exists(T config, InternalCache cache) {
     return get(config, cache) != null;
@@ -37,9 +38,9 @@ public interface ConfigurationRealizer<T extends AbstractConfiguration<R>, R ext
 
   R get(T config, InternalCache cache);
 
-  RealizationResult update(T config, InternalCache cache);
+  RealizationResult update(T config, InternalCache cache) throws Exception;
 
-  RealizationResult delete(T config, InternalCache cache);
+  RealizationResult delete(T config, InternalCache cache) throws Exception;
 
   default boolean isReadyOnly() {
     return false;

@@ -17,18 +17,29 @@ package org.apache.geode.internal.cache.wan.parallel;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 
+import junitparams.JUnitParamsRunner;
+import junitparams.Parameters;
 import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
+import org.junit.runner.RunWith;
 
 import org.apache.geode.cache.EntryExistsException;
 import org.apache.geode.cache.Region;
+import org.apache.geode.cache.RegionShortcut;
 import org.apache.geode.cache.client.ServerOperationException;
 import org.apache.geode.cache.wan.GatewaySender;
 import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.internal.cache.RegionQueue;
+import org.apache.geode.internal.cache.execute.data.CustId;
+import org.apache.geode.internal.cache.execute.data.Order;
+import org.apache.geode.internal.cache.execute.data.OrderId;
+import org.apache.geode.internal.cache.execute.data.Shipment;
+import org.apache.geode.internal.cache.execute.data.ShipmentId;
 import org.apache.geode.internal.cache.wan.AbstractGatewaySender;
 import org.apache.geode.internal.cache.wan.BatchException70;
 import org.apache.geode.internal.cache.wan.WANTestBase;
@@ -40,6 +51,7 @@ import org.apache.geode.test.dunit.Wait;
 import org.apache.geode.test.junit.categories.WanTest;
 
 @Category({WanTest.class})
+@RunWith(JUnitParamsRunner.class)
 public class ParallelWANPropagationDUnitTest extends WANTestBase {
   private static final long serialVersionUID = 1L;
 
@@ -49,8 +61,8 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
 
   @Test
   public void test_ParallelGatewaySenderMetaRegionNotExposedToUser_Bug44216() {
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCache(lnPort);
     createSender("ln", 2, true, 100, 300, false, false, null, true);
@@ -72,10 +84,10 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     }
 
     GemFireCacheImpl gemCache = (GemFireCacheImpl) cache;
-    Set regionSet = gemCache.rootRegions();
+    Set<?> regionSet = gemCache.rootRegions();
 
     for (Object r : regionSet) {
-      if (((Region) r).getName()
+      if (((Region<?, ?>) r).getName()
           .equals(((AbstractGatewaySender) sender).getQueues().toArray(new RegionQueue[1])[0]
               .getRegion().getName())) {
         fail("The shadowPR is exposed to the user");
@@ -84,9 +96,9 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
   }
 
   @Test
-  public void testParallelPropagation_withoutRemoteSite() throws Exception {
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+  public void testParallelPropagation_withoutRemoteSite() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(lnPort, vm4, vm5, vm6, vm7);
 
@@ -96,10 +108,10 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     vm6.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 300, false, false, null, true));
     vm7.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 300, false, false, null, true));
 
-    vm4.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm5.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm6.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm7.invoke(createPartitionedRegionRedundancy1Runnable());
+    vm4.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm5.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm6.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm7.invoke(createPartitionedRegionRunnable("ln", 1));
 
     startSenderInVMs("ln", vm4, vm5, vm6, vm7);
 
@@ -134,9 +146,9 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
    *
    */
   @Test
-  public void testParallelPropagation() throws Exception {
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+  public void testParallelPropagation() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2, vm3);
     createReceiverInVMs(vm2, vm3);
@@ -147,10 +159,10 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     vm6.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
     vm7.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
 
-    vm4.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm5.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm6.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm7.invoke(createPartitionedRegionRedundancy1Runnable());
+    vm4.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm5.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm6.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm7.invoke(createPartitionedRegionRunnable("ln", 1));
 
     startSenderInVMs("ln", vm4, vm5, vm6, vm7);
 
@@ -180,8 +192,10 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
         isOffHeap());
   }
 
-  protected SerializableRunnableIF createPartitionedRegionRedundancy1Runnable() {
-    return () -> WANTestBase.createPartitionedRegion(getTestMethodName() + "_PR", "ln", 1, 100,
+  protected SerializableRunnableIF createPartitionedRegionRunnable(String senderIds,
+      int redundantCopies) {
+    return () -> WANTestBase.createPartitionedRegion(getTestMethodName() + "_PR", senderIds,
+        redundantCopies, 100,
         isOffHeap());
   }
 
@@ -190,9 +204,9 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
   }
 
   @Test
-  public void testParallelPropagation_ManualStart() throws Exception {
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+  public void testParallelPropagation_ManualStart() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2, vm3);
     createReceiverInVMs(vm2, vm3);
@@ -203,10 +217,10 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     vm6.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, false));
     vm7.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, false));
 
-    vm4.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm5.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm6.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm7.invoke(createPartitionedRegionRedundancy1Runnable());
+    vm4.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm5.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm6.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm7.invoke(createPartitionedRegionRunnable("ln", 1));
 
     vm2.invoke(createReceiverPartitionedRegionRedundancy1());
     vm3.invoke(createReceiverPartitionedRegionRedundancy1());
@@ -234,9 +248,9 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
    *
    */
   @Test
-  public void testParallelPropagationPutBeforeSenderStart() throws Exception {
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+  public void testParallelPropagationPutBeforeSenderStart() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2, vm3);
     createReceiverInVMs(vm2, vm3);
@@ -247,10 +261,10 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     vm6.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
     vm7.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
 
-    vm4.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm5.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm6.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm7.invoke(createPartitionedRegionRedundancy1Runnable());
+    vm4.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm5.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm6.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm7.invoke(createPartitionedRegionRunnable("ln", 1));
 
     vm4.invoke(() -> WANTestBase.doPuts(getTestMethodName() + "_PR", 1000));
 
@@ -279,9 +293,9 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
    */
   @Category({WanTest.class})
   @Test
-  public void testParallelPropagationWithLocalCacheClosedAndRebuilt() throws Exception {
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+  public void testParallelPropagationWithLocalCacheClosedAndRebuilt() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2, vm3);
     createReceiverInVMs(vm2, vm3);
@@ -292,10 +306,10 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     vm6.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
     vm7.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
 
-    vm4.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm5.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm6.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm7.invoke(createPartitionedRegionRedundancy1Runnable());
+    vm4.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm5.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm6.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm7.invoke(createPartitionedRegionRunnable("ln", 1));
 
     startSenderInVMs("ln", vm4, vm5, vm6, vm7);
 
@@ -319,7 +333,7 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     vm7.invoke(() -> WANTestBase.killSender());
 
     Integer regionSize =
-        (Integer) vm2.invoke(() -> WANTestBase.getRegionSize(getTestMethodName() + "_PR"));
+        vm2.invoke(() -> WANTestBase.getRegionSize(getTestMethodName() + "_PR"));
     LogWriterUtils.getLogWriter().info("Region size on remote is: " + regionSize);
 
     createCacheInVMs(lnPort, vm4, vm5, vm6, vm7);
@@ -329,10 +343,10 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     vm6.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
     vm7.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
 
-    vm4.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm5.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm6.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm7.invoke(createPartitionedRegionRedundancy1Runnable());
+    vm4.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm5.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm6.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm7.invoke(createPartitionedRegionRunnable("ln", 1));
 
     startSenderInVMs("ln", vm4, vm5, vm6, vm7);
 
@@ -359,9 +373,9 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
   }
 
   @Test
-  public void testParallelColocatedPropagation() throws Exception {
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+  public void testParallelColocatedPropagation() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2, vm3);
     createReceiverInVMs(vm2, vm3);
@@ -407,9 +421,9 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
    */
 
   @Test
-  public void testParallelColocatedPropagation2() throws Exception {
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+  public void testParallelColocatedPropagation2() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2, vm3);
     createReceiverInVMs(vm2, vm3);
@@ -453,9 +467,9 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
 
   @Category({WanTest.class})
   @Test
-  public void testParallelPropagationWithOverflow() throws Exception {
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+  public void testParallelPropagationWithOverflow() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2, vm3);
     vm2.invoke(
@@ -499,10 +513,10 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
   }
 
   @Test
-  public void testSerialReplicatedAndParallelPartitionedPropagation() throws Exception {
+  public void testSerialReplicatedAndParallelPartitionedPropagation() {
 
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2, vm3);
     createReceiverInVMs(vm2, vm3);
@@ -566,10 +580,10 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
   }
 
   @Test
-  public void testPartitionedParallelPropagationToTwoWanSites() throws Exception {
+  public void testPartitionedParallelPropagationToTwoWanSites() {
     Integer lnPort = createFirstLocatorWithDSId(1);
-    Integer nyPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
-    Integer tkPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(3, lnPort));
+    Integer nyPort = vm0.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+    Integer tkPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(3, lnPort));
 
     createCacheInVMs(nyPort, vm2);
     vm2.invoke(createReceiverPartitionedRegionRedundancy1());
@@ -649,8 +663,8 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     IgnoredException.addIgnoredException("Broken pipe");
     IgnoredException.addIgnoredException("Connection reset");
     IgnoredException.addIgnoredException("Unexpected IOException");
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2, vm3);
     createReceiverInVMs(vm2, vm3);
@@ -676,18 +690,18 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     vm2.invoke(createReceiverPartitionedRegionRedundancy1());
     vm3.invoke(createReceiverPartitionedRegionRedundancy1());
 
-    AsyncInvocation inv1 =
+    AsyncInvocation<Void> inv1 =
         vm7.invokeAsync(() -> WANTestBase.doPuts(getTestMethodName() + "_PR", 5000));
     Wait.pause(500);
-    AsyncInvocation inv2 = vm4.invokeAsync(() -> WANTestBase.killSender());
-    AsyncInvocation inv3 =
+    AsyncInvocation<Void> inv2 = vm4.invokeAsync(() -> WANTestBase.killSender());
+    AsyncInvocation<Void> inv3 =
         vm6.invokeAsync(() -> WANTestBase.doPuts(getTestMethodName() + "_PR", 10000));
     Wait.pause(1500);
-    AsyncInvocation inv4 = vm5.invokeAsync(() -> WANTestBase.killSender());
-    inv1.join();
-    inv2.join();
-    inv3.join();
-    inv4.join();
+    AsyncInvocation<Void> inv4 = vm5.invokeAsync(() -> WANTestBase.killSender());
+    inv1.await();
+    inv2.await();
+    inv3.await();
+    inv4.await();
 
     vm6.invoke(() -> WANTestBase.validateRegionSize(getTestMethodName() + "_PR", 10000));
     vm7.invoke(() -> WANTestBase.validateRegionSize(getTestMethodName() + "_PR", 10000));
@@ -698,12 +712,14 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
 
     vm2.invoke(() -> WANTestBase.validateRegionSize(getTestMethodName() + "_PR", 10000));
     vm3.invoke(() -> WANTestBase.validateRegionSize(getTestMethodName() + "_PR", 10000));
+    vm4.invoke(() -> WANTestBase.checkConflatedStats("ln", 0));
+    vm5.invoke(() -> WANTestBase.checkConflatedStats("ln", 0));
   }
 
   @Test
-  public void testParallelPropagationWithFilter() throws Exception {
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+  public void testParallelPropagationWithFilter() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2, vm3);
     createReceiverInVMs(vm2, vm3);
@@ -748,10 +764,10 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
 
 
   @Test
-  public void testParallelPropagationWithPutAll() throws Exception {
+  public void testParallelPropagationWithPutAll() {
 
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2, vm3);
     createReceiverInVMs(vm2, vm3);
@@ -762,10 +778,10 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     vm6.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
     vm7.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
 
-    vm4.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm5.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm6.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm7.invoke(createPartitionedRegionRedundancy1Runnable());
+    vm4.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm5.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm6.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm7.invoke(createPartitionedRegionRunnable("ln", 1));
 
     startSenderInVMs("ln", vm4, vm5, vm6, vm7);
 
@@ -797,10 +813,10 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
    *
    */
   @Test
-  public void testParallelPropagationWithDestroy() throws Exception {
+  public void testParallelPropagationWithDestroy() {
 
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2, vm3);
     createReceiverInVMs(vm2, vm3);
@@ -811,10 +827,10 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     vm6.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 100, false, false, null, true));
     vm7.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 100, false, false, null, true));
 
-    vm4.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm5.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm6.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm7.invoke(createPartitionedRegionRedundancy1Runnable());
+    vm4.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm5.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm6.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm7.invoke(createPartitionedRegionRunnable("ln", 1));
 
     startSenderInVMs("ln", vm4, vm5, vm6, vm7);
 
@@ -867,9 +883,9 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
    *
    */
   @Test
-  public void testParallelPropagationTxOperations() throws Exception {
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+  public void testParallelPropagationTxOperations() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2, vm3);
     createReceiverInVMs(vm2, vm3);
@@ -884,8 +900,8 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     // vm7.invoke(() -> WANTestBase.createSender( "ln", 2,
     // true, 100, 10, false, false, null, true ));
 
-    vm4.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm5.invoke(createPartitionedRegionRedundancy1Runnable());
+    vm4.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm5.invoke(createPartitionedRegionRunnable("ln", 1));
     // vm6.invoke(() -> WANTestBase.createPartitionedRegion(
     // testName + "_PR", "ln", true, 1, 100, isOffHeap() ));
     // vm7.invoke(() -> WANTestBase.createPartitionedRegion(
@@ -918,8 +934,8 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
   @Ignore
   @Test
   public void testParallelGatewaySenderQueueLocalSize() {
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2);
     createCacheInVMs(nyPort, vm2);
@@ -929,8 +945,8 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     vm4.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
     vm5.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
 
-    vm4.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm5.invoke(createPartitionedRegionRedundancy1Runnable());
+    vm4.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm5.invoke(createPartitionedRegionRunnable("ln", 1));
 
     startSenderInVMs("ln", vm4, vm5);
 
@@ -955,8 +971,8 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     vm5.invoke(() -> WANTestBase.validateQueueContents("ln", 10));
 
     // instead of checking size as 5 and 5. check that combined size is 10
-    Integer localSize1 = (Integer) vm4.invoke(() -> WANTestBase.getPRQLocalSize("ln"));
-    Integer localSize2 = (Integer) vm5.invoke(() -> WANTestBase.getPRQLocalSize("ln"));
+    Integer localSize1 = vm4.invoke(() -> WANTestBase.getPRQLocalSize("ln"));
+    Integer localSize2 = vm5.invoke(() -> WANTestBase.getPRQLocalSize("ln"));
     assertEquals(10, localSize1 + localSize2);
   }
 
@@ -966,8 +982,8 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     IgnoredException.addIgnoredException("Broken pipe");
     IgnoredException.addIgnoredException("Connection reset");
     IgnoredException.addIgnoredException("Unexpected IOException");
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2);
     createReceiverInVMs(vm2);
@@ -976,8 +992,8 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     vm4.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
     vm5.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
 
-    vm4.invoke(createPartitionedRegionRedundancy1Runnable());
-    vm5.invoke(createPartitionedRegionRedundancy1Runnable());
+    vm4.invoke(createPartitionedRegionRunnable("ln", 1));
+    vm5.invoke(createPartitionedRegionRunnable("ln", 1));
 
     startSenderInVMs("ln", vm4, vm5);
 
@@ -1001,8 +1017,8 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     vm4.invoke(() -> WANTestBase.validateQueueContents("ln", 10));
     vm5.invoke(() -> WANTestBase.validateQueueContents("ln", 10));
 
-    Integer localSize1 = (Integer) vm4.invoke(() -> WANTestBase.getPRQLocalSize("ln"));
-    Integer localSize2 = (Integer) vm5.invoke(() -> WANTestBase.getPRQLocalSize("ln"));
+    Integer localSize1 = vm4.invoke(() -> WANTestBase.getPRQLocalSize("ln"));
+    Integer localSize2 = vm5.invoke(() -> WANTestBase.getPRQLocalSize("ln"));
     assertEquals(10, localSize1 + localSize2);
 
     vm5.invoke(() -> WANTestBase.killSender());
@@ -1017,9 +1033,10 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
    * that same AEQ
    */
   @Test
-  public void testParallelSenderAttachedToChildRegionButNotToParentRegion() {
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+  @Parameters(method = "getRegionShortcuts")
+  public void testParallelSenderAttachedToChildRegionButNotToParentRegion(RegionShortcut shortcut) {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     // create cache and receiver on site2
     createCacheInVMs(nyPort, vm2);
@@ -1035,9 +1052,9 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
 
     // create leader (parent) PR on site1
     vm3.invoke(() -> WANTestBase.createPartitionedRegion(getTestMethodName() + "PARENT_PR", null, 0,
-        100, isOffHeap()));
+        100, isOffHeap(), shortcut));
     String parentRegionFullPath =
-        (String) vm3.invoke(() -> WANTestBase.getRegionFullPath(getTestMethodName() + "PARENT_PR"));
+        vm3.invoke(() -> WANTestBase.getRegionFullPath(getTestMethodName() + "PARENT_PR"));
 
     // create colocated (child) PR on site1
     vm3.invoke(() -> WANTestBase.createColocatedPartitionedRegion(getTestMethodName() + "CHILD_PR",
@@ -1057,9 +1074,9 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
   }
 
   @Test
-  public void testParallelPropagationWithFilter_AfterAck() throws Exception {
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+  public void testParallelPropagationWithFilter_AfterAck() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm6, vm7);
     createReceiverInVMs(vm6, vm7);
@@ -1114,13 +1131,225 @@ public class ParallelWANPropagationDUnitTest extends WANTestBase {
     vm6.invoke(() -> WANTestBase.validateRegionSize(getTestMethodName(), 1000));
     vm7.invoke(() -> WANTestBase.validateRegionSize(getTestMethodName(), 1000));
 
-    Integer vm2Acks = (Integer) vm2.invoke(() -> WANTestBase.validateAfterAck("ln"));
-    Integer vm3Acks = (Integer) vm3.invoke(() -> WANTestBase.validateAfterAck("ln"));
-    Integer vm4Acks = (Integer) vm4.invoke(() -> WANTestBase.validateAfterAck("ln"));
-    Integer vm5Acks = (Integer) vm5.invoke(() -> WANTestBase.validateAfterAck("ln"));
+    Integer vm2Acks = vm2.invoke(() -> WANTestBase.validateAfterAck("ln"));
+    Integer vm3Acks = vm3.invoke(() -> WANTestBase.validateAfterAck("ln"));
+    Integer vm4Acks = vm4.invoke(() -> WANTestBase.validateAfterAck("ln"));
+    Integer vm5Acks = vm5.invoke(() -> WANTestBase.validateAfterAck("ln"));
 
     assertEquals(2000, (vm2Acks + vm3Acks + vm4Acks + vm5Acks));
 
   }
 
+  /**
+   * Test that, when a parallel gateway sender is added to a partitioned region through attributes
+   * mutator, transaction events are not sent to all region members but only to those who are
+   * hosting the bucket for the event and thus, events are not stored in the bucketToTempQueueMap
+   * member of the ParallelGatewaySenderQueue.
+   * Redundancy = 1 in the partitioned region.
+   *
+   */
+  @Test
+  public void testParallelPropagationTxNotificationsNotSentToAllRegionMembersWhenAddingParallelGatewaySenderThroughAttributesMutator() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+
+    createCacheInVMs(nyPort, vm2, vm3);
+
+    createCacheInVMs(lnPort, vm4, vm5, vm6, vm7);
+
+    vm4.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
+    vm5.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
+    vm6.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
+    vm7.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
+
+    vm4.invoke(createPartitionedRegionRunnable(null, 1));
+    vm5.invoke(createPartitionedRegionRunnable(null, 1));
+    vm6.invoke(createPartitionedRegionRunnable(null, 1));
+    vm7.invoke(createPartitionedRegionRunnable(null, 1));
+
+    vm2.invoke(createReceiverPartitionedRegionRedundancy1());
+    vm3.invoke(createReceiverPartitionedRegionRedundancy1());
+
+    vm4.invoke(() -> addSenderThroughAttributesMutator(getTestMethodName() + "_PR", "ln"));
+    vm5.invoke(() -> addSenderThroughAttributesMutator(getTestMethodName() + "_PR", "ln"));
+    vm6.invoke(() -> addSenderThroughAttributesMutator(getTestMethodName() + "_PR", "ln"));
+    vm7.invoke(() -> addSenderThroughAttributesMutator(getTestMethodName() + "_PR", "ln"));
+
+    startSenderInVMs("ln", vm4, vm5, vm6, vm7);
+
+    vm4.invoke(waitForSenderRunnable());
+    vm5.invoke(waitForSenderRunnable());
+    vm6.invoke(waitForSenderRunnable());
+    vm7.invoke(waitForSenderRunnable());
+
+    vm4.invoke(() -> WANTestBase.doTxPuts(getTestMethodName() + "_PR"));
+
+    vm4.invoke(() -> WANTestBase.validateRegionSize(getTestMethodName() + "_PR", 3));
+    vm4.invoke(() -> WANTestBase.verifyQueueSize("ln", 3));
+
+    vm2.invoke(() -> WANTestBase.validateRegionSize(getTestMethodName() + "_PR", 0));
+    vm2.invoke(() -> WANTestBase.validateRegionSize(getTestMethodName() + "_PR", 0));
+
+    vm4.invoke(() -> WANTestBase.validateEmptyBucketToTempQueueMap("ln"));
+    vm5.invoke(() -> WANTestBase.validateEmptyBucketToTempQueueMap("ln"));
+    vm6.invoke(() -> WANTestBase.validateEmptyBucketToTempQueueMap("ln"));
+    vm7.invoke(() -> WANTestBase.validateEmptyBucketToTempQueueMap("ln"));
+  }
+
+  /**
+   * Test that, when a parallel gateway sender is added to a partitioned region through attributes
+   * mutator, transaction events are not sent to all region members but only to those who are
+   * hosting the bucket for the event and thus, events are not stored in the bucketToTempQueueMap
+   * member of the ParallelGatewaySenderQueue.
+   * No redundancy in the partitioned region.
+   *
+   */
+  @Test
+  public void testParallelPropagationTxNotificationsNotSentToAllRegionMembersWhenAddingParallelGatewaySenderThroughAttributesMutatorNoRedundancy() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+
+    createCacheInVMs(nyPort, vm2, vm3);
+
+    createCacheInVMs(lnPort, vm4, vm5);
+
+    vm4.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
+    vm5.invoke(() -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true));
+
+    vm4.invoke(createPartitionedRegionRunnable(null, 0));
+    vm5.invoke(createPartitionedRegionRunnable(null, 0));
+
+    vm2.invoke(createReceiverPartitionedRegionRedundancy1());
+    vm3.invoke(createReceiverPartitionedRegionRedundancy1());
+
+    vm4.invoke(() -> addSenderThroughAttributesMutator(getTestMethodName() + "_PR", "ln"));
+    vm5.invoke(() -> addSenderThroughAttributesMutator(getTestMethodName() + "_PR", "ln"));
+
+    startSenderInVMs("ln", vm4, vm5);
+
+    vm4.invoke(waitForSenderRunnable());
+    vm5.invoke(waitForSenderRunnable());
+
+    vm4.invoke(() -> WANTestBase.doTxPuts(getTestMethodName() + "_PR"));
+
+    vm4.invoke(() -> WANTestBase.validateRegionSize(getTestMethodName() + "_PR", 3));
+    vm4.invoke(() -> WANTestBase.verifyQueueSize("ln", 3));
+
+    vm2.invoke(() -> WANTestBase.validateRegionSize(getTestMethodName() + "_PR", 0));
+    vm2.invoke(() -> WANTestBase.validateRegionSize(getTestMethodName() + "_PR", 0));
+
+    vm4.invoke(() -> WANTestBase.validateEmptyBucketToTempQueueMap("ln"));
+    vm5.invoke(() -> WANTestBase.validateEmptyBucketToTempQueueMap("ln"));
+  }
+
+  @Test
+  public void testPartitionedParallelPropagationWithGroupTransactionEventsAndMixOfEventsInAndNotInTransactions()
+      throws Exception {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+
+    createCacheInVMs(nyPort, vm2, vm3);
+    createReceiverInVMs(vm2, vm3);
+    createCacheInVMs(lnPort, vm4, vm5, vm6, vm7);
+
+    vm4.invoke(() -> setNumDispatcherThreadsForTheRun(2));
+    vm5.invoke(() -> setNumDispatcherThreadsForTheRun(2));
+    vm6.invoke(() -> setNumDispatcherThreadsForTheRun(2));
+    vm7.invoke(() -> setNumDispatcherThreadsForTheRun(2));
+
+    vm4.invoke(
+        () -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true, true));
+    vm5.invoke(
+        () -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true, true));
+    vm6.invoke(
+        () -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true, true));
+    vm7.invoke(
+        () -> WANTestBase.createSender("ln", 2, true, 100, 10, false, false, null, true, true));
+
+    vm4.invoke(
+        () -> WANTestBase.createCustomerOrderShipmentPartitionedRegion("ln", 2, 10,
+            isOffHeap()));
+    vm5.invoke(
+        () -> WANTestBase.createCustomerOrderShipmentPartitionedRegion("ln", 2, 10,
+            isOffHeap()));
+    vm6.invoke(
+        () -> WANTestBase.createCustomerOrderShipmentPartitionedRegion("ln", 2, 10,
+            isOffHeap()));
+    vm7.invoke(
+        () -> WANTestBase.createCustomerOrderShipmentPartitionedRegion("ln", 2, 10,
+            isOffHeap()));
+
+    startSenderInVMs("ln", vm4, vm5, vm6, vm7);
+
+    vm2.invoke(() -> createCustomerOrderShipmentPartitionedRegion(null, 1, 8, isOffHeap()));
+    vm3.invoke(() -> createCustomerOrderShipmentPartitionedRegion(null, 1, 8, isOffHeap()));
+
+    int customers = 4;
+
+    int transactionsPerCustomer = 1000;
+    final Map<Object, Object> keyValuesInTransactions = new HashMap<>();
+    for (int custId = 0; custId < customers; custId++) {
+      for (int i = 0; i < transactionsPerCustomer; i++) {
+        CustId custIdObject = new CustId(custId);
+        OrderId orderId = new OrderId(i, custIdObject);
+        ShipmentId shipmentId1 = new ShipmentId(i, orderId);
+        ShipmentId shipmentId2 = new ShipmentId(i + 1, orderId);
+        ShipmentId shipmentId3 = new ShipmentId(i + 2, orderId);
+        keyValuesInTransactions.put(orderId, new Order());
+        keyValuesInTransactions.put(shipmentId1, new Shipment());
+        keyValuesInTransactions.put(shipmentId2, new Shipment());
+        keyValuesInTransactions.put(shipmentId3, new Shipment());
+      }
+    }
+
+    int ordersPerCustomerNotInTransactions = 1000;
+
+    final Map<Object, Object> keyValuesNotInTransactions = new HashMap<>();
+    for (int custId = 0; custId < customers; custId++) {
+      for (int i = 0; i < ordersPerCustomerNotInTransactions; i++) {
+        CustId custIdObject = new CustId(custId);
+        OrderId orderId = new OrderId(i + transactionsPerCustomer * customers, custIdObject);
+        keyValuesNotInTransactions.put(orderId, new Order());
+      }
+    }
+
+    // eventsPerTransaction is 1 (orders) + 3 (shipments)
+    int eventsPerTransaction = 4;
+    AsyncInvocation<Void> inv1 =
+        vm7.invokeAsync(
+            () -> WANTestBase.doOrderAndShipmentPutsInsideTransactions(keyValuesInTransactions,
+                eventsPerTransaction));
+
+    AsyncInvocation<Void> inv2 =
+        vm6.invokeAsync(
+            () -> WANTestBase.putGivenKeyValue(orderRegionName, keyValuesNotInTransactions));
+
+    inv1.await();
+    inv2.await();
+
+    int entries =
+        ordersPerCustomerNotInTransactions * customers + transactionsPerCustomer * customers;
+
+    vm4.invoke(() -> WANTestBase.validateRegionSize(orderRegionName, entries));
+    vm5.invoke(() -> WANTestBase.validateRegionSize(orderRegionName, entries));
+    vm6.invoke(() -> WANTestBase.validateRegionSize(orderRegionName, entries));
+    vm7.invoke(() -> WANTestBase.validateRegionSize(orderRegionName, entries));
+
+    vm2.invoke(() -> WANTestBase.validateRegionSize(orderRegionName, entries));
+    vm3.invoke(() -> WANTestBase.validateRegionSize(orderRegionName, entries));
+
+    vm4.invoke(() -> WANTestBase.checkConflatedStats("ln", 0));
+    vm5.invoke(() -> WANTestBase.checkConflatedStats("ln", 0));
+    vm6.invoke(() -> WANTestBase.checkConflatedStats("ln", 0));
+    vm7.invoke(() -> WANTestBase.checkConflatedStats("ln", 0));
+
+    vm7.invoke(() -> WANTestBase.validateParallelSenderQueueAllBucketsDrained("ln"));
+    vm6.invoke(() -> WANTestBase.validateParallelSenderQueueAllBucketsDrained("ln"));
+    vm5.invoke(() -> WANTestBase.validateParallelSenderQueueAllBucketsDrained("ln"));
+    vm4.invoke(() -> WANTestBase.validateParallelSenderQueueAllBucketsDrained("ln"));
+  }
+
+  private static RegionShortcut[] getRegionShortcuts() {
+    return new RegionShortcut[] {RegionShortcut.PARTITION, RegionShortcut.PARTITION_PERSISTENT};
+  }
 }

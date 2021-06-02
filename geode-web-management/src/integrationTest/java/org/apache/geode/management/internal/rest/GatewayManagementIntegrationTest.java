@@ -40,7 +40,7 @@ import org.apache.geode.management.api.ClusterManagementResult;
 import org.apache.geode.management.api.ClusterManagementService;
 import org.apache.geode.management.api.EntityGroupInfo;
 import org.apache.geode.management.api.RestTemplateClusterManagementServiceTransport;
-import org.apache.geode.management.client.ClusterManagementServiceBuilder;
+import org.apache.geode.management.cluster.client.ClusterManagementServiceBuilder;
 import org.apache.geode.management.configuration.ClassName;
 import org.apache.geode.management.configuration.GatewayReceiver;
 import org.apache.geode.management.runtime.GatewayReceiverInfo;
@@ -78,7 +78,7 @@ public class GatewayManagementIntegrationTest {
     ClusterManagementListResult<GatewayReceiver, GatewayReceiverInfo> result =
         client.list(receiver);
     assertThat(result.isSuccessful()).isTrue();
-    assertThat(result.getResult().size()).isEqualTo(0);
+    assertThat(result.getEntityGroupInfo().size()).isEqualTo(0);
   }
 
   @Test
@@ -102,7 +102,7 @@ public class GatewayManagementIntegrationTest {
         client.list(receiver);
     assertThat(results.isSuccessful()).isTrue();
     List<EntityGroupInfo<GatewayReceiver, GatewayReceiverInfo>> receivers =
-        results.getResult();
+        results.getEntityGroupInfo();
     assertThat(receivers.size()).isEqualTo(1);
     GatewayReceiver result = receivers.get(0).getConfiguration();
     assertThat(result.isManualStart()).isFalse();

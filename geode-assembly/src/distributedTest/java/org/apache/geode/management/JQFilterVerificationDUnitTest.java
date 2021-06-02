@@ -15,9 +15,11 @@
 
 package org.apache.geode.management;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -34,10 +36,10 @@ import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Test;
 
-import org.apache.geode.management.api.BaseConnectionConfig;
 import org.apache.geode.management.api.ClusterManagementService;
-import org.apache.geode.management.api.ConnectionConfig;
-import org.apache.geode.management.client.ClusterManagementServiceBuilder;
+import org.apache.geode.management.cluster.client.ClusterManagementServiceBuilder;
+import org.apache.geode.management.configuration.DiskDir;
+import org.apache.geode.management.configuration.DiskStore;
 import org.apache.geode.management.configuration.Index;
 import org.apache.geode.management.configuration.IndexType;
 import org.apache.geode.management.configuration.Region;
@@ -61,17 +63,15 @@ public class JQFilterVerificationDUnitTest {
   public static RequiresGeodeHome requiresGeodeHome = new RequiresGeodeHome();
 
   private static GeodeDevRestClient client;
-  private static Map<String, JsonNode> apiWithJQFilters = new HashMap<>();
+  private static final Map<String, JsonNode> apiWithJQFilters = new HashMap<>();
   private static JqLibrary library;
 
   @BeforeClass
   public static void beforeClass() throws IOException {
     MemberVM locator = cluster.startLocatorVM(0, MemberStarterRule::withHttpService);
     cluster.startServerVM(1, locator.getPort());
-    ConnectionConfig connectionConfig =
-        new BaseConnectionConfig("localhost", locator.getHttpPort());
     ClusterManagementService cms =
-        new ClusterManagementServiceBuilder().setConnectionConfig(connectionConfig).build();
+        new ClusterManagementServiceBuilder().setPort(locator.getHttpPort()).build();
     Region region = new Region();
     region.setName("regionA");
     region.setType(RegionType.REPLICATE);
@@ -80,9 +80,15 @@ public class JQFilterVerificationDUnitTest {
     Index index1 = new Index();
     index1.setName("index1");
     index1.setExpression("id");
-    index1.setRegionPath("/regionA");
+    index1.setRegionPath(SEPARATOR + "regionA");
     index1.setIndexType(IndexType.RANGE);
     cms.create(index1);
+
+    DiskStore diskStore = new DiskStore();
+    diskStore.setName("diskstore1");
+    DiskDir diskDir = new DiskDir("./diskDir", null);
+    diskStore.setDirectories(Collections.singletonList(diskDir));
+    cms.create(diskStore);
 
     client = new GeodeDevRestClient("/management", "localhost", locator.getHttpPort(), false);
     JsonNode jsonObject =
@@ -116,7 +122,7 @@ public class JQFilterVerificationDUnitTest {
         getJqResponse(uri, apiWithJQFilters.remove(uri).get("jqFilter").textValue());
     Assertions.assertThat(response.hasErrors()).isFalse();
     System.out.println("JQ output: " + response.getOutput());
-    Assertions.assertThat(response.getOutput()).contains("\"name\": \"locator-0\"");
+    Assertions.assertThat(response.getOutput()).contains("\"name\":\"locator-0\"");
   }
 
   @Test
@@ -126,7 +132,7 @@ public class JQFilterVerificationDUnitTest {
         apiWithJQFilters.remove("/v1/members/{id}").get("jqFilter").textValue());
     Assertions.assertThat(response.hasErrors()).isFalse();
     System.out.println("JQ output: " + response.getOutput());
-    Assertions.assertThat(response.getOutput()).contains("\"name\": \"locator-0\"");
+    Assertions.assertThat(response.getOutput()).contains("\"name\":\"locator-0\"");
   }
 
   @Test
@@ -136,7 +142,7 @@ public class JQFilterVerificationDUnitTest {
         getJqResponse(uri, apiWithJQFilters.remove(uri).get("jqFilter").textValue());
     Assertions.assertThat(response.hasErrors()).isFalse();
     System.out.println("JQ output: " + response.getOutput());
-    Assertions.assertThat(response.getOutput()).contains("\"name\": \"regionA\"");
+    Assertions.assertThat(response.getOutput()).contains("\"name\":\"regionA\"");
   }
 
   JqResponse getJqResponse(String uri, String jqFilter) throws IOException {
@@ -153,7 +159,7 @@ public class JQFilterVerificationDUnitTest {
         apiWithJQFilters.remove("/v1/regions/{id}").get("jqFilter").textValue());
     Assertions.assertThat(response.hasErrors()).isFalse();
     System.out.println("JQ output: " + response.getOutput());
-    Assertions.assertThat(response.getOutput()).contains("\"name\": \"regionA\"");
+    Assertions.assertThat(response.getOutput()).contains("\"name\":\"regionA\"");
   }
 
   @Test
@@ -163,7 +169,7 @@ public class JQFilterVerificationDUnitTest {
         getJqResponse(uri, apiWithJQFilters.remove(uri).get("jqFilter").textValue());
     Assertions.assertThat(response.hasErrors()).isFalse();
     System.out.println("JQ output: " + response.getOutput());
-    Assertions.assertThat(response.getOutput()).contains("\"name\": \"index1\"");
+    Assertions.assertThat(response.getOutput()).contains("\"name\":\"index1\"");
   }
 
   @Test
@@ -173,7 +179,7 @@ public class JQFilterVerificationDUnitTest {
         .remove("/v1/regions/{regionName}/indexes").get("jqFilter").textValue());
     Assertions.assertThat(response.hasErrors()).isFalse();
     System.out.println("JQ output: " + response.getOutput());
-    Assertions.assertThat(response.getOutput()).contains("\"name\": \"index1\"");
+    Assertions.assertThat(response.getOutput()).contains("\"name\":\"index1\"");
   }
 
   @Test
@@ -183,6 +189,30 @@ public class JQFilterVerificationDUnitTest {
         .remove("/v1/regions/{regionName}/indexes/{id}").get("jqFilter").textValue());
     Assertions.assertThat(response.hasErrors()).isFalse();
     System.out.println("JQ output: " + response.getOutput());
-    Assertions.assertThat(response.getOutput()).contains("\"name\": \"index1\"");
+    Assertions.assertThat(response.getOutput()).contains("\"name\":\"index1\"");
+  }
+
+  @Test
+  public void listDiskStores() throws Exception {
+    String uri = "/v1/diskstores";
+    JqResponse response =
+        getJqResponse(uri, apiWithJQFilters.remove(uri).get("jqFilter").textValue());
+    Assertions.assertThat(response.hasErrors()).isFalse();
+    System.out.println("JQ output: " + response.getOutput());
+    Assertions.assertThat(response.getOutput()).contains("\"Member\":\"server-1\"");
+    Assertions.assertThat(response.getOutput()).contains("\"Disk Store Name\":\"diskstore1\"");
+  }
+
+  @Test
+  public void getDiskStore() throws Exception {
+    String uri = "/v1/diskstores/diskstore1";
+    JqResponse response =
+        getJqResponse(uri,
+            apiWithJQFilters.remove("/v1/diskstores/{id}").get("jqFilter").textValue());
+    response.getErrors().forEach(System.out::println);
+    Assertions.assertThat(response.hasErrors()).isFalse();
+    System.out.println("JQ output: " + response.getOutput());
+    Assertions.assertThat(response.getOutput()).contains("\"Member\":\"server-1\"");
+    Assertions.assertThat(response.getOutput()).contains("\"Disk Store Name\":\"diskstore1\"");
   }
 }

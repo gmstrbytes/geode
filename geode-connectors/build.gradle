@@ -16,15 +16,9 @@
  */
 
 apply from: "${rootDir}/${scriptDir}/standard-subproject-configuration.gradle"
+apply from: "${project.projectDir}/../gradle/warnings.gradle"
 
 evaluationDependsOn(":geode-core")
-
-repositories {
-  maven {
-    // docker-compose-rule is published on bintray
-    url 'https://dl.bintray.com/palantir/releases'
-  }
-}
 
 apply from: "${project.projectDir}/../gradle/publish-java.gradle"
 
@@ -47,41 +41,46 @@ task downloadJdbcJars(type:Copy) {
 }
 
 dependencies {
-  compile(platform(project(':boms:geode-all-bom')))
+  api(platform(project(':boms:geode-all-bom')))
+
   implementation(project(':geode-logging'))
   implementation(project(':geode-serialization'))
-  compile(project(':geode-core'))
-  compile(project(':geode-gfsh'))
-  testCompile(project(':geode-junit')) {
+  implementation(project(':geode-core'))
+  implementation(project(':geode-gfsh'))
+  implementation('org.apache.httpcomponents:httpcore')
+  implementation('com.fasterxml.jackson.core:jackson-databind')
+
+  testImplementation(project(':geode-membership'))
+  testImplementation(project(':geode-junit')) {
     exclude module: 'geode-core'
   }
-  integrationTestCompile(project(':geode-dunit')) {
+  integrationTestImplementation(project(':geode-dunit')) {
     exclude module: 'geode-core'
   }
-  integrationTestCompile(project(':geode-junit')) {
+  integrationTestImplementation(project(':geode-junit')) {
     exclude module: 'geode-core'
   }
-  distributedTestCompile(project(':geode-junit')) {
+  distributedTestImplementation(project(':geode-junit')) {
     exclude module: 'geode-core'
   }
-  distributedTestCompile(project(':geode-dunit')){
+  distributedTestImplementation(project(':geode-dunit')){
     exclude module: 'geode-core'
   }
-  acceptanceTestCompile(project(':geode-dunit')) {
+  acceptanceTestImplementation(project(':geode-dunit')) {
     exclude module: 'geode-core'
   }
-  acceptanceTestCompile(project(':geode-junit')) {
+  acceptanceTestImplementation(project(':geode-junit')) {
     exclude module: 'geode-core'
   }
 
-  compile('com.zaxxer:HikariCP')
-  compile('org.apache.commons:commons-lang3')
-  compile('javax.xml.bind:jaxb-api')
-  compile('org.apache.logging.log4j:log4j-api')
-  compile('org.apache.logging.log4j:log4j-jcl') {
+  implementation('com.zaxxer:HikariCP')
+  implementation('org.apache.commons:commons-lang3')
+  implementation('javax.xml.bind:jaxb-api')
+  implementation('org.apache.logging.log4j:log4j-api')
+  implementation('org.apache.logging.log4j:log4j-jcl') {
     ext.optional = true
   }
-  compile('org.springframework.shell:spring-shell') {
+  implementation('org.springframework.shell:spring-shell') {
     exclude module: 'aopalliance'
     exclude module: 'asm'
     exclude module: 'cglib'
@@ -91,36 +90,35 @@ dependencies {
     exclude module: 'spring-core'
     ext.optional = true
   }
-  compile('com.healthmarketscience.rmiio:rmiio')
+  implementation('com.healthmarketscience.rmiio:rmiio')
 
-  testCompile('pl.pragmatists:JUnitParams')
+  testImplementation('pl.pragmatists:JUnitParams')
 
-  integrationTestCompile('junit:junit')
-  integrationTestCompile('org.assertj:assertj-core')
-  integrationTestCompile('pl.pragmatists:JUnitParams')
+  integrationTestImplementation('junit:junit')
+  integrationTestImplementation('org.assertj:assertj-core')
+  integrationTestImplementation('pl.pragmatists:JUnitParams')
 
-  distributedTestCompile('junit:junit')
-  distributedTestCompile('org.assertj:assertj-core')
-  distributedTestCompile('org.mockito:mockito-core')
-  distributedTestCompile('pl.pragmatists:JUnitParams')
-  distributedTestRuntime('org.apache.derby:derby')
+  distributedTestImplementation('junit:junit')
+  distributedTestImplementation('org.assertj:assertj-core')
+  distributedTestImplementation('org.mockito:mockito-core')
+  distributedTestImplementation('pl.pragmatists:JUnitParams')
+  distributedTestRuntimeOnly('org.apache.derby:derby')
 
-  acceptanceTestCompile('com.github.stefanbirkner:system-rules') {
+  acceptanceTestImplementation('com.github.stefanbirkner:system-rules') {
     exclude module: 'junit-dep'
   }
-  acceptanceTestCompile('junit:junit')
-  acceptanceTestCompile('org.assertj:assertj-core')
-  acceptanceTestCompile('org.awaitility:awaitility')
-  acceptanceTestCompile('org.mockito:mockito-core')
-  acceptanceTestCompile('com.palantir.docker.compose:docker-compose-rule-core')
-  acceptanceTestCompile('pl.pragmatists:JUnitParams')
-  acceptanceTestCompile('com.palantir.docker.compose:docker-compose-rule-junit4')
+  acceptanceTestImplementation('junit:junit')
+  acceptanceTestImplementation('org.assertj:assertj-core')
+  acceptanceTestImplementation('org.awaitility:awaitility')
+  acceptanceTestImplementation('org.mockito:mockito-core')
+  acceptanceTestImplementation('pl.pragmatists:JUnitParams')
+  acceptanceTestImplementation('org.testcontainers:testcontainers')
 
-  acceptanceTestRuntime('mysql:mysql-connector-java')
-  acceptanceTestRuntime('org.apache.derby:derby')
-  acceptanceTestRuntime('org.postgresql:postgresql')
+  acceptanceTestRuntimeOnly('mysql:mysql-connector-java')
+  acceptanceTestRuntimeOnly('org.apache.derby:derby')
+  acceptanceTestRuntimeOnly('org.postgresql:postgresql')
 
-  jdbcTestingJars('mysql:mysql-connector-java:8.0.17')
+  jdbcTestingJars('mysql:mysql-connector-java:8.0.23')
 }
 
 integrationTest.forkEvery 0

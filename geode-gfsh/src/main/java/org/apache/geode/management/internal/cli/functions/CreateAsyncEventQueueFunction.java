@@ -35,9 +35,9 @@ import org.apache.geode.cache.wan.GatewayEventFilter;
 import org.apache.geode.cache.wan.GatewayEventSubstitutionFilter;
 import org.apache.geode.cache.wan.GatewaySender.OrderPolicy;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.internal.ClassPathLoader;
 import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.cache.InternalCache;
+import org.apache.geode.internal.classloader.ClassPathLoader;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.management.cli.CliFunction;
 import org.apache.geode.management.internal.functions.CliFunctionResult;
@@ -49,18 +49,24 @@ import org.apache.geode.management.internal.functions.CliFunctionResult.StatusSt
  *
  * @since GemFire 8.0
  */
-public class CreateAsyncEventQueueFunction extends CliFunction {
+public class CreateAsyncEventQueueFunction extends CliFunction<CacheConfig.AsyncEventQueue> {
   private static final Logger logger = LogService.getLogger();
-
   private static final long serialVersionUID = 1L;
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.CreateAsyncEventQueueFunction";
 
   @Override
-  public CliFunctionResult executeFunction(FunctionContext context) {
+  public String getId() {
+    return ID;
+  }
+
+  @Override
+  public CliFunctionResult executeFunction(FunctionContext<CacheConfig.AsyncEventQueue> context) {
     // Declared here so that it's available when returning a Throwable
     String memberId = "";
 
     try {
-      CacheConfig.AsyncEventQueue config = (CacheConfig.AsyncEventQueue) context.getArguments();
+      CacheConfig.AsyncEventQueue config = context.getArguments();
 
       InternalCache cache = (InternalCache) context.getCache();
 
@@ -91,11 +97,9 @@ public class CreateAsyncEventQueueFunction extends CliFunction {
       String[] gatewayEventFilters = config.getGatewayEventFilters().stream()
           .map(ClassNameType::getClassName).toArray(String[]::new);
 
-      if (gatewayEventFilters != null) {
-        for (String gatewayEventFilter : gatewayEventFilters) {
-          asyncEventQueueFactory
-              .addGatewayEventFilter((GatewayEventFilter) newInstance(gatewayEventFilter));
-        }
+      for (String gatewayEventFilter : gatewayEventFilters) {
+        asyncEventQueueFactory
+            .addGatewayEventFilter((GatewayEventFilter) newInstance(gatewayEventFilter));
       }
 
       DeclarableType gatewayEventSubstitutionFilter = config.getGatewayEventSubstitutionFilter();
@@ -124,7 +128,7 @@ public class CreateAsyncEventQueueFunction extends CliFunction {
         }
 
         ((Declarable) listenerInstance).initialize(cache, listenerProperties);
-        ((Declarable) listenerInstance).init(listenerProperties); // for backwards compatibility
+        legacyInit((Declarable) listenerInstance, listenerProperties);
 
         Map<Declarable, Properties> declarablesMap = new HashMap<>();
         declarablesMap.put((Declarable) listenerInstance, listenerProperties);
@@ -142,6 +146,11 @@ public class CreateAsyncEventQueueFunction extends CliFunction {
     }
   }
 
+  @SuppressWarnings("deprecation")
+  private void legacyInit(Declarable listenerInstance, Properties listenerProperties) {
+    listenerInstance.init(listenerProperties); // for backwards compatibility
+  }
+
   private Object newInstance(String className)
       throws ClassNotFoundException, IllegalAccessException, InstantiationException {
     if (Strings.isNullOrEmpty(className)) {
@@ -149,10 +158,5 @@ public class CreateAsyncEventQueueFunction extends CliFunction {
     }
 
     return ClassPathLoader.getLatest().forName(className).newInstance();
-  }
-
-  @Override
-  public String getId() {
-    return CreateAsyncEventQueueFunction.class.getName();
   }
 }

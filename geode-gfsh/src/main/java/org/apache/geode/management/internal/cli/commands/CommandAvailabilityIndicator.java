@@ -45,7 +45,7 @@ public class CommandAvailabilityIndicator extends GfshCommand {
       CliStrings.STATUS_SHARED_CONFIG, CliStrings.CREATE_GATEWAYSENDER,
       CliStrings.START_GATEWAYSENDER, CliStrings.PAUSE_GATEWAYSENDER,
       CliStrings.RESUME_GATEWAYSENDER, CliStrings.RESUME_ASYNCEVENTQUEUE,
-      CliStrings.STOP_GATEWAYSENDER,
+      CliStrings.STOP_GATEWAYSENDER, CliStrings.ALTER_GATEWAYSENDER,
       CliStrings.CREATE_GATEWAYRECEIVER, CliStrings.START_GATEWAYRECEIVER,
       CliStrings.STOP_GATEWAYRECEIVER, CliStrings.LIST_GATEWAY, CliStrings.STATUS_GATEWAYSENDER,
       CliStrings.STATUS_GATEWAYRECEIVER, CliStrings.LOAD_BALANCE_GATEWAYSENDER,
@@ -54,7 +54,8 @@ public class CommandAvailabilityIndicator extends GfshCommand {
       DestroyGatewayReceiverCommand.DESTROY_GATEWAYRECEIVER,
       CreateJndiBindingCommand.CREATE_JNDIBINDING, DestroyJndiBindingCommand.DESTROY_JNDIBINDING,
       DescribeJndiBindingCommand.DESCRIBE_JNDI_BINDING, ListJndiBindingCommand.LIST_JNDIBINDING,
-      AlterQueryServiceCommand.COMMAND_NAME, DescribeQueryServiceCommand.COMMAND_NAME})
+      AlterQueryServiceCommand.COMMAND_NAME, DescribeQueryServiceCommand.COMMAND_NAME,
+      CliStrings.RESTORE_REDUNDANCY, CliStrings.STATUS_REDUNDANCY})
   public boolean available() {
     return isOnlineCommandAvailable();
   }

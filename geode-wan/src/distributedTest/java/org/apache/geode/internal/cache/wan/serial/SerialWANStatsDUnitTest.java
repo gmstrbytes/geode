@@ -17,10 +17,14 @@ package org.apache.geode.internal.cache.wan.serial;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
 import static org.apache.geode.test.dunit.IgnoredException.addIgnoredException;
 import static org.apache.geode.test.dunit.Wait.pause;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.RejectedExecutionException;
 
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
@@ -50,9 +54,9 @@ public class SerialWANStatsDUnitTest extends WANTestBase {
   }
 
   @Test
-  public void testReplicatedSerialPropagation() throws Exception {
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+  public void testReplicatedSerialPropagation() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2);
     vm2.invoke(() -> WANTestBase.createReceiver());
@@ -87,9 +91,461 @@ public class SerialWANStatsDUnitTest extends WANTestBase {
   }
 
   @Test
-  public void testReplicatedSerialPropagationWithMultipleDispatchers() throws Exception {
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+  public void testReplicatedSerialPropagationWithoutGroupTransactionEventsSendsBatchesWithIncompleteTransactions() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+
+    createCacheInVMs(nyPort, vm2);
+    vm2.invoke(() -> WANTestBase.createReceiver());
+
+    createCacheInVMs(lnPort, vm4, vm5, vm6, vm7);
+
+    boolean groupTransactionEvents = false;
+    vm4.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, 10, false, false, null, true,
+            groupTransactionEvents));
+    vm5.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, 10, false, false, null, true,
+            groupTransactionEvents));
+    vm6.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, 10, false, false, null, true,
+            groupTransactionEvents));
+    vm7.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, 10, false, false, null, true,
+            groupTransactionEvents));
+
+    vm2.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", null, isOffHeap()));
+
+    startSenderInVMs("ln", vm4, vm5);
+
+    vm4.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+    vm5.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+    vm6.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+    vm7.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+
+    final Map keyValues = new HashMap();
+    int entries = 12;
+    for (int i = 0; i < entries; i++) {
+      keyValues.put(i, i + "_Value");
+    }
+    int eventsPerTransaction = 3;
+    vm5.invoke(() -> WANTestBase.doPutsInsideTransactions(testName + "_RR", keyValues,
+        eventsPerTransaction));
+
+    vm2.invoke(() -> WANTestBase.validateRegionSize(testName + "_RR", entries));
+
+    vm2.invoke(() -> WANTestBase.checkGatewayReceiverStats(2, entries, entries, true));
+
+    vm4.invoke(() -> WANTestBase.checkQueueStats("ln", 0, entries, entries, entries));
+    vm4.invoke(() -> WANTestBase.checkBatchStats("ln", 2, true, false));
+
+    // wait until queue is empty
+    vm5.invoke(() -> await()
+        .until(() -> WANTestBase.getSenderStats("ln", -1).get(0) == 0));
+
+    vm5.invoke(() -> WANTestBase.checkQueueStats("ln", 0, entries, 0, 0));
+    vm5.invoke(() -> WANTestBase.checkBatchStats("ln", 0));
+  }
+
+  @Test
+  public void testReplicatedSerialPropagationWithGroupTransactionEventsSendsBatchesWithCompleteTransactions() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+
+    createCacheInVMs(nyPort, vm2);
+    vm2.invoke(() -> WANTestBase.createReceiver());
+
+    createCacheInVMs(lnPort, vm4, vm5, vm6, vm7);
+
+    boolean groupTransactionEvents = true;
+    vm4.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, 10, false, false, null, true,
+            groupTransactionEvents));
+    vm5.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, 10, false, false, null, true,
+            groupTransactionEvents));
+    vm6.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, 10, false, false, null, true,
+            groupTransactionEvents));
+    vm7.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, 10, false, false, null, true,
+            groupTransactionEvents));
+
+    vm2.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", null, isOffHeap()));
+
+    startSenderInVMs("ln", vm4, vm5, vm6, vm7);
+
+    vm4.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+    vm5.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+    vm6.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+    vm7.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+
+    final Map keyValues = new HashMap();
+    int entries = 12;
+    for (int i = 0; i < entries; i++) {
+      keyValues.put(i, i + "_Value");
+    }
+
+    // 4 transactions of 3 events each are sent so that the first batch
+    // would initially contain the first 3 transactions complete and the first
+    // event of the next transaction (10 entries).
+    // As --group-transaction-events is configured in the senders, the remaining
+    // events of the third transaction are added to the batch which makes
+    // that the batch is sent with 12 events.
+    int eventsPerTransaction = 3;
+    vm5.invoke(() -> WANTestBase.doPutsInsideTransactions(testName + "_RR", keyValues,
+        eventsPerTransaction));
+
+    vm2.invoke(() -> WANTestBase.validateRegionSize(testName + "_RR", entries));
+
+    vm2.invoke(() -> WANTestBase.checkGatewayReceiverStats(1, entries, entries, true));
+
+    vm4.invoke(() -> WANTestBase.checkQueueStats("ln", 0, entries, entries, entries));
+    vm4.invoke(() -> WANTestBase.checkBatchStats("ln", 1, true));
+    vm4.invoke(() -> WANTestBase.checkConflatedStats("ln", 0));
+
+    // wait until queue is empty
+    vm5.invoke(() -> await()
+        .until(() -> WANTestBase.getSenderStats("ln", -1).get(0) == 0));
+
+    vm5.invoke(() -> WANTestBase.checkQueueStats("ln", 0, entries, 0, 0));
+    vm5.invoke(() -> WANTestBase.checkBatchStats("ln", 0, true));
+    vm5.invoke(() -> WANTestBase.checkConflatedStats("ln", 0));
+  }
+
+  @Test
+  public void testReplicatedSerialPropagationWithBatchRedistWithoutGroupTransactionEventsSendsBatchesWithIncompleteTransactions() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+
+    createCacheInVMs(nyPort, vm2);
+
+    createCacheInVMs(lnPort, vm4, vm5, vm6, vm7);
+
+    boolean groupTransactionEvents = false;
+    vm4.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, 10, false, false, null, true,
+            groupTransactionEvents));
+    vm5.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, 10, false, false, null, true,
+            groupTransactionEvents));
+    vm6.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, 10, false, false, null, true,
+            groupTransactionEvents));
+    vm7.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, 10, false, false, null, true,
+            groupTransactionEvents));
+
+    vm2.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", null, isOffHeap()));
+
+    startSenderInVMs("ln", vm4, vm5);
+
+    vm4.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+    vm5.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+    vm6.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+    vm7.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+
+    final Map keyValues = new HashMap();
+    int entries = 24;
+    for (int i = 0; i < entries; i++) {
+      keyValues.put(i, i + "_Value");
+    }
+    int eventsPerTransaction = 3;
+    vm5.invoke(() -> WANTestBase.doPutsInsideTransactions(testName + "_RR", keyValues,
+        eventsPerTransaction));
+
+    // wait for batches to be redistributed and then start the receiver
+    vm4.invoke(() -> await()
+        .until(() -> WANTestBase.getSenderStats("ln", -1).get(5) > 0));
+
+    vm2.invoke(() -> WANTestBase.createReceiver());
+
+    vm2.invoke(() -> WANTestBase.validateRegionSize(testName + "_RR", entries));
+
+    vm2.invoke(() -> WANTestBase.checkGatewayReceiverStats(3, entries, entries, true));
+
+    vm4.invoke(() -> WANTestBase.checkQueueStats("ln", 0, entries, entries, entries));
+    vm4.invoke(() -> WANTestBase.checkBatchStats("ln", 3, true, true));
+
+    // wait until queue is empty
+    vm5.invoke(() -> await()
+        .until(() -> WANTestBase.getSenderStats("ln", -1).get(0) == 0));
+
+    vm5.invoke(() -> WANTestBase.checkQueueStats("ln", 0, entries, 0, 0));
+    vm5.invoke(() -> WANTestBase.checkBatchStats("ln", 0));
+  }
+
+  @Test
+  public void testReplicatedSerialPropagationWithBatchRedistWithGroupTransactionEventsSendsBatchesWithCompleteTransactions() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+
+    createCacheInVMs(nyPort, vm2);
+
+    createCacheInVMs(lnPort, vm4, vm5, vm6, vm7);
+
+    boolean groupTransactionEvents = true;
+    int batchSize = 10;
+    vm4.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, batchSize, false, false, null, true,
+            groupTransactionEvents));
+    vm5.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, batchSize, false, false, null, true,
+            groupTransactionEvents));
+    vm6.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, batchSize, false, false, null, true,
+            groupTransactionEvents));
+    vm7.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, batchSize, false, false, null, true,
+            groupTransactionEvents));
+
+    vm2.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", null, isOffHeap()));
+
+    startSenderInVMs("ln", vm4, vm5, vm6, vm7);
+
+    vm4.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+    vm5.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+    vm6.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+    vm7.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+
+    final Map keyValues = new HashMap();
+    int entries = 24;
+    for (int i = 0; i < entries; i++) {
+      keyValues.put(i, i + "_Value");
+    }
+
+    // 8 transactions of 3 events each are sent so that the first batch
+    // events would initially contain the first 3 transactions complete and the first
+    // event of the next transaction (10 entries).
+    // As --group-transaction-events is configured in the senders, the remaining
+    // event of the third transaction is added to the batch which makes
+    // that the first batch is sent with 12 events. The same happens with the
+    // second batch which will contain 12 events too.
+    int eventsPerTransaction = 3;
+    vm5.invoke(() -> WANTestBase.doPutsInsideTransactions(testName + "_RR", keyValues,
+        eventsPerTransaction));
+
+    // wait for batches to be redistributed and then start the receiver
+    vm4.invoke(() -> await()
+        .until(() -> WANTestBase.getSenderStats("ln", -1).get(5) > 0));
+
+    vm2.invoke(() -> WANTestBase.createReceiver());
+
+    vm2.invoke(() -> WANTestBase.validateRegionSize(testName + "_RR", entries));
+
+    vm2.invoke(() -> WANTestBase.checkGatewayReceiverStats(2, entries, entries, true));
+
+    vm4.invoke(() -> WANTestBase.checkQueueStats("ln", 0, entries, entries, entries));
+    vm4.invoke(() -> WANTestBase.checkBatchStats("ln", 2, true, true));
+    vm4.invoke(() -> WANTestBase.checkConflatedStats("ln", 0));
+
+    // wait until queue is empty
+    vm5.invoke(() -> await()
+        .until(() -> WANTestBase.getSenderStats("ln", -1).get(0) == 0));
+
+    vm5.invoke(() -> WANTestBase.checkQueueStats("ln", 0, entries, 0, 0));
+    vm5.invoke(() -> WANTestBase.checkBatchStats("ln", 0, true));
+    vm5.invoke(() -> WANTestBase.checkConflatedStats("ln", 0));
+  }
+
+  @Test
+  public void testReplicatedSerialPropagationWithGroupTransactionEventsDoesNotSendBatchesWithIncompleteTransactionsIfGatewaySenderIsStoppedWhileReceivingTrafficAndLaterStarted()
+      throws InterruptedException {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+
+    String regionName = testName + "_RR";
+
+    createCacheInVMs(nyPort, vm2);
+    createReceiverInVMs(vm2);
+    vm2.invoke(() -> WANTestBase.createReplicatedRegion(regionName, null, isOffHeap()));
+
+    createCacheInVMs(lnPort, vm4, vm5);
+    vm4.invoke(() -> WANTestBase.createReplicatedRegion(regionName, "ln", isOffHeap()));
+    vm5.invoke(() -> WANTestBase.createReplicatedRegion(regionName, "ln", isOffHeap()));
+
+    boolean groupTransactionEvents = true;
+    int batchSize = 10;
+    vm4.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, batchSize, false, true, null, false,
+            groupTransactionEvents));
+    vm5.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, batchSize, false, true, null, false,
+            groupTransactionEvents));
+
+    int eventsPerTransaction = batchSize + 1;
+    // The number of entries must be big enough so that not all entries
+    // are replicated before the sender is stopped and also divisible by eventsPerTransaction
+    int entries = eventsPerTransaction * 200;
+    // Execute some transactions
+    AsyncInvocation<Void> inv1 =
+        asyncExecuteTransactions(regionName, eventsPerTransaction, entries);
+
+    // wait for batches to be distributed and then stop the sender
+    vm4.invoke(() -> await()
+        .until(() -> WANTestBase.getSenderStats("ln", -1).get(4) > 0));
+
+    // These exceptions are ignored here because it could happen that when an event
+    // is to be handled, the sender is stopped. The sender, when stopped, shuts down
+    // the thread pool that would handle the event and this could provoke the exception.
+    addIgnoredException("Exception occurred in CacheListener");
+    addIgnoredException(RejectedExecutionException.class);
+
+    // Stop the sender
+    stopSenderInVMsAsync("ln", vm4, vm5);
+
+    // Wait for transactions to finish
+    inv1.await();
+    vm4.invoke(() -> WANTestBase.validateRegionSize(regionName, entries));
+    vm5.invoke(() -> WANTestBase.validateRegionSize(regionName, entries));
+
+    // Check
+    checkOnlyCompleteTransactionsAreReplicatedAfterSenderStopped(regionName,
+        eventsPerTransaction);
+
+    // Start the sender
+    startSenderInVMsAsync("ln", vm4, vm5);
+
+    // Check
+    checkOnlyCompleteTransactionsAreReplicatedAfterSenderRestarted(regionName,
+        eventsPerTransaction);
+  }
+
+  @Test
+  public void testReplicatedSerialPropagationWithGroupTransactionEventsDoesNotSendBatchesWithIncompleteTransactionsIfGatewaySenderIsStoppedWhileReceivingTrafficAndLaterStartedReceiverStopped()
+      throws InterruptedException {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+
+    String regionName = testName + "_RR";
+
+    createCacheInVMs(nyPort, vm2);
+    createReceiverInVMs(vm2);
+    vm2.invoke(() -> WANTestBase.createReplicatedRegion(regionName, null, isOffHeap()));
+    vm2.invoke(WANTestBase::stopReceivers);
+
+    createCacheInVMs(lnPort, vm4, vm5);
+    vm4.invoke(() -> WANTestBase.createReplicatedRegion(regionName, "ln", isOffHeap()));
+    vm5.invoke(() -> WANTestBase.createReplicatedRegion(regionName, "ln", isOffHeap()));
+
+    boolean groupTransactionEvents = true;
+    int batchSize = 10;
+    vm4.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, batchSize, false, true, null, false,
+            groupTransactionEvents));
+    vm5.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, batchSize, false, true, null, false,
+            groupTransactionEvents));
+
+    int eventsPerTransaction = batchSize + 1;
+    // The number of entries must be big enough so that not all entries
+    // are replicated before the sender is stopped and also divisible by eventsPerTransaction
+    int entries = eventsPerTransaction * 200;
+    // Execute some transactions
+    AsyncInvocation<Void> inv1 =
+        asyncExecuteTransactions(regionName, eventsPerTransaction, entries);
+
+    // wait for batches to be redistributed and then stop the sender
+    vm4.invoke(() -> await()
+        .until(() -> WANTestBase.getSenderStats("ln", -1).get(5) > 0));
+
+    // Stop the sender
+    stopSenderInVMsAsync("ln", vm4, vm5);
+
+    // Wait for transactions to finish
+    inv1.await();
+    vm4.invoke(() -> WANTestBase.validateRegionSize(regionName, entries));
+    vm5.invoke(() -> WANTestBase.validateRegionSize(regionName, entries));
+
+    // Start the receiver and the sender
+    vm2.invoke(WANTestBase::startReceivers);
+    startSenderInVMsAsync("ln", vm4, vm5);
+
+    // Check
+    checkOnlyCompleteTransactionsAreReplicatedAfterSenderRestarted(regionName,
+        eventsPerTransaction);
+  }
+
+  private void checkOnlyCompleteTransactionsAreReplicatedAfterSenderStopped(String regionName,
+      int eventsPerTransaction) {
+    waitForBatchesToBeAppliedInTheReceiver(regionName, eventsPerTransaction);
+
+    List<Integer> v4List =
+        vm4.invoke(() -> WANTestBase.getSenderStats("ln", -1));
+    List<Integer> v5List =
+        vm5.invoke(() -> WANTestBase.getSenderStats("ln", -1));
+
+    // batches with incomplete transactions must be 0
+    assertEquals(0, (int) v4List.get(13));
+    assertEquals(0, (int) v5List.get(13));
+
+    int batchesDistributed = v4List.get(4) + v5List.get(4);
+    checkOnlyCompleteTransactionsAreReplicated(regionName, eventsPerTransaction,
+        batchesDistributed);
+  }
+
+  private void checkOnlyCompleteTransactionsAreReplicatedAfterSenderRestarted(String regionName,
+      int eventsPerTransaction) {
+    // Wait for sender queues to be empty
+    List<Integer> v4List =
+        vm4.invoke(() -> WANTestBase.getSenderStats("ln", 0));
+    List<Integer> v5List =
+        vm5.invoke(() -> WANTestBase.getSenderStats("ln", 0));
+
+    assertEquals(0, v4List.get(0) + v5List.get(0));
+
+    // batches with incomplete transactions must be 0
+    assertEquals(0, (int) v4List.get(13));
+    assertEquals(0, (int) v5List.get(13));
+
+    waitForBatchesToBeAppliedInTheReceiver(regionName, eventsPerTransaction);
+
+    int batchesDistributed = v4List.get(4) + v5List.get(4);
+    checkOnlyCompleteTransactionsAreReplicated(regionName, eventsPerTransaction,
+        batchesDistributed);
+  }
+
+  private void checkOnlyCompleteTransactionsAreReplicated(String regionName,
+      int eventsPerTransaction, int batchesDistributed) {
+    int regionSize = vm2.invoke(() -> getRegionSize(regionName));
+
+    // The number of entries must be divisible by the number of events per transaction
+    assertEquals(0, regionSize % eventsPerTransaction);
+
+    // Check the entries replicated against the number of batches distributed
+    vm2.invoke(() -> WANTestBase.validateRegionSize(regionName,
+        batchesDistributed * eventsPerTransaction));
+  }
+
+  private AsyncInvocation<Void> asyncExecuteTransactions(String regionName,
+      int eventsPerTransaction, int entries) {
+    final Map<Object, Object> keyValues = new LinkedHashMap<>();
+    for (int i = 0; i < entries; i++) {
+      keyValues.put(i, i + "_Value");
+    }
+
+    return vm4.invokeAsync(
+        () -> WANTestBase.doPutsInsideTransactions(regionName, keyValues,
+            eventsPerTransaction));
+  }
+
+  private void waitForBatchesToBeAppliedInTheReceiver(String regionName, int eventsPerTransaction) {
+    int batchesSentTotal = vm4.invoke(() -> WANTestBase.getSenderStats("ln", -1)).get(4) +
+        vm5.invoke(() -> WANTestBase.getSenderStats("ln", -1)).get(4);
+
+    // Wait for all batches to be received by the sender
+    vm2.invoke(() -> await()
+        .until(() -> WANTestBase.getReceiverStats().get(2) == batchesSentTotal));
+
+    // Wait for all entries to be written by the receiver
+    vm2.invoke(
+        () -> WANTestBase.validateRegionSize(regionName, batchesSentTotal * eventsPerTransaction));
+  }
+
+  @Test
+  public void testReplicatedSerialPropagationWithMultipleDispatchers() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2);
     vm2.invoke(() -> WANTestBase.createReceiver());
@@ -126,11 +582,11 @@ public class SerialWANStatsDUnitTest extends WANTestBase {
   }
 
   @Test
-  public void testWANStatsTwoWanSites() throws Exception {
+  public void testWANStatsTwoWanSites() {
 
     Integer lnPort = createFirstLocatorWithDSId(1);
-    Integer nyPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
-    Integer tkPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(3, lnPort));
+    Integer nyPort = vm0.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+    Integer tkPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(3, lnPort));
 
     createCacheInVMs(nyPort, vm2);
     vm2.invoke(() -> WANTestBase.createReceiver());
@@ -187,8 +643,8 @@ public class SerialWANStatsDUnitTest extends WANTestBase {
   @Test
   public void testReplicatedSerialPropagationHA() throws Exception {
 
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     vm2.invoke(() -> WANTestBase.createCache(nyPort));
     vm2.invoke(() -> WANTestBase.createReceiver());
@@ -235,9 +691,84 @@ public class SerialWANStatsDUnitTest extends WANTestBase {
   }
 
   @Test
+  public void testReplicatedSerialPropagationHAWithGroupTransactionEvents() throws Exception {
+
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+
+    vm2.invoke(() -> WANTestBase.createCache(nyPort));
+    vm2.invoke(() -> WANTestBase.createReceiver());
+
+    vm4.invoke(() -> WANTestBase.createCache(lnPort));
+    vm5.invoke(() -> WANTestBase.createCache(lnPort));
+    vm6.invoke(() -> WANTestBase.createCache(lnPort));
+    vm7.invoke(() -> WANTestBase.createCache(lnPort));
+
+    int batchSize = 9;
+    boolean groupTransactionEvents = true;
+    vm4.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, batchSize, false, false, null, true,
+            groupTransactionEvents));
+    vm5.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, batchSize, false, false, null, true,
+            groupTransactionEvents));
+    vm6.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, batchSize, false, false, null, true,
+            groupTransactionEvents));
+    vm7.invoke(
+        () -> WANTestBase.createSender("ln", 2, false, 100, batchSize, false, false, null, true,
+            groupTransactionEvents));
+
+    vm2.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", null, isOffHeap()));
+
+    startSenderInVMs("ln", vm4, vm5, vm6, vm7);
+
+    vm4.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+    vm5.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+    vm6.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+    vm7.invoke(() -> WANTestBase.createReplicatedRegion(testName + "_RR", "ln", isOffHeap()));
+
+    AsyncInvocation inv1 =
+        vm6.invokeAsync(() -> WANTestBase.doTxPutsWithRetryIfError(testName + "_RR", 2, 5000, 0));
+    AsyncInvocation inv2 =
+        vm7.invokeAsync(() -> WANTestBase.doTxPutsWithRetryIfError(testName + "_RR", 2, 5000, 1));
+
+    vm2.invoke(() -> await()
+        .untilAsserted(() -> assertEquals("Waiting for some batches to be received", true,
+            getRegionSize(testName + "_RR") > 40)));
+
+    AsyncInvocation inv3 = vm4.invokeAsync(() -> WANTestBase.killSender("ln"));
+    Boolean isKilled = Boolean.FALSE;
+    try {
+      isKilled = (Boolean) inv3.getResult();
+    } catch (Throwable e) {
+      fail("Unexpected exception while killing a sender");
+    }
+    AsyncInvocation inv4;
+    if (!isKilled) {
+      inv4 = vm5.invokeAsync(() -> WANTestBase.killSender("ln"));
+      inv4.join();
+    }
+    inv1.join();
+    inv2.join();
+    inv3.join();
+
+    vm5.invoke(() -> WANTestBase.validateRegionSize(testName + "_RR", 20000));
+    vm2.invoke(() -> WANTestBase.validateRegionSize(testName + "_RR", 20000));
+
+    // batchesReceived is equal to numberOfEntries/(batchSize+1)
+    // As transactions are 2 events long, for each batch it will always be necessary to
+    // add one more entry to the 9 events batch in order to have complete transactions in the batch.
+    int batchesReceived = (10000 + 10000) / (batchSize + 1);
+    vm2.invoke(() -> WANTestBase.checkGatewayReceiverStatsHA(batchesReceived, 20000, 20000));
+
+    vm5.invoke(() -> WANTestBase.checkStats_Failover("ln", 20000));
+  }
+
+  @Test
   public void testReplicatedSerialPropagationUnprocessedEvents() throws Exception {
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     // these are part of remote site
     createCacheInVMs(nyPort, vm2, vm3);
@@ -314,10 +845,10 @@ public class SerialWANStatsDUnitTest extends WANTestBase {
    *
    */
   @Test
-  public void testReplicatedSerialPropagationWithRemoteRegionDestroy() throws Exception {
+  public void testReplicatedSerialPropagationWithRemoteRegionDestroy() {
     int numEntries = 2000;
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     // these are part of remote site
     vm2.invoke(() -> WANTestBase.createCache(nyPort));
@@ -386,10 +917,10 @@ public class SerialWANStatsDUnitTest extends WANTestBase {
   }
 
   @Test
-  public void testSerialPropagationWithFilter() throws Exception {
+  public void testSerialPropagationWithFilter() {
 
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2, vm3);
     createReceiverInVMs(vm2, vm3);
@@ -428,9 +959,9 @@ public class SerialWANStatsDUnitTest extends WANTestBase {
   }
 
   @Test
-  public void testSerialPropagationConflation() throws Exception {
-    Integer lnPort = (Integer) vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
-    Integer nyPort = (Integer) vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
+  public void testSerialPropagationConflation() {
+    Integer lnPort = vm0.invoke(() -> WANTestBase.createFirstLocatorWithDSId(1));
+    Integer nyPort = vm1.invoke(() -> WANTestBase.createFirstRemoteLocator(2, lnPort));
 
     createCacheInVMs(nyPort, vm2, vm3);
     createReceiverInVMs(vm2, vm3);

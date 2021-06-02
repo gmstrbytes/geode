@@ -14,6 +14,7 @@
  */
 package org.apache.geode.cache.query.functional;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
@@ -71,28 +72,28 @@ public class IndexOnEntrySetJUnitTest {
 
   private String[] getQueriesOnRegion(String regionName) {
     return new String[] {
-        "SELECT DISTINCT entry.value, entry.key FROM /" + regionName
+        "SELECT DISTINCT entry.value, entry.key FROM " + SEPARATOR + regionName
             + ".entrySet entry WHERE entry.key.PartitionID > 0 AND "
             + "entry.key.Index > 1 ORDER BY entry.key.Index ASC LIMIT 2",
-        "SELECT DISTINCT entry.value, entry.key FROM /" + regionName
+        "SELECT DISTINCT entry.value, entry.key FROM " + SEPARATOR + regionName
             + ".entrySet entry WHERE entry.key.Index > 1 ORDER BY entry.key.Index ASC LIMIT 2",
-        "SELECT DISTINCT * FROM /" + regionName
+        "SELECT DISTINCT * FROM " + SEPARATOR + regionName
             + ".entrySet entry WHERE entry.key.PartitionID > 0 AND "
             + "entry.key.Index > 1 ORDER BY entry.key.Index ASC LIMIT 2",
-        "SELECT DISTINCT entry.value, entry.key FROM /" + regionName
+        "SELECT DISTINCT entry.value, entry.key FROM " + SEPARATOR + regionName
             + ".entrySet entry WHERE entry.key.PartitionID > 0 AND "
             + "entry.key.Index > 1 LIMIT 2",
-        "SELECT DISTINCT entry.value, entry.key FROM /" + regionName
+        "SELECT DISTINCT entry.value, entry.key FROM " + SEPARATOR + regionName
             + ".entrySet entry WHERE entry.key.PartitionID > 0 AND "
             + "entry.key.Index > 1 ORDER BY entry.key.Index ASC",};
   }
 
   private String[] getQueriesOnRegionForPut(String regionName) {
     return new String[] {
-        "SELECT DISTINCT entry.value, entry.key FROM /" + regionName
+        "SELECT DISTINCT entry.value, entry.key FROM " + SEPARATOR + regionName
             + ".entrySet entry WHERE entry.key.PartitionID = 50 AND "
             + "entry.key.Index > 1 ORDER BY entry.key.Index ASC LIMIT 2",
-        "SELECT DISTINCT entry.value, entry.key FROM /" + regionName
+        "SELECT DISTINCT entry.value, entry.key FROM " + SEPARATOR + regionName
             + ".entrySet entry WHERE entry.value = 50 AND "
             + "entry.key.Index > 1 ORDER BY entry.key.Index ASC LIMIT 2"};
   }
@@ -104,14 +105,14 @@ public class IndexOnEntrySetJUnitTest {
   @Test
   public void testQueriesOnReplicatedRegion() throws Exception {
     testRegion = createReplicatedRegion(testRegionName);
-    String regionPath = "/" + testRegionName + ".entrySet entry";
+    String regionPath = SEPARATOR + testRegionName + ".entrySet entry";
     executeQueryTest(getQueriesOnRegion(testRegionName), "entry.key.Index", regionPath, 200);
   }
 
   @Test
   public void testEntryDestroyedRaceWithSizeEstimateReplicatedRegion() throws Exception {
     testRegion = createReplicatedRegion(testRegionName);
-    String regionPath = "/" + testRegionName + ".entrySet entry";
+    String regionPath = SEPARATOR + testRegionName + ".entrySet entry";
     executeQueryTestDestroyDuringSizeEstimation(getQueriesOnRegion(testRegionName),
         "entry.key.Index", regionPath, 201);
   }
@@ -123,7 +124,7 @@ public class IndexOnEntrySetJUnitTest {
   @Test
   public void testQueriesOnPartitionedRegion() throws Exception {
     testRegion = createPartitionedRegion(testRegionName);
-    String regionPath = "/" + testRegionName + ".entrySet entry";
+    String regionPath = SEPARATOR + testRegionName + ".entrySet entry";
     executeQueryTest(getQueriesOnRegion(testRegionName), "entry.key.Index", regionPath, 200);
   }
 

@@ -15,6 +15,7 @@
 
 package org.apache.geode.management.internal.rest;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.lang.Identifiable.find;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -27,13 +28,12 @@ import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Test;
 
-import org.apache.geode.management.api.BaseConnectionConfig;
 import org.apache.geode.management.api.ClusterManagementGetResult;
 import org.apache.geode.management.api.ClusterManagementListResult;
 import org.apache.geode.management.api.ClusterManagementResult;
 import org.apache.geode.management.api.ClusterManagementService;
 import org.apache.geode.management.api.EntityInfo;
-import org.apache.geode.management.client.ClusterManagementServiceBuilder;
+import org.apache.geode.management.cluster.client.ClusterManagementServiceBuilder;
 import org.apache.geode.management.configuration.AbstractConfiguration;
 import org.apache.geode.management.configuration.Region;
 import org.apache.geode.management.configuration.RegionType;
@@ -66,8 +66,7 @@ public class ListRegionManagementDunitTest {
     server1 = cluster.startServerVM(1, "group1", locator.getPort());
     server2 = cluster.startServerVM(2, "group2", locator.getPort());
 
-    client = new ClusterManagementServiceBuilder().setConnectionConfig(
-        new BaseConnectionConfig("localhost", locator.getHttpPort()))
+    client = new ClusterManagementServiceBuilder().setPort(locator.getHttpPort())
         .build();
     gfsh.connect(locator);
 
@@ -77,7 +76,7 @@ public class ListRegionManagementDunitTest {
     regionConfig.setGroup("group1");
     regionConfig.setType(RegionType.PARTITION);
     client.create(regionConfig);
-    locator.waitUntilRegionIsReadyOnExactlyThisManyServers("/" + REGION_IN_SINGLE_GROUP, 1);
+    locator.waitUntilRegionIsReadyOnExactlyThisManyServers(SEPARATOR + REGION_IN_SINGLE_GROUP, 1);
 
     // create a region that has different type on different group
     regionConfig = new Region();
@@ -91,13 +90,14 @@ public class ListRegionManagementDunitTest {
     regionConfig.setGroup("group2");
     regionConfig.setType(RegionType.PARTITION);
     client.create(regionConfig);
-    locator.waitUntilRegionIsReadyOnExactlyThisManyServers("/" + REGION_WITH_MULTIPLE_TYPES, 2);
+    locator.waitUntilRegionIsReadyOnExactlyThisManyServers(SEPARATOR + REGION_WITH_MULTIPLE_TYPES,
+        2);
 
     regionConfig = new Region();
     regionConfig.setName(REGION_IN_CLUSTER);
     regionConfig.setType(RegionType.PARTITION);
     client.create(regionConfig);
-    locator.waitUntilRegionIsReadyOnExactlyThisManyServers("/" + REGION_IN_CLUSTER, 2);
+    locator.waitUntilRegionIsReadyOnExactlyThisManyServers(SEPARATOR + REGION_IN_CLUSTER, 2);
 
     // create a region that belongs to multiple groups
     regionConfig = new Region();
@@ -107,7 +107,8 @@ public class ListRegionManagementDunitTest {
     client.create(regionConfig);
     regionConfig.setGroup("group2");
     client.create(regionConfig);
-    locator.waitUntilRegionIsReadyOnExactlyThisManyServers("/" + REGION_IN_MULTIPLE_GROUPS, 2);
+    locator.waitUntilRegionIsReadyOnExactlyThisManyServers(SEPARATOR + REGION_IN_MULTIPLE_GROUPS,
+        2);
   }
 
   @Before
@@ -173,7 +174,7 @@ public class ListRegionManagementDunitTest {
   public void testEntryCount() {
     server1.invoke(() -> {
       org.apache.geode.cache.Region<String, String> region =
-          ClusterStartupRule.getCache().getRegion("/" + REGION_IN_CLUSTER);
+          ClusterStartupRule.getCache().getRegion(SEPARATOR + REGION_IN_CLUSTER);
       region.put("k1", "v1");
       region.put("k2", "v2");
     });
@@ -181,8 +182,9 @@ public class ListRegionManagementDunitTest {
     // wait till entry size are correctly gathered by the mbean
     locator.invoke(() -> {
       await().untilAsserted(
-          () -> assertThat(ClusterStartupRule.memberStarter.getRegionMBean("/" + REGION_IN_CLUSTER)
-              .getSystemRegionEntryCount()).isEqualTo(2));
+          () -> assertThat(
+              ClusterStartupRule.memberStarter.getRegionMBean(SEPARATOR + REGION_IN_CLUSTER)
+                  .getSystemRegionEntryCount()).isEqualTo(2));
     });
 
     filter.setName(REGION_IN_CLUSTER);

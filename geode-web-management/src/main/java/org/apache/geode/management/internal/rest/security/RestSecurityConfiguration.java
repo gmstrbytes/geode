@@ -16,6 +16,7 @@ package org.apache.geode.management.internal.rest.security;
 
 
 import java.io.IOException;
+import java.util.Arrays;
 
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
@@ -37,6 +38,8 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.authentication.www.BasicAuthenticationFilter;
+import org.springframework.web.multipart.MultipartResolver;
+import org.springframework.web.multipart.commons.CommonsMultipartResolver;
 
 import org.apache.geode.management.api.ClusterManagementResult;
 import org.apache.geode.management.configuration.Links;
@@ -66,14 +69,30 @@ public class RestSecurityConfiguration extends WebSecurityConfigurerAdapter {
     return super.authenticationManagerBean();
   }
 
-  protected void configure(HttpSecurity http) throws Exception {
+  @Bean
+  public MultipartResolver multipartResolver() {
+    return new CommonsMultipartResolver() {
+      @Override
+      public boolean isMultipart(HttpServletRequest request) {
+        String method = request.getMethod().toLowerCase();
+        // By default, only POST is allowed. Since this is an 'update' we should accept PUT.
+        if (!Arrays.asList("put", "post").contains(method)) {
+          return false;
+        }
+        String contentType = request.getContentType();
+        return (contentType != null && contentType.toLowerCase().startsWith("multipart/"));
+      }
+    };
+  }
 
+  protected void configure(HttpSecurity http) throws Exception {
     http.sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS).and()
         .authorizeRequests()
         .antMatchers("/docs/**", "/swagger-ui.html", "/",
             Links.URI_VERSION + "/api-docs/**", "/webjars/springfox-swagger-ui/**",
             "/swagger-resources/**")
-        .permitAll().and().csrf().disable();
+        .permitAll()
+        .and().csrf().disable();
 
     if (this.authProvider.getSecurityService().isIntegratedSecurity()) {
       http.authorizeRequests().anyRequest().authenticated();
@@ -92,13 +111,15 @@ public class RestSecurityConfiguration extends WebSecurityConfigurerAdapter {
   }
 
   private class AuthenticationFailedHandler implements AuthenticationEntryPoint {
+    private static final String CONTENT_TYPE = MediaType.APPLICATION_JSON_VALUE;
+
     @Override
     public void commence(HttpServletRequest request, HttpServletResponse response,
         AuthenticationException authException)
         throws IOException, ServletException {
       response.addHeader("WWW-Authenticate", "Basic realm=\"GEODE\"");
       response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-      response.setContentType(MediaType.APPLICATION_JSON_UTF8_VALUE);
+      response.setContentType(CONTENT_TYPE);
       ClusterManagementResult result =
           new ClusterManagementResult(ClusterManagementResult.StatusCode.UNAUTHENTICATED,
               authException.getMessage());

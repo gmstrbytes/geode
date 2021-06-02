@@ -16,6 +16,9 @@
 package org.apache.geode.management.configuration;
 
 
+
+import static org.apache.geode.management.configuration.Region.SEPARATOR;
+
 import java.util.Objects;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -83,7 +86,7 @@ public class Index extends AbstractConfiguration<IndexInfo> implements RegionSco
     }
 
     String regionName = regionPath.trim().split(" ")[0];
-    regionName = StringUtils.removeStart(regionName, "/");
+    regionName = StringUtils.removeStart(regionName, SEPARATOR);
     if (regionName.contains(".")) {
       regionName = regionName.substring(0, regionName.indexOf('.'));
     }
@@ -103,8 +106,10 @@ public class Index extends AbstractConfiguration<IndexInfo> implements RegionSco
   @Override
   public Links getLinks() {
     String regionName = getRegionName();
+    // /indexes/indexName is not implemented in controller anymore. region name is required for the
+    // self link
     if (StringUtils.isBlank(regionName)) {
-      return new Links(getId(), INDEXES);
+      return new Links(null, INDEXES);
     }
     Links links = new Links(getId(), Region.REGION_CONFIG_ENDPOINT + "/" + regionName + INDEXES);
     links.addLink("region", Region.REGION_CONFIG_ENDPOINT + "/" + regionName);

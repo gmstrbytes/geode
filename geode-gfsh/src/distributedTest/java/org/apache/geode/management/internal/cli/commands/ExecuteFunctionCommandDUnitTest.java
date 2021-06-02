@@ -14,6 +14,7 @@
  */
 package org.apache.geode.management.internal.cli.commands;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.Set;
@@ -51,6 +52,7 @@ public class ExecuteFunctionCommandDUnitTest {
   private static String command = "execute function --id=" + functionId + " ";
 
   @BeforeClass
+  @SuppressWarnings("deprecation")
   public static void setUpClass() throws Exception {
     MemberVM locator = cluster.startLocatorVM(0);
     gfsh.connectAndVerify(locator);
@@ -71,26 +73,28 @@ public class ExecuteFunctionCommandDUnitTest {
         .statusIsSuccess()
         .tableHasColumnOnlyWithValues("Member", "server-1", "server-2");
 
-    locator.waitUntilRegionIsReadyOnExactlyThisManyServers("/regionA", 2);
+    locator.waitUntilRegionIsReadyOnExactlyThisManyServers(SEPARATOR + "regionA", 2);
 
     server1.invoke(() -> {
       InternalCache cache = ClusterStartupRule.getCache();
       assertThat(cache).isNotNull();
-      Region<String, String> region = cache.getRegion("/regionA");
+      Region<String, String> region = cache.getRegion(SEPARATOR + "regionA");
       region.put("a", "a");
       region.put("b", "b");
     });
 
     // this makes sure entry a and entry b are on different member
     CommandResultAssert locateACommand =
-        gfsh.executeAndAssertThat("locate entry --key=a --region=/regionA").statusIsSuccess()
+        gfsh.executeAndAssertThat("locate entry --key=a --region=" + SEPARATOR + "regionA")
+            .statusIsSuccess()
             .hasSection("location", "data-info");
     locateACommand.hasDataSection().hasContent().containsEntry("Locations Found", "1");
     locateACommand.hasTableSection().hasColumnSize(4).hasColumn("MemberName").hasSize(1)
         .isSubsetOf("server-1", "server-2");
 
     CommandResultAssert locateBCommand =
-        gfsh.executeAndAssertThat("locate entry --key=b --region=/regionA").statusIsSuccess()
+        gfsh.executeAndAssertThat("locate entry --key=b --region=" + SEPARATOR + "regionA")
+            .statusIsSuccess()
             .hasSection("location", "data-info");
     locateBCommand.hasDataSection().hasContent().containsEntry("Locations Found", "1");
     locateBCommand.hasTableSection().hasColumnSize(4).hasColumn("MemberName").hasSize(1)
@@ -153,7 +157,7 @@ public class ExecuteFunctionCommandDUnitTest {
   public void withRegionOnly() {
     // function is only executed on one member, but the returned message is repeated twice
     // i.e. that member will execute the function on other members
-    gfsh.executeAndAssertThat(command + "--region=/regionA").statusIsSuccess()
+    gfsh.executeAndAssertThat(command + "--region=" + SEPARATOR + "regionA").statusIsSuccess()
         .hasTableSection()
         .hasRowSize(1)
         .hasColumnSize(3)
@@ -167,7 +171,8 @@ public class ExecuteFunctionCommandDUnitTest {
     // "[genericFunctionId-a, genericFunctionId-b]"
     // or "[genericFunctionId-b, genericFunctionId-a]" depending which server's function gets
     // executed first
-    gfsh.executeAndAssertThat(command + "--region=/regionA --filter=a,b").statusIsSuccess()
+    gfsh.executeAndAssertThat(command + "--region=" + SEPARATOR + "regionA --filter=a,b")
+        .statusIsSuccess()
         .hasTableSection()
         .hasRowSize(1)
         .hasColumnSize(3)
@@ -178,7 +183,8 @@ public class ExecuteFunctionCommandDUnitTest {
 
   @Test
   public void withRegionAndFilterMatchingOnlyOneMember() {
-    gfsh.executeAndAssertThat(command + "--region=/regionA --filter=a").statusIsSuccess()
+    gfsh.executeAndAssertThat(command + "--region=" + SEPARATOR + "regionA --filter=a")
+        .statusIsSuccess()
         .hasTableSection()
         .hasRowSize(1)
         .hasColumnSize(3)
@@ -188,7 +194,8 @@ public class ExecuteFunctionCommandDUnitTest {
 
   @Test
   public void withRegionAndArguments() {
-    gfsh.executeAndAssertThat(command + "--region=/regionA --arguments=arguments").statusIsSuccess()
+    gfsh.executeAndAssertThat(command + "--region=" + SEPARATOR + "regionA --arguments=arguments")
+        .statusIsSuccess()
         .hasTableSection()
         .hasRowSize(1)
         .hasColumnSize(3)
@@ -199,7 +206,8 @@ public class ExecuteFunctionCommandDUnitTest {
 
   @Test
   public void withRegionAndFilterAndArgument() {
-    gfsh.executeAndAssertThat(command + "--region=/regionA --filter=b --arguments=arguments")
+    gfsh.executeAndAssertThat(
+        command + "--region=" + SEPARATOR + "regionA --filter=b --arguments=arguments")
         .hasTableSection()
         .hasRowSize(1)
         .hasColumnSize(3)
@@ -210,7 +218,8 @@ public class ExecuteFunctionCommandDUnitTest {
   @Test
   public void withRegionAndFilterAndArgumentAndResultCollector() {
     gfsh.executeAndAssertThat(
-        command + "--region=/regionA --filter=a --arguments=arguments --result-collector="
+        command + "--region=" + SEPARATOR
+            + "regionA --filter=a --arguments=arguments --result-collector="
             + ToUpperResultCollector.class.getName())
         .hasTableSection()
         .hasRowSize(1)
@@ -222,7 +231,7 @@ public class ExecuteFunctionCommandDUnitTest {
   @Test
   public void withRegionAndArgumentAndResultCollector() {
     gfsh.executeAndAssertThat(
-        command + "--region=/regionA --arguments=arguments --result-collector="
+        command + "--region=" + SEPARATOR + "regionA --arguments=arguments --result-collector="
             + ToUpperResultCollector.class.getName())
         .hasTableSection()
         .hasRowSize(1)
@@ -282,15 +291,15 @@ public class ExecuteFunctionCommandDUnitTest {
   }
 
   @SuppressWarnings("unused")
-  public static class MyPartitionResolver implements FixedPartitionResolver {
+  public static class MyPartitionResolver implements FixedPartitionResolver<String, String> {
     @Override
-    public String getPartitionName(final EntryOperation opDetails,
-        @Deprecated final Set targetPartitions) {
-      return (String) opDetails.getKey();
+    public String getPartitionName(final EntryOperation<String, String> opDetails,
+        @Deprecated final Set<String> targetPartitions) {
+      return opDetails.getKey();
     }
 
     @Override
-    public Object getRoutingObject(final EntryOperation opDetails) {
+    public Object getRoutingObject(final EntryOperation<String, String> opDetails) {
       return opDetails.getKey();
     }
 
@@ -305,7 +314,7 @@ public class ExecuteFunctionCommandDUnitTest {
     }
   }
 
-  public static class GenericFunctionOp implements Function {
+  public static class GenericFunctionOp implements Function<Object> {
     private String functionId;
 
     GenericFunctionOp(String functionId) {
@@ -313,12 +322,12 @@ public class ExecuteFunctionCommandDUnitTest {
     }
 
     @Override
-    @SuppressWarnings("unchecked")
-    public void execute(FunctionContext context) {
+    public void execute(FunctionContext<Object> context) {
       String filter = null;
       if (context instanceof RegionFunctionContext) {
         RegionFunctionContext rContext = (RegionFunctionContext) context;
-        Set filters = rContext.getFilter();
+        @SuppressWarnings("unchecked")
+        Set<Object> filters = (Set<Object>) rContext.getFilter();
         filter = Strings.join(filters, ',');
       }
 
@@ -346,7 +355,7 @@ public class ExecuteFunctionCommandDUnitTest {
   }
 
 
-  public static class FireAndForgetFunction implements Function {
+  public static class FireAndForgetFunction implements Function<Void> {
 
     FireAndForgetFunction() {}
 
@@ -366,7 +375,7 @@ public class ExecuteFunctionCommandDUnitTest {
     }
 
     @Override
-    public void execute(FunctionContext context) {
+    public void execute(FunctionContext<Void> context) {
       // Do Nothing.
     }
   }

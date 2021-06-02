@@ -26,6 +26,7 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.TreeMap;
 
+import org.apache.geode.internal.classloader.ClassPathLoader;
 import org.apache.geode.internal.inet.LocalHostUtil;
 
 public class VersionDescription {
@@ -55,11 +56,6 @@ public class VersionDescription {
    * Constant for the source code repository Resource Property entry
    */
   public static final String SOURCE_REPOSITORY = "Source-Repository";
-
-  /**
-   * Constant for the build date Resource Property entry
-   */
-  public static final String BUILD_DATE = "Build-Date";
 
   /**
    * Constant for the build id Resource Property entry
@@ -138,7 +134,7 @@ public class VersionDescription {
 
   private static String getLocalHost() {
     try {
-      return LocalHostUtil.getLocalHost().toString();
+      return LocalHostUtil.getLocalHostString();
     } catch (UnknownHostException e) {
       return e.getMessage();
     }
@@ -173,12 +169,6 @@ public class VersionDescription {
       return Optional
           .of(String.format("<Missing property %s from resource org/apache/geode/internal/%s>",
               SOURCE_REPOSITORY, RESOURCE_NAME));
-    }
-
-    if (props.get(BUILD_DATE) == null) {
-      return Optional
-          .of(String.format("<Missing property %s from resource org/apache/geode/internal/%s>",
-              BUILD_DATE, RESOURCE_NAME));
     }
 
     if (props.get(BUILD_ID) == null) {

@@ -17,6 +17,7 @@ package org.apache.geode.internal.cache.tier.sockets;
 import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.junit.Assert.assertNotNull;
 
 import java.util.Properties;
@@ -38,7 +39,6 @@ import org.apache.geode.cache.client.Pool;
 import org.apache.geode.cache.client.PoolManager;
 import org.apache.geode.cache30.CacheSerializableRunnable;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.cache.CacheObserverAdapter;
 import org.apache.geode.internal.cache.CacheObserverHolder;
 import org.apache.geode.internal.cache.CacheServerImpl;
@@ -123,7 +123,7 @@ public class RegisterInterestBeforeRegionCreationDUnitTest extends JUnit4Distrib
     CacheSerializableRunnable putFromServer = new CacheSerializableRunnable("putFromServer") {
       @Override
       public void run2() throws CacheException {
-        Region region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+        Region region = cache.getRegion(SEPARATOR + REGION_NAME);
         assertNotNull(region);
         for (int i = 0; i < 1000; i++) {
           region.put("key" + i, "value" + i);
@@ -207,7 +207,7 @@ public class RegisterInterestBeforeRegionCreationDUnitTest extends JUnit4Distrib
     }
     CacheServerImpl server = (CacheServerImpl) cache.addCacheServer();
     assertNotNull(server);
-    int port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    int port = getRandomAvailableTCPPort();
     server.setPort(port);
     server.setNotifyBySubscription(true);
     server.start();
@@ -240,7 +240,7 @@ public class RegisterInterestBeforeRegionCreationDUnitTest extends JUnit4Distrib
     factory.setPoolName(p.getName());
     RegionAttributes attrs = factory.createRegionAttributes();
     cache.createVMRegion(REGION_NAME, attrs);
-    Region region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region region = cache.getRegion(SEPARATOR + REGION_NAME);
     assertNotNull(region);
     region.registerInterest("ALL_KEYS", InterestResultPolicy.NONE);
   }

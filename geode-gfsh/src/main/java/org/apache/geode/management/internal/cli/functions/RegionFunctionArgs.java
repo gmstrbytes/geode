@@ -30,7 +30,7 @@ import org.apache.geode.cache.ExpirationAttributes;
 import org.apache.geode.cache.RegionAttributes;
 import org.apache.geode.cache.RegionShortcut;
 import org.apache.geode.cache.util.ObjectSizer;
-import org.apache.geode.internal.ClassPathLoader;
+import org.apache.geode.internal.classloader.ClassPathLoader;
 import org.apache.geode.management.configuration.ClassName;
 import org.apache.geode.management.internal.i18n.CliStrings;
 
@@ -605,9 +605,8 @@ public class RegionFunctionArgs implements Serializable {
       ObjectSizer sizer;
       if (objectSizer != null) {
         try {
-          Class<ObjectSizer> sizerClass =
-              (Class<ObjectSizer>) ClassPathLoader.getLatest().forName(objectSizer);
-          sizer = sizerClass.newInstance();
+          Class<?> sizerClass = ClassPathLoader.getLatest().forName(objectSizer);
+          sizer = (ObjectSizer) sizerClass.newInstance();
         } catch (ClassNotFoundException | InstantiationException | IllegalAccessException e) {
           throw new IllegalArgumentException(
               "Unable to instantiate class " + objectSizer + " - " + e.toString());

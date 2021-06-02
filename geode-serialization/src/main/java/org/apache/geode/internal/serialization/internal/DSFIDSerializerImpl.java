@@ -35,13 +35,12 @@ import org.apache.geode.internal.serialization.DSFIDSerializer;
 import org.apache.geode.internal.serialization.DataSerializableFixedID;
 import org.apache.geode.internal.serialization.DeserializationContext;
 import org.apache.geode.internal.serialization.DscodeHelper;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.ObjectDeserializer;
 import org.apache.geode.internal.serialization.ObjectSerializer;
 import org.apache.geode.internal.serialization.SerializationContext;
 import org.apache.geode.internal.serialization.SerializationVersions;
 import org.apache.geode.internal.serialization.StaticSerialization;
-import org.apache.geode.internal.serialization.Version;
-import org.apache.geode.internal.serialization.VersionedDataStream;
 
 public class DSFIDSerializerImpl implements DSFIDSerializer {
 
@@ -49,7 +48,7 @@ public class DSFIDSerializerImpl implements DSFIDSerializer {
   private final Constructor<?>[] dsfidMap = new Constructor<?>[256];
 
   @Immutable("This maybe should be wrapped in an unmodifiableMap?")
-  private final Int2ObjectOpenHashMap dsfidMap2 = new Int2ObjectOpenHashMap(800);
+  private final Int2ObjectOpenHashMap<Constructor<?>> dsfidMap2 = new Int2ObjectOpenHashMap<>(800);
 
   private final ObjectSerializer objectSerializer;
   private final ObjectDeserializer objectDeserializer;
@@ -88,9 +87,10 @@ public class DSFIDSerializerImpl implements DSFIDSerializer {
 
   private ObjectDeserializer createDefaultObjectDeserializer() {
     return new ObjectDeserializer() {
+      @SuppressWarnings("unchecked")
       @Override
       public <T> T readObject(DataInput input) throws IOException, ClassNotFoundException {
-        return (T) DSFIDSerializerImpl.this.readDSFID(input);
+        return (T) readDSFID(input);
       }
 
       @Override
@@ -155,7 +155,7 @@ public class DSFIDSerializerImpl implements DSFIDSerializer {
       writeDSFIDHeader(id, out);
     } else {
       out.writeByte(DSCODE.DATA_SERIALIZABLE.toByte());
-      final Class c = bs.getClass();
+      final Class<?> c = bs.getClass();
       StaticSerialization.writeClass(c, out);
     }
   }
@@ -187,16 +187,16 @@ public class DSFIDSerializerImpl implements DSFIDSerializer {
 
     try {
       boolean invoked = false;
-      Version v = context.getSerializationVersion();
+      KnownVersion v = context.getSerializationVersion();
 
-      if (!v.isCurrentVersion()) {
+      if (!KnownVersion.CURRENT.equals(v)) {
         // get versions where DataOutput was upgraded
         SerializationVersions sv = (SerializationVersions) ds;
-        Version[] versions = sv.getSerializationVersions();
+        KnownVersion[] versions = sv.getSerializationVersions();
         // check if the version of the peer or diskstore is different and
         // there has been a change in the message
         if (versions != null) {
-          for (Version version : versions) {
+          for (KnownVersion version : versions) {
             // if peer version is less than the greatest upgraded version
             if (v.compareTo(version) < 0) {
               ds.getClass().getMethod("toDataPre_" + version.getMethodSuffix(),
@@ -216,20 +216,6 @@ public class DSFIDSerializerImpl implements DSFIDSerializer {
         | InvocationTargetException e) {
       throw new IOException(
           "problem invoking toData method on object of class" + ds.getClass().getName(), e);
-    }
-  }
-
-  /**
-   * Get the Version of the peer or disk store that created this {@link DataOutput}.
-   * Returns
-   * zero if the version is same as this member's.
-   */
-  public Version getVersionForDataStreamOrNull(DataOutput out) {
-    // check if this is a versioned data output
-    if (out instanceof VersionedDataStream) {
-      return ((VersionedDataStream) out).getVersion();
-    } else {
-      return null;
     }
   }
 
@@ -306,16 +292,15 @@ public class DSFIDSerializerImpl implements DSFIDSerializer {
     DeserializationContextImpl context = new DeserializationContextImpl(in, this);
     try {
       boolean invoked = false;
-      Version v = context.getSerializationVersion();
-      if (!v.isCurrentVersion() && ds instanceof SerializationVersions) {
+      KnownVersion v = context.getSerializationVersion();
+      if (!KnownVersion.CURRENT.equals(v) && ds instanceof SerializationVersions) {
         // get versions where DataOutput was upgraded
-        Version[] versions = null;
         SerializationVersions vds = (SerializationVersions) ds;
-        versions = vds.getSerializationVersions();
+        KnownVersion[] versions = vds.getSerializationVersions();
         // check if the version of the peer or diskstore is different and
         // there has been a change in the message
         if (versions != null) {
-          for (Version version : versions) {
+          for (KnownVersion version : versions) {
             // if peer version is less than the greatest upgraded version
             if (v.compareTo(version) < 0) {
               ds.getClass().getMethod("fromDataPre" + '_' + version.getMethodSuffix(),
@@ -351,9 +336,9 @@ public class DSFIDSerializerImpl implements DSFIDSerializer {
 
 
   @Override
-  public void registerDSFID(int dsfid, Class dsfidClass) {
+  public void registerDSFID(int dsfid, Class<?> dsfidClass) {
     try {
-      Constructor<?> cons = dsfidClass.getConstructor((Class[]) null);
+      Constructor<?> cons = dsfidClass.getConstructor((Class<Object>[]) null);
       cons.setAccessible(true);
       if (!cons.isAccessible()) {
         throw new IllegalArgumentException(
@@ -375,17 +360,15 @@ public class DSFIDSerializerImpl implements DSFIDSerializer {
     if (dsfid >= Byte.MIN_VALUE && dsfid <= Byte.MAX_VALUE) {
       cons = dsfidMap[dsfid + Byte.MAX_VALUE + 1];
     } else {
-      cons = (Constructor<?>) dsfidMap2.get(dsfid);
+      cons = dsfidMap2.get(dsfid);
     }
     if (cons != null) {
       try {
         Object ds = cons.newInstance((Object[]) null);
         invokeFromData(ds, in);
         return ds;
-      } catch (InstantiationException ie) {
+      } catch (InstantiationException | IllegalAccessException ie) {
         throw new IOException(ie.getMessage(), ie);
-      } catch (IllegalAccessException iae) {
-        throw new IOException(iae.getMessage(), iae);
       } catch (InvocationTargetException ite) {
         Throwable targetEx = ite.getTargetException();
         if (targetEx instanceof IOException) {
@@ -426,7 +409,7 @@ public class DSFIDSerializerImpl implements DSFIDSerializer {
     return dsfidMap;
   }
 
-  public Int2ObjectOpenHashMap getDsfidmap2() {
+  public Int2ObjectOpenHashMap<Constructor<?>> getDsfidmap2() {
     return dsfidMap2;
   }
 

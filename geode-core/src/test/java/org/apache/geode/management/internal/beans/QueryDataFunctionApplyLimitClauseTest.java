@@ -16,7 +16,9 @@
 
 package org.apache.geode.management.internal.beans;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -32,7 +34,7 @@ public class QueryDataFunctionApplyLimitClauseTest {
 
   @Before
   public void setUp() throws Exception {
-    this.selectQuery = "SELECT * FROM /MyRegion";
+    this.selectQuery = "SELECT * FROM " + SEPARATOR + "MyRegion";
     this.limit_0 = 0;
     this.limit_10 = 10;
     this.queryResultSetLimit_100 = 100;
@@ -61,7 +63,7 @@ public class QueryDataFunctionApplyLimitClauseTest {
 
   @Test // GEODE-1907
   public void applyLimitClauseAddsQueryResultSetLimitIfMissingSpaceAfterFrom() {
-    String selectQueryMissingSpaceAfterFrom = "SELECT * FROM/MyRegion";
+    String selectQueryMissingSpaceAfterFrom = "SELECT * FROM" + SEPARATOR + "MyRegion";
     assertThat(QueryDataFunction.applyLimitClause(selectQueryMissingSpaceAfterFrom, limit_0,
         queryResultSetLimit_100))
             .isEqualTo(selectQueryMissingSpaceAfterFrom + " LIMIT " + queryResultSetLimit_100);
@@ -69,9 +71,61 @@ public class QueryDataFunctionApplyLimitClauseTest {
 
   @Test
   public void applyLimitClauseDoesNotAddQueryResultSetLimitIfMissingSpaceAfterFromButLimitIsPresent() {
-    String selectQueryMissingSpaceAfterFromWithLimit = "SELECT * FROM/MyRegion LIMIT " + limit_10;
+    String selectQueryMissingSpaceAfterFromWithLimit =
+        "SELECT * FROM" + SEPARATOR + "MyRegion LIMIT " + limit_10;
     assertThat(QueryDataFunction.applyLimitClause(selectQueryMissingSpaceAfterFromWithLimit,
         limit_0, queryResultSetLimit_100)).isEqualTo(selectQueryMissingSpaceAfterFromWithLimit);
   }
 
+  @Test
+  public void applyLimitClauseShouldTrimQuery() throws Exception {
+    String query = selectQuery + System.lineSeparator();
+    assertThat(QueryDataFunction.applyLimitClause(query, limit_10, queryResultSetLimit_100))
+        .isEqualTo(selectQuery + " LIMIT " + limit_10);
+  }
+
+  @Test
+  public void applyLimitClauseShouldTrimQueryAndUseDefaultLimit() throws Exception {
+    String query = selectQuery + System.lineSeparator();
+    assertThat(QueryDataFunction.applyLimitClause(query, limit_0, queryResultSetLimit_100))
+        .isEqualTo(selectQuery + " LIMIT " + queryResultSetLimit_100);
+  }
+
+  @Test
+  public void applyLimitClauseShouldIgnoreComments() throws Exception {
+    String query = "--comment" + System.lineSeparator() + selectQuery + System.lineSeparator()
+        + "--comment" + System.lineSeparator();
+    assertThat(QueryDataFunction.applyLimitClause(query, limit_10, queryResultSetLimit_100))
+        .isEqualTo(selectQuery + " LIMIT " + limit_10);
+  }
+
+  @Test
+  public void applyLimitShouldIgnoreNewLinesBetweenAndAfterQuery() throws Exception {
+    String query = "select" + System.lineSeparator() + " * from" + System.lineSeparator()
+        + "/testRegion" + System.lineSeparator();
+    assertThat(QueryDataFunction.applyLimitClause(query, limit_0, queryResultSetLimit_100))
+        .isEqualTo("select  * from /testRegion LIMIT 100");
+  }
+
+  @Test
+  public void shouldFailAtEmptyQuery() throws Exception {
+    assertThatThrownBy(() -> QueryDataFunction.applyLimitClause("", 0, 0))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("invalid query");
+  }
+
+  @Test
+  public void shouldFailWithCommentOnly() throws Exception {
+    assertThatThrownBy(() -> QueryDataFunction.applyLimitClause("--comment", 0, 0))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("invalid query");
+  }
+
+  @Test
+  public void brokenSelectAndBrokenFromClauseShouldAddLimitAsWell() throws Exception {
+    String query = "select r.name," + System.lineSeparator() + "r.id from" + System.lineSeparator()
+        + "/testRegion" + System.lineSeparator() + "r" + System.lineSeparator();
+    assertThat(QueryDataFunction.applyLimitClause(query, limit_0, queryResultSetLimit_100))
+        .isEqualTo("select r.name, r.id from /testRegion r LIMIT 100");
+  }
 }

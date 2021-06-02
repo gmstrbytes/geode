@@ -14,28 +14,23 @@
  */
 package org.apache.geode.management.internal.operation;
 
-import java.util.Date;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
-import java.util.concurrent.ExecutorService;
-import java.util.function.BiFunction;
 
 import org.apache.geode.annotations.Experimental;
-import org.apache.geode.cache.Cache;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.logging.internal.executors.LoggingExecutors;
 import org.apache.geode.management.api.ClusterManagementOperation;
-import org.apache.geode.management.internal.operation.OperationHistoryManager.OperationInstance;
 import org.apache.geode.management.operation.RebalanceOperation;
+import org.apache.geode.management.operation.RestoreRedundancyRequest;
 import org.apache.geode.management.runtime.OperationResult;
 
 @Experimental
 public class OperationManager implements AutoCloseable {
-  private final Map<Class<? extends ClusterManagementOperation>, BiFunction> performers;
+  private final Map<Class<? extends ClusterManagementOperation>, OperationPerformer> performers;
   private final OperationHistoryManager historyManager;
   private final Executor executor;
   private final InternalCache cache;
@@ -47,66 +42,60 @@ public class OperationManager implements AutoCloseable {
 
     // initialize the list of operation performers
     performers = new ConcurrentHashMap<>();
-    registerOperation(RebalanceOperation.class, RebalanceOperationPerformer::perform);
+    registerOperation(RebalanceOperation.class, new RebalanceOperationPerformer());
+    registerOperation(RestoreRedundancyRequest.class, new RestoreRedundancyPerformer());
   }
 
   /**
    * for use by modules/extensions to install custom cluster management operations
    */
   public <A extends ClusterManagementOperation<V>, V extends OperationResult> void registerOperation(
-      Class<A> operationClass, BiFunction<Cache, A, V> operationPerformer) {
-    performers.put(operationClass, operationPerformer);
+      Class<A> operationClass,
+      OperationPerformer<A, V> performer) {
+    performers.put(operationClass, performer);
   }
 
-  public <A extends ClusterManagementOperation<V>, V extends OperationResult> OperationInstance<A, V> submit(
+  public <A extends ClusterManagementOperation<V>, V extends OperationResult> OperationState<A, V> submit(
       A op) {
-    String opId = UUID.randomUUID().toString();
-
-    BiFunction<Cache, A, V> performer = getPerformer(op);
+    OperationPerformer<A, V> performer = getPerformer(op);
     if (performer == null) {
       throw new IllegalArgumentException(String.format("%s is not supported.",
           op.getClass().getSimpleName()));
     }
 
-    CompletableFuture<V> future =
-        CompletableFuture.supplyAsync(() -> performer.apply(cache, op), executor);
+    String opId = historyManager.recordStart(op, cache.getMyId().toString());
+    // get the operationState BEFORE we start the async thread
+    // so that start will return a result that is not influenced
+    // by how far the async thread gets in its execution.
+    OperationState<A, V> operationState = historyManager.get(opId);
+    CompletableFuture.supplyAsync(() -> performer.perform(cache, op), executor)
+        .whenComplete((result, exception) -> {
+          Throwable cause = exception == null ? null : exception.getCause();
+          historyManager.recordEnd(opId, result, cause);
+        });
 
-    OperationInstance<A, V> inst = new OperationInstance<>(future, opId, op, new Date());
-
-    // save the Future so we can check on it later
-    return historyManager.save(inst);
+    return operationState;
   }
 
   @SuppressWarnings("unchecked")
-  private <C extends Cache, A extends ClusterManagementOperation<V>, V extends OperationResult> BiFunction<C, A, V> getPerformer(
+  private <A extends ClusterManagementOperation<V>, V extends OperationResult> OperationPerformer<A, V> getPerformer(
       A op) {
-    Class<? extends ClusterManagementOperation> aClass = op.getClass();
-
-    if (op instanceof TaggedWithOperator
-        && ClusterManagementOperation.class.isAssignableFrom(aClass.getSuperclass())) {
-      aClass = (Class<? extends ClusterManagementOperation>) aClass.getSuperclass();
-    }
-
-    return performers.get(aClass);
+    return performers.get(op.getClass());
   }
 
   /**
    * looks up the future for an async operation by id
    */
-  public <A extends ClusterManagementOperation<V>, V extends OperationResult> OperationInstance<A, V> getOperationInstance(
+  public <A extends ClusterManagementOperation<V>, V extends OperationResult> OperationState<A, V> get(
       String opId) {
-    return historyManager.getOperationInstance(opId);
+    return historyManager.get(opId);
   }
 
-  public <A extends ClusterManagementOperation<V>, V extends OperationResult> List<OperationInstance<A, V>> listOperationInstances(
+  public <A extends ClusterManagementOperation<V>, V extends OperationResult> List<OperationState<A, V>> list(
       A opType) {
-    return historyManager.listOperationInstances(opType);
+    return historyManager.list(opType);
   }
 
   @Override
-  public void close() {
-    if (executor instanceof ExecutorService) {
-      ((ExecutorService) executor).shutdownNow();
-    }
-  }
+  public void close() {}
 }

@@ -52,17 +52,17 @@ import org.apache.geode.DataSerializer;
 import org.apache.geode.cache.RegionService;
 import org.apache.geode.cache.client.internal.ProxyCache;
 import org.apache.geode.cache.client.internal.UserAttributes;
+import org.apache.geode.cache.client.proxy.SniProxySocketFactory;
 import org.apache.geode.cache.server.CacheServer;
 import org.apache.geode.distributed.DistributedSystem;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.distributed.internal.membership.api.MemberIdentifier;
 import org.apache.geode.internal.HeapDataOutputStream;
 import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.internal.cache.tier.sockets.ClientProxyMembershipID;
 import org.apache.geode.internal.cache.xmlcache.CacheXmlGenerator;
 import org.apache.geode.internal.cache.xmlcache.ClientCacheCreation;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.VersionedDataInputStream;
 import org.apache.geode.pdx.ReflectionBasedAutoSerializer;
 import org.apache.geode.test.junit.categories.ClientServerTest;
@@ -127,7 +127,7 @@ public class ClientCacheFactoryJUnitTest {
   }
 
   @Test
-  public void test001FindDefaultFromXML() throws Exception {
+  public void test001FindDefaultPoolFromXML() throws Exception {
     File cacheXmlFile = temporaryFolder.newFile("ClientCacheFactoryJUnitTest.xml");
     URL url = ClientCacheFactoryJUnitTest.class
         .getResource("ClientCacheFactoryJUnitTest_single_pool.xml");
@@ -149,6 +149,13 @@ public class ClientCacheFactoryJUnitTest {
         .isEqualTo(PoolFactory.DEFAULT_SOCKET_CONNECT_TIMEOUT);
     assertThat(defPool.getServers()).isEqualTo(
         Collections.singletonList(new InetSocketAddress("localhost", CacheServer.DEFAULT_PORT)));
+
+    // verify that the SocketCreator settings were correctly picked up from the xml file
+    SocketFactory factory = defPool.getSocketFactory();
+    assertThat(factory).isInstanceOf(SniProxySocketFactory.class);
+    SniProxySocketFactory sniProxySocketFactory = (SniProxySocketFactory) factory;
+    assertThat(sniProxySocketFactory.getPort()).isEqualTo(40404);
+    assertThat(sniProxySocketFactory.getHostname()).isEqualTo("localhost");
   }
 
   /**
@@ -345,43 +352,42 @@ public class ClientCacheFactoryJUnitTest {
     clientCache = new ClientCacheFactory().create();
     InternalDistributedMember memberID =
         (InternalDistributedMember) clientCache.getDistributedSystem().getDistributedMember();
-    MemberIdentifier gmsID = memberID;
-    memberID.setVersionObjectForTest(Version.GFE_82);
-    assertThat(memberID.getVersionObject()).isEqualTo(Version.GFE_82);
+    memberID.setVersionForTest(KnownVersion.GFE_81);
+    assertThat(memberID.getVersion()).isEqualTo(KnownVersion.GFE_81);
 
     ClientProxyMembershipID clientID = ClientProxyMembershipID.getClientId(memberID);
-    HeapDataOutputStream out = new HeapDataOutputStream(Version.GFE_82);
+    HeapDataOutputStream out = new HeapDataOutputStream(KnownVersion.GFE_81);
     DataSerializer.writeObject(clientID, out);
 
     DataInputStream in =
         new VersionedDataInputStream(new ByteArrayInputStream(out.toByteArray()),
-            Version.CURRENT);
+            KnownVersion.CURRENT);
     ClientProxyMembershipID newID = DataSerializer.readObject(in);
     InternalDistributedMember newMemberID =
         (InternalDistributedMember) newID.getDistributedMember();
-    assertThat(newMemberID.getVersionObject()).isEqualTo(Version.GFE_82);
-    assertThat(newID.getClientVersion()).isEqualTo(Version.GFE_82);
+    assertThat(newMemberID.getVersion()).isEqualTo(KnownVersion.GFE_81);
+    assertThat(newID.getClientVersion()).isEqualTo(KnownVersion.GFE_81);
 
     assertThat(newMemberID.getUuidLeastSignificantBits()).isEqualTo(0);
     assertThat(newMemberID.getUuidMostSignificantBits()).isEqualTo(0);
 
-    gmsID.setUUID(new UUID(1234L, 5678L));
-    memberID.setVersionObjectForTest(Version.CURRENT);
+    memberID.setUUID(new UUID(1234L, 5678L));
+    memberID.setVersionForTest(KnownVersion.CURRENT);
     clientID = ClientProxyMembershipID.getClientId(memberID);
-    out = new HeapDataOutputStream(Version.CURRENT);
+    out = new HeapDataOutputStream(KnownVersion.CURRENT);
     DataSerializer.writeObject(clientID, out);
 
     in = new VersionedDataInputStream(new ByteArrayInputStream(out.toByteArray()),
-        Version.CURRENT);
+        KnownVersion.CURRENT);
     newID = DataSerializer.readObject(in);
     newMemberID = (InternalDistributedMember) newID.getDistributedMember();
-    assertThat(newMemberID.getVersionObject()).isEqualTo(Version.CURRENT);
-    assertThat(newID.getClientVersion()).isEqualTo(Version.CURRENT);
+    assertThat(newMemberID.getVersion()).isEqualTo(KnownVersion.CURRENT);
+    assertThat(newID.getClientVersion()).isEqualTo(KnownVersion.CURRENT);
 
     assertThat(newMemberID.getUuidLeastSignificantBits())
-        .isEqualTo(gmsID.getUuidLeastSignificantBits());
+        .isEqualTo(memberID.getUuidLeastSignificantBits());
     assertThat(newMemberID.getUuidMostSignificantBits())
-        .isEqualTo(gmsID.getUuidMostSignificantBits());
+        .isEqualTo(memberID.getUuidMostSignificantBits());
   }
 
   @Test

@@ -39,9 +39,9 @@ import org.apache.geode.cache.execute.FunctionService;
 import org.apache.geode.cache.execute.ResultCollector;
 import org.apache.geode.cache.query.RegionNotFoundException;
 import org.apache.geode.distributed.DistributedMember;
-import org.apache.geode.internal.ClassPathLoader;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.execute.InternalFunction;
+import org.apache.geode.internal.classloader.ClassPathLoader;
 import org.apache.geode.internal.security.SecurityService;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.management.internal.functions.CliFunctionResult;
@@ -55,16 +55,17 @@ import org.apache.geode.security.ResourcePermission;
 public class UserFunctionExecution implements InternalFunction<Object[]> {
   private static final long serialVersionUID = 1L;
   private static final Logger logger = LogService.getLogger();
-  public static final String ID = UserFunctionExecution.class.getName();
+  protected static final String ID =
+      "org.apache.geode.management.internal.cli.functions.UserFunctionExecution";
+
+  @Override
+  public String getId() {
+    return ID;
+  }
 
   @Override
   public boolean isHA() {
     return false;
-  }
-
-  @Override
-  public String getId() {
-    return UserFunctionExecution.ID;
   }
 
   @Override
@@ -103,22 +104,26 @@ public class UserFunctionExecution implements InternalFunction<Object[]> {
     }
   }
 
-  ResultCollector parseResultCollector(String resultCollectorName)
+  @SuppressWarnings("unchecked")
+  ResultCollector<Object, List<Object>> parseResultCollector(String resultCollectorName)
       throws ClassNotFoundException, IllegalAccessException, InstantiationException {
     if (resultCollectorName != null && resultCollectorName.length() > 0) {
-      return (ResultCollector) ClassPathLoader.getLatest().forName(resultCollectorName)
+      return (ResultCollector<Object, List<Object>>) ClassPathLoader.getLatest()
+          .forName(resultCollectorName)
           .newInstance();
     } else {
       return null;
     }
   }
 
-  Execution buildExecution(Cache cache, String onRegion) throws RegionNotFoundException {
-    Execution execution;
+  @SuppressWarnings("unchecked")
+  Execution<Object, Object, List<Object>> buildExecution(Cache cache, String onRegion)
+      throws RegionNotFoundException {
+    Execution<Object, Object, List<Object>> execution;
     DistributedMember member = cache.getDistributedSystem().getDistributedMember();
 
     if (onRegion != null && onRegion.length() > 0) {
-      Region region = cache.getRegion(onRegion);
+      Region<?, ?> region = cache.getRegion(onRegion);
 
       if (region == null) {
         throw new RegionNotFoundException(onRegion);
@@ -175,13 +180,14 @@ public class UserFunctionExecution implements InternalFunction<Object[]> {
       // Parse Arguments
       Set<String> filters = parseFilters(filterString);
       String[] functionArgs = parseArguments(argumentsString);
-      ResultCollector resultCollectorInstance = parseResultCollector(resultCollectorName);
+      ResultCollector<Object, List<Object>> resultCollectorInstance =
+          parseResultCollector(resultCollectorName);
 
       // Security check
       function.getRequiredPermissions(onRegion, functionArgs).forEach(securityService::authorize);
 
       // Build & Configure Execution Context
-      Execution execution = buildExecution(cache, onRegion);
+      Execution<Object, Object, List<Object>> execution = buildExecution(cache, onRegion);
       if (execution == null) {
         context.getResultSender()
             .lastResult(new CliFunctionResult(context.getMemberName(), ERROR,
@@ -205,13 +211,13 @@ public class UserFunctionExecution implements InternalFunction<Object[]> {
       }
 
       // Execute Function and gather results
-      List results = null;
+      List<Object> results = null;
       boolean functionSuccess = true;
       List<String> resultMessage = new ArrayList<>();
 
-      ResultCollector rc = execution.execute(function.getId());
+      ResultCollector<Object, List<Object>> rc = execution.execute(function.getId());
       if (function.hasResult()) {
-        results = (List) rc.getResult();
+        results = rc.getResult();
       }
 
       if (results != null) {

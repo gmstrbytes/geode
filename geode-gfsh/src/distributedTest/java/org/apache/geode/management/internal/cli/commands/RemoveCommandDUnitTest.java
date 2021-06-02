@@ -14,6 +14,7 @@
  */
 package org.apache.geode.management.internal.cli.commands;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.management.internal.cli.commands.RemoveCommand.REGION_NOT_FOUND;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -41,13 +42,12 @@ public class RemoveCommandDUnitTest {
   @Rule
   public GfshCommandRule gfsh = new GfshCommandRule();
 
-  private MemberVM locator;
   private MemberVM server1;
   private MemberVM server2;
 
   @Before
   public void setup() throws Exception {
-    locator = clusterStartupRule.startLocatorVM(0);
+    MemberVM locator = clusterStartupRule.startLocatorVM(0);
     server1 = clusterStartupRule.startServerVM(1, locator.getPort());
     server2 = clusterStartupRule.startServerVM(2, locator.getPort());
 
@@ -57,8 +57,8 @@ public class RemoveCommandDUnitTest {
     gfsh.executeAndAssertThat(
         "create region --name=" + PARTITIONED_REGION_NAME + " --type=PARTITION").statusIsSuccess();
 
-    locator.waitUntilRegionIsReadyOnExactlyThisManyServers("/" + REPLICATE_REGION_NAME, 2);
-    locator.waitUntilRegionIsReadyOnExactlyThisManyServers("/" + PARTITIONED_REGION_NAME, 2);
+    locator.waitUntilRegionIsReadyOnExactlyThisManyServers(SEPARATOR + REPLICATE_REGION_NAME, 2);
+    locator.waitUntilRegionIsReadyOnExactlyThisManyServers(SEPARATOR + PARTITIONED_REGION_NAME, 2);
 
     VMProvider.invokeInEveryMember(RemoveCommandDUnitTest::populateTestRegions, server1, server2);
   }
@@ -81,7 +81,7 @@ public class RemoveCommandDUnitTest {
     String command = "remove --all --region=NotAValidRegion";
 
     gfsh.executeAndAssertThat(command).statusIsError()
-        .containsOutput(String.format(REGION_NOT_FOUND, "/NotAValidRegion"));
+        .containsOutput(String.format(REGION_NOT_FOUND, SEPARATOR + "NotAValidRegion"));
   }
 
   @Test
@@ -92,6 +92,7 @@ public class RemoveCommandDUnitTest {
   }
 
   @Test
+  @SuppressWarnings("deprecation")
   public void removeKeyFromReplicateRegion() {
     String command = "remove --key=key1 --region=" + REPLICATE_REGION_NAME;
 
@@ -106,6 +107,7 @@ public class RemoveCommandDUnitTest {
   }
 
   @Test
+  @SuppressWarnings("deprecation")
   public void removeKeyFromPartitionedRegion() {
     String command = "remove --key=key1 --region=" + PARTITIONED_REGION_NAME;
 
@@ -160,21 +162,21 @@ public class RemoveCommandDUnitTest {
   }
 
   private static void verifyAllKeysAreRemoved(String regionName) {
-    Region region = getRegion(regionName);
+    Region<?, ?> region = getRegion(regionName);
     assertThat(region.size()).isEqualTo(0);
   }
 
   private static void verifyKeyIsRemoved(String regionName, String key) {
-    Region region = getRegion(regionName);
+    Region<?, ?> region = getRegion(regionName);
     assertThat(region.get(key)).isNull();
   }
 
   private static void verifyKeyIsPresent(String regionName, String key) {
-    Region region = getRegion(regionName);
+    Region<?, ?> region = getRegion(regionName);
     assertThat(region.get(key)).isNotNull();
   }
 
-  private static Region getRegion(String regionName) {
+  private static Region<?, ?> getRegion(String regionName) {
     return CacheFactory.getAnyInstance().getRegion(regionName);
   }
 }

@@ -63,6 +63,8 @@ import static org.apache.geode.distributed.ConfigurationProperties.SERVER_SSL_RE
 import static org.apache.geode.distributed.ConfigurationProperties.SERVER_SSL_TRUSTSTORE;
 import static org.apache.geode.distributed.ConfigurationProperties.SERVER_SSL_TRUSTSTORE_PASSWORD;
 import static org.apache.geode.distributed.ConfigurationProperties.SSL_ENABLED_COMPONENTS;
+import static org.apache.geode.internal.security.SecurableCommunicationChannel.ALL;
+import static org.apache.geode.internal.security.SecurableCommunicationChannel.CLUSTER;
 
 import java.io.File;
 import java.io.IOException;
@@ -71,6 +73,7 @@ import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.URL;
 import java.net.UnknownHostException;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -89,7 +92,7 @@ import org.apache.geode.InternalGemFireException;
 import org.apache.geode.distributed.DistributedSystem;
 import org.apache.geode.internal.ConfigSource;
 import org.apache.geode.internal.inet.LocalHostUtil;
-import org.apache.geode.internal.net.SocketCreator;
+import org.apache.geode.internal.logging.LogWriterImpl;
 import org.apache.geode.internal.process.ProcessLauncherContext;
 import org.apache.geode.internal.security.SecurableCommunicationChannel;
 import org.apache.geode.security.AuthTokenEnabledComponents;
@@ -468,7 +471,7 @@ public class DistributionConfigImpl extends AbstractDistributionConfig implement
   private boolean startDevRestApi = DEFAULT_START_DEV_REST_API;
 
   /**
-   * port on which {@link GemFireMemcachedServer} server is started
+   * port on which GemFireMemcachedServer server is started
    */
   private int memcachedPort;
 
@@ -488,16 +491,19 @@ public class DistributionConfigImpl extends AbstractDistributionConfig implement
   private boolean distributedTransactions = DEFAULT_DISTRIBUTED_TRANSACTIONS;
 
   /**
-   * port on which {@link GeodeRedisServer} is started
-   */
-  private int redisPort = DEFAULT_REDIS_PORT;
-
-  /**
    * Bind address for GeodeRedisServer
    */
   private String redisBindAddress = DEFAULT_REDIS_BIND_ADDRESS;
 
+  private Boolean redisEnabled = DEFAULT_REDIS_ENABLED;
+
   private String redisPassword = DEFAULT_REDIS_PASSWORD;
+
+  /**
+   * port on which GeodeRedisServer is started
+   */
+  private int redisPort = DEFAULT_REDIS_PORT;
+
 
   private boolean jmxManager =
       Boolean.getBoolean(InternalLocator.FORCE_LOCATOR_DM_TYPE) || DEFAULT_JMX_MANAGER;
@@ -789,6 +795,7 @@ public class DistributionConfigImpl extends AbstractDistributionConfig implement
     redisPort = other.getRedisPort();
     redisBindAddress = other.getRedisBindAddress();
     redisPassword = other.getRedisPassword();
+    redisEnabled = other.getRedisEnabled();
     userCommandPackages = other.getUserCommandPackages();
 
     // following added for 8.0
@@ -1025,6 +1032,20 @@ public class DistributionConfigImpl extends AbstractDistributionConfig implement
     modifiable = false;
   }
 
+  /*
+   * When ssl-enabled-components specified CLUSTER or ALL, the slower receiver is not allowed.
+   * In legacy code, if cluster-ssl-enabled is true, the slower receiver is not allowed.
+   */
+  void validateSlowReceiversIncompatibleWithSSL(
+      SecurableCommunicationChannel[] sslEnabledComponents) {
+    if (getAsyncDistributionTimeout() > 0
+        && (getClusterSSLEnabled() || Arrays.stream(sslEnabledComponents)
+            .anyMatch(component -> component == ALL || component == CLUSTER))) {
+      throw new IllegalArgumentException(
+          "async-distribution-timeout greater than 0 is not allowed with cluster TLS/SSL.");
+    }
+  }
+
   private void validateSSLEnabledComponentsConfiguration() {
     Object value = null;
     try {
@@ -1044,6 +1065,9 @@ public class DistributionConfigImpl extends AbstractDistributionConfig implement
       }
     }
     SecurableCommunicationChannel[] sslEnabledComponents = (SecurableCommunicationChannel[]) value;
+
+    validateSlowReceiversIncompatibleWithSSL(sslEnabledComponents);
+
     for (SecurableCommunicationChannel securableCommunicationChannel : sslEnabledComponents) {
       if (!isAliasCorrectlyConfiguredForComponents(securableCommunicationChannel)) {
         throw new IllegalArgumentException(
@@ -1067,7 +1091,7 @@ public class DistributionConfigImpl extends AbstractDistributionConfig implement
         if (StringUtils.isEmpty(getSSLDefaultAlias())) {
           boolean correctAlias = true;
           correctAlias &=
-              isAliasCorrectlyConfiguredForComponents(SecurableCommunicationChannel.CLUSTER);
+              isAliasCorrectlyConfiguredForComponents(CLUSTER);
           correctAlias &=
               isAliasCorrectlyConfiguredForComponents(SecurableCommunicationChannel.GATEWAY);
           correctAlias &=
@@ -1123,6 +1147,9 @@ public class DistributionConfigImpl extends AbstractDistributionConfig implement
   private void validateConfigurationProperties(final Map<Object, Object> props) {
     for (Object o : props.keySet()) {
       String propertyName = (String) o;
+      if (isInternalAttribute(propertyName)) {
+        continue;
+      }
       Object value = null;
       try {
         Method method = getters.get(propertyName);
@@ -1527,7 +1554,7 @@ public class DistributionConfigImpl extends AbstractDistributionConfig implement
         Map.Entry me = (Map.Entry) it.next();
         String propName = (String) me.getKey();
         props.put(propName, me.getValue());
-        if (specialPropName(propName)) {
+        if (isSpecialPropertyName(propName)) {
           continue;
         }
         String propVal = (String) me.getValue();
@@ -1540,12 +1567,32 @@ public class DistributionConfigImpl extends AbstractDistributionConfig implement
     }
   }
 
-  private static boolean specialPropName(String propName) {
-    return propName.equalsIgnoreCase(CLUSTER_SSL_ENABLED)
-        || propName.equals(SECURITY_PEER_AUTH_INIT) || propName.equals(SECURITY_PEER_AUTHENTICATOR)
-        || propName.equals(LOG_WRITER_NAME) || propName.equals(DS_CONFIG_NAME)
-        || propName.equals(SECURITY_LOG_WRITER_NAME) || propName.equals(LOG_OUTPUTSTREAM_NAME)
-        || propName.equals(SECURITY_LOG_OUTPUTSTREAM_NAME);
+  /**
+   * a collection of configuration properties that are used to skip some security properties
+   * during initialization due to dependency issues
+   */
+  private Set<String> specialPropertyNames = new HashSet<>(Arrays.asList(CLUSTER_SSL_ENABLED,
+      SECURITY_PEER_AUTH_INIT, SECURITY_PEER_AUTHENTICATOR,
+      LOG_WRITER_NAME, DS_CONFIG_NAME,
+      SECURITY_LOG_WRITER_NAME, LOG_OUTPUTSTREAM_NAME,
+      SECURITY_LOG_OUTPUTSTREAM_NAME));
+
+  boolean isSpecialPropertyName(String propName) {
+    return specialPropertyNames.contains(propName);
+  }
+
+  /**
+   * returns true if the given name is annotated as an InternalConfigAttribute.
+   * These attributes are used to hold internal, runtime objects such as
+   * an auto-reconnect quorum checker and are not settable as distributed system
+   * properties.
+   */
+  boolean isInternalAttribute(String propName) {
+    return internalAttributeNames.contains(propName);
+  }
+
+  Set<String> getInternalAttributeNames() {
+    return Collections.unmodifiableSet(internalAttributeNames);
   }
 
   @Override
@@ -1632,7 +1679,7 @@ public class DistributionConfigImpl extends AbstractDistributionConfig implement
       String propName = (String) me.getKey();
       // if ssl-enabled is set to true before the mcast port is set to 0, then it will error.
       // security should not be enabled before the mcast port is set to 0.
-      if (specialPropName(propName)) {
+      if (isSpecialPropertyName(propName)) {
         continue;
       }
       Object propVal = me.getValue();
@@ -1777,7 +1824,7 @@ public class DistributionConfigImpl extends AbstractDistributionConfig implement
         return bindAddress + "[" + startLocatorPort + "]";
       }
       try {
-        return SocketCreator.getHostName(LocalHostUtil.getLocalHost()) + "[" + startLocatorPort
+        return LocalHostUtil.getLocalHostName() + "[" + startLocatorPort
             + "]";
       } catch (UnknownHostException ignore) {
         // punt and use this.startLocator instead
@@ -3207,7 +3254,7 @@ public class DistributionConfigImpl extends AbstractDistributionConfig implement
         .append(httpServicePort, that.httpServicePort).append(startDevRestApi, that.startDevRestApi)
         .append(memcachedPort, that.memcachedPort)
         .append(distributedTransactions, that.distributedTransactions)
-        .append(redisPort, that.redisPort).append(jmxManager, that.jmxManager)
+        .append(jmxManager, that.jmxManager)
         .append(jmxManagerStart, that.jmxManagerStart).append(jmxManagerPort, that.jmxManagerPort)
         .append(jmxManagerHttpPort, that.jmxManagerHttpPort)
         .append(jmxManagerUpdateRate, that.jmxManagerUpdateRate)
@@ -3257,7 +3304,10 @@ public class DistributionConfigImpl extends AbstractDistributionConfig implement
         .append(httpServiceBindAddress, that.httpServiceBindAddress)
         .append(memcachedProtocol, that.memcachedProtocol)
         .append(memcachedBindAddress, that.memcachedBindAddress)
-        .append(redisBindAddress, that.redisBindAddress).append(redisPassword, that.redisPassword)
+        .append(redisBindAddress, that.redisBindAddress)
+        .append(redisPassword, that.redisPassword)
+        .append(redisPort, that.redisPort)
+        .append(redisEnabled, that.redisEnabled)
         .append(jmxManagerBindAddress, that.jmxManagerBindAddress)
         .append(jmxManagerHostnameForClients, that.jmxManagerHostnameForClients)
         .append(jmxManagerPasswordFile, that.jmxManagerPasswordFile)
@@ -3352,7 +3402,8 @@ public class DistributionConfigImpl extends AbstractDistributionConfig implement
         .append(loadSharedConfigurationFromDir).append(clusterConfigDir).append(httpServicePort)
         .append(httpServiceBindAddress).append(startDevRestApi).append(memcachedPort)
         .append(memcachedProtocol).append(memcachedBindAddress).append(distributedTransactions)
-        .append(redisPort).append(redisBindAddress).append(redisPassword).append(jmxManager)
+        .append(redisPort).append(redisBindAddress).append(redisPassword)
+        .append(redisEnabled).append(jmxManager)
         .append(jmxManagerStart).append(jmxManagerPort).append(jmxManagerBindAddress)
         .append(jmxManagerHostnameForClients).append(jmxManagerPasswordFile)
         .append(jmxManagerAccessFile).append(jmxManagerHttpPort).append(jmxManagerUpdateRate)
@@ -3480,6 +3531,16 @@ public class DistributionConfigImpl extends AbstractDistributionConfig implement
   @Override
   public void setRedisPassword(String password) {
     redisPassword = password;
+  }
+
+  @Override
+  public boolean getRedisEnabled() {
+    return redisEnabled;
+  }
+
+  @Override
+  public void setRedisEnabled(boolean redisServiceEnabled) {
+    redisEnabled = redisServiceEnabled;
   }
 
   @Override

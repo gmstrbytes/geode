@@ -30,14 +30,20 @@ import org.apache.geode.management.internal.i18n.CliStrings;
  * Function to create index in a member, based on different arguments passed to it
  *
  */
-public class CreateIndexFunction implements InternalFunction {
-
-
+public class CreateIndexFunction implements InternalFunction<RegionConfig.Index> {
   private static final long serialVersionUID = 1L;
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.CreateIndexFunction";
 
   @Override
-  public void execute(FunctionContext context) {
-    final RegionConfig.Index indexInfo = (RegionConfig.Index) context.getArguments();
+  public String getId() {
+    return ID;
+  }
+
+  @Override
+  @SuppressWarnings("deprecation")
+  public void execute(FunctionContext<RegionConfig.Index> context) {
+    final RegionConfig.Index indexInfo = context.getArguments();
     String memberId = null;
     try {
       Cache cache = context.getCache();
@@ -76,10 +82,5 @@ public class CreateIndexFunction implements InternalFunction {
           e.getClass().getName(), e.getMessage());
       context.getResultSender().lastResult(new CliFunctionResult(memberId, e, exceptionMessage));
     }
-  }
-
-  @Override
-  public String getId() {
-    return CreateIndexFunction.class.getName();
   }
 }

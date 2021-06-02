@@ -45,7 +45,6 @@ import org.apache.geode.management.internal.cli.domain.DiskStoreDetails;
 /**
  * The ListDiskStoreFunctionJUnitTest test suite class tests the contract and functionality of the
  * ListDiskStoresFunction.
- * </p>
  *
  * @see org.apache.geode.internal.cache.DiskStoreImpl
  * @see org.apache.geode.management.internal.cli.domain.DiskStoreDetails
@@ -55,9 +54,10 @@ import org.apache.geode.management.internal.cli.domain.DiskStoreDetails;
  */
 public class ListDiskStoresFunctionJUnitTest {
   private InternalCache mockCache;
-  private FunctionContext mockFunctionContext;
+  private FunctionContext<Void> mockFunctionContext;
 
   @Before
+  @SuppressWarnings("unchecked")
   public void setup() {
     mockCache = mock(InternalCache.class, "Cache");
     mockFunctionContext = mock(FunctionContext.class, "FunctionContext");
@@ -183,7 +183,7 @@ public class ListDiskStoresFunctionJUnitTest {
         .hasMessage("Mock RuntimeException");
   }
 
-  private static class TestResultSender implements ResultSender {
+  private static class TestResultSender implements ResultSender<Object> {
     private Throwable t;
     private final List<Object> results = new LinkedList<>();
 

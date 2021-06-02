@@ -28,15 +28,13 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.Assert.assertNotNull;
 
-import java.util.Arrays;
+import java.time.Duration;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 
 import org.apache.logging.log4j.Logger;
-import org.awaitility.Duration;
 
 import org.apache.geode.cache.CacheException;
 import org.apache.geode.cache.InterestResultPolicy;
@@ -62,18 +60,20 @@ import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.PoolFactoryImpl;
 import org.apache.geode.internal.cache.ha.HARegionQueue;
 import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.test.awaitility.GeodeAwaitility;
 import org.apache.geode.test.dunit.IgnoredException;
 import org.apache.geode.test.dunit.NetworkUtils;
 import org.apache.geode.test.dunit.SerializableRunnableIF;
 import org.apache.geode.test.dunit.VM;
+import org.apache.geode.test.dunit.WaitCriterion;
 import org.apache.geode.test.dunit.internal.JUnit4DistributedTestCase;
 
 public class DurableClientTestBase extends JUnit4DistributedTestCase {
 
   protected static final Logger logger = LogService.getLogger();
-  private static final Duration VERY_LONG_DURABLE_CLIENT_TIMEOUT = new Duration(10, MINUTES);
+  private static final Duration VERY_LONG_DURABLE_CLIENT_TIMEOUT = Duration.ofMinutes(10);
   static final int VERY_LONG_DURABLE_TIMEOUT_SECONDS =
-      (int) VERY_LONG_DURABLE_CLIENT_TIMEOUT.getValueInMS() / 1000;
+      (int) VERY_LONG_DURABLE_CLIENT_TIMEOUT.getSeconds();
   static final int HEAVY_TEST_LOAD_DELAY_SUPPORT_MULTIPLIER = 10;
 
   VM server1VM;
@@ -82,8 +82,8 @@ public class DurableClientTestBase extends JUnit4DistributedTestCase {
   VM publisherClientVM;
   protected String regionName;
   int server1Port;
+  int server2Port;
   String durableClientId;
-
 
   @Override
   public final void postSetUp() throws Exception {
@@ -174,6 +174,32 @@ public class DurableClientTestBase extends JUnit4DistributedTestCase {
     verifyDurableClientPresence(durableClientTimeout, durableClientId, serverVM, 0);
   }
 
+  void waitForDurableClientPresence(String durableClientId, VM serverVM, final int count) {
+    serverVM.invoke(() -> {
+      if (count > 0) {
+
+        WaitCriterion ev = new WaitCriterion() {
+          @Override
+          public boolean done() {
+            checkNumberOfClientProxies(count);
+            CacheClientProxy proxy = getClientProxy();
+
+            if (proxy != null && durableClientId.equals(proxy.getDurableId())) {
+              return true;
+            }
+            return false;
+          }
+
+          @Override
+          public String description() {
+            return null;
+          }
+        };
+        GeodeAwaitility.await().untilAsserted(ev);
+      }
+    });
+  }
+
   void verifyDurableClientPresence(int durableClientTimeout, String durableClientId,
       VM serverVM, final int count) {
     serverVM.invoke(() -> {
@@ -199,7 +225,8 @@ public class DurableClientTestBase extends JUnit4DistributedTestCase {
 
   public void disconnectDurableClient(boolean keepAlive) {
     printClientProxyState("Before");
-    this.durableClientVM.invoke(() -> CacheServerTestUtil.closeCache(keepAlive));
+    this.durableClientVM.invoke("close durable client cache",
+        () -> CacheServerTestUtil.closeCache(keepAlive));
     await()
         .until(CacheServerTestUtil::getCache, nullValue());
     printClientProxyState("after");
@@ -240,7 +267,7 @@ public class DurableClientTestBase extends JUnit4DistributedTestCase {
     if (value.getClass().isArray()) {
 
       sb.append("{");
-      sb.append(Arrays.toString((Object[]) value));
+      sb.append(java.util.Arrays.toString((Object[]) value));
       sb.append("}");
     } else {
       sb.append(value);
@@ -373,7 +400,7 @@ public class DurableClientTestBase extends JUnit4DistributedTestCase {
     }
   }
 
-  private CqQuery createCq(String cqName, String cqQuery, boolean durable)
+  CqQuery createCq(String cqName, String cqQuery, boolean durable)
       throws CqException, CqExistsException {
     QueryService qs = CacheServerTestUtil.getCache().getQueryService();
     CqAttributesFactory cqf = new CqAttributesFactory();
@@ -417,7 +444,7 @@ public class DurableClientTestBase extends JUnit4DistributedTestCase {
 
     // Get the CacheClientProxy or not (if proxy set is empty)
     CacheClientProxy proxy = null;
-    Iterator<CacheClientProxy> i = notifier.getClientProxies().iterator();
+    java.util.Iterator<CacheClientProxy> i = notifier.getClientProxies().iterator();
     if (i.hasNext()) {
       proxy = i.next();
     }
@@ -429,7 +456,7 @@ public class DurableClientTestBase extends JUnit4DistributedTestCase {
     CacheClientNotifier notifier = getBridgeServer().getAcceptor().getCacheClientNotifier();
 
     // Get the CacheClientProxy or not (if proxy set is empty)
-    Iterator<CacheClientProxy> i = notifier.getClientProxies().iterator();
+    java.util.Iterator<CacheClientProxy> i = notifier.getClientProxies().iterator();
     StringBuilder sb = new StringBuilder();
     while (i.hasNext()) {
       sb.append(" [");
@@ -461,7 +488,6 @@ public class DurableClientTestBase extends JUnit4DistributedTestCase {
     assertThat(bridgeServer).isNotNull();
     return bridgeServer;
   }
-
 
   Pool getClientPool(String host, int server1Port, int server2Port,
       boolean establishCallbackConnection, int redundancyLevel) {
@@ -647,7 +673,7 @@ public class DurableClientTestBase extends JUnit4DistributedTestCase {
           ClientProxyMembershipID proxyId = clientProxy.getProxyID();
           CqService cqService = ((InternalCache) CacheServerTestUtil.getCache()).getCqService();
           cqService.start();
-          List<String> cqNames = cqService.getAllDurableClientCqs(proxyId);
+          java.util.List<String> cqNames = cqService.getAllDurableClientCqs(proxyId);
           assertThat(expectedNumber).isEqualTo(cqNames.size());
         } catch (Exception e) {
           throw new CacheException(e) {};
@@ -665,14 +691,19 @@ public class DurableClientTestBase extends JUnit4DistributedTestCase {
   void checkCqListenerEvents(VM vm, final String cqName, final int numEvents,
       final int secondsToWait) {
     vm.invoke(() -> {
-      QueryService qs = CacheServerTestUtil.getCache().getQueryService();
-      CqQuery cq = qs.getCq(cqName);
-      // Get the listener and wait for the appropriate number of events
-      CacheServerTestUtil.ControlCqListener listener =
-          (CacheServerTestUtil.ControlCqListener) cq.getCqAttributes().getCqListener();
-      listener.waitWhileNotEnoughEvents(secondsToWait * 1000, numEvents);
-      assertThat(numEvents).isEqualTo(listener.events.size());
+      checkCqListenerEvents(cqName, numEvents, secondsToWait);
     });
+  }
+
+  void checkCqListenerEvents(final String cqName, final int numEvents,
+      final int secondsToWait) {
+    QueryService qs = CacheServerTestUtil.getCache().getQueryService();
+    CqQuery cq = qs.getCq(cqName);
+    // Get the listener and wait for the appropriate number of events
+    CacheServerTestUtil.ControlCqListener listener =
+        (CacheServerTestUtil.ControlCqListener) cq.getCqAttributes().getCqListener();
+    listener.waitWhileNotEnoughEvents(secondsToWait * 1000, numEvents);
+    assertThat(numEvents).isEqualTo(listener.events.size());
   }
 
   void checkListenerEvents(int numberOfEntries, final int sleepMinutes, final int eventType,

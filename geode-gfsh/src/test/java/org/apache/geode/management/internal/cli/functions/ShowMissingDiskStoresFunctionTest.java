@@ -18,6 +18,7 @@ import static java.net.InetAddress.getLocalHost;
 import static java.util.Arrays.asList;
 import static java.util.Collections.addAll;
 import static java.util.UUID.randomUUID;
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.Mockito.mock;
@@ -55,11 +56,11 @@ import org.apache.geode.internal.cache.persistence.PersistentMemberPattern;
 public class ShowMissingDiskStoresFunctionTest {
 
   private InternalCache cache;
-  private FunctionContext functionContext;
+  private FunctionContext<Void> functionContext;
   private PersistentMemberManager persistentMemberManager;
   private PartitionedRegion region1;
   private PartitionedRegion region2;
-  private CollectingResultSender resultSender;
+  private CollectingResultSender<Object> resultSender;
 
   private ShowMissingDiskStoresFunction showMissingDiskStoresFunction;
 
@@ -67,12 +68,13 @@ public class ShowMissingDiskStoresFunctionTest {
   public MockitoRule mockitoRule = MockitoJUnit.rule().strictness(Strictness.STRICT_STUBS);
 
   @Before
+  @SuppressWarnings("unchecked")
   public void setUp() throws Exception {
     cache = mock(InternalCache.class);
     persistentMemberManager = mock(PersistentMemberManager.class);
     region1 = mock(PartitionedRegion.class);
     region2 = mock(PartitionedRegion.class);
-    resultSender = new CollectingResultSender();
+    resultSender = new CollectingResultSender<>();
 
     functionContext = new FunctionContextImpl(cache, "testFunction", null, resultSender);
     showMissingDiskStoresFunction = new ShowMissingDiskStoresFunction();
@@ -151,7 +153,7 @@ public class ShowMissingDiskStoresFunctionTest {
     when(cache.getMyId()).thenReturn(member);
     when(cache.getPartitionedRegions()).thenReturn(asSet(region1, region2));
     when(cache.getPersistentMemberManager()).thenReturn(persistentMemberManager);
-    when(region1.getFullPath()).thenReturn("/pr1");
+    when(region1.getFullPath()).thenReturn(SEPARATOR + "pr1");
     when(region1.getMissingColocatedChildren()).thenReturn(asList("child1", "child2"));
 
     showMissingDiskStoresFunction.execute(functionContext);
@@ -165,8 +167,8 @@ public class ShowMissingDiskStoresFunctionTest {
         .as("results element [0]: missingColocatedRegions")
         .hasSize(2)
         .containsExactlyInAnyOrder(
-            new ColocatedRegionDetails("host1", "name1", "/pr1", "child1"),
-            new ColocatedRegionDetails("host1", "name1", "/pr1", "child2"));
+            new ColocatedRegionDetails("host1", "name1", SEPARATOR + "pr1", "child1"),
+            new ColocatedRegionDetails("host1", "name1", SEPARATOR + "pr1", "child2"));
   }
 
   @Test
@@ -182,7 +184,7 @@ public class ShowMissingDiskStoresFunctionTest {
     when(cache.getPartitionedRegions()).thenReturn(asSet(region1, region2));
     when(cache.getPersistentMemberManager()).thenReturn(persistentMemberManager);
     when(persistentMemberManager.getWaitingRegions()).thenReturn(waitingRegions);
-    when(region2.getFullPath()).thenReturn("/pr2");
+    when(region2.getFullPath()).thenReturn(SEPARATOR + "pr2");
     when(region2.getMissingColocatedChildren()).thenReturn(asList("child1", "child2"));
 
     showMissingDiskStoresFunction.execute(functionContext);
@@ -204,8 +206,8 @@ public class ShowMissingDiskStoresFunctionTest {
         .as("results element [1]: missingColocatedRegions")
         .hasSize(2)
         .containsExactlyInAnyOrder(
-            new ColocatedRegionDetails("host2", "name2", "/pr2", "child1"),
-            new ColocatedRegionDetails("host2", "name2", "/pr2", "child2"));
+            new ColocatedRegionDetails("host2", "name2", SEPARATOR + "pr2", "child1"),
+            new ColocatedRegionDetails("host2", "name2", SEPARATOR + "pr2", "child2"));
   }
 
   @Test
@@ -225,17 +227,20 @@ public class ShowMissingDiskStoresFunctionTest {
   public void getId_returnsFullyQualifiedClassName() {
     assertThat(showMissingDiskStoresFunction.getId())
         .as("function id")
-        .isEqualTo(ShowMissingDiskStoresFunction.class.getName());
+        .isEqualTo(ShowMissingDiskStoresFunction.ID);
   }
 
+  @SuppressWarnings({"unchecked", "rawtypes"})
   private static List<Set<?>> getResults(ResultSender<?> resultSender) {
     return ((CollectingResultSender) resultSender).getResults();
   }
 
+  @SuppressWarnings("unchecked")
   private static Set<PersistentMemberPattern> missingDiskStores(Set<?> results) {
     return (Set<PersistentMemberPattern>) results;
   }
 
+  @SuppressWarnings("unchecked")
   private static Set<ColocatedRegionDetails> missingColocatedRegions(Set<?> results) {
     return (Set<ColocatedRegionDetails>) results;
   }
@@ -254,6 +259,7 @@ public class ShowMissingDiskStoresFunctionTest {
     return member;
   }
 
+  @SafeVarargs
   private static <T> Set<T> asSet(T... values) {
     Set<T> set = new HashSet<>();
     addAll(set, values);

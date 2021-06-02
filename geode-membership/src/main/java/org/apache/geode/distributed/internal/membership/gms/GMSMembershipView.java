@@ -36,9 +36,9 @@ import org.apache.geode.annotations.Immutable;
 import org.apache.geode.distributed.internal.membership.api.MemberIdentifier;
 import org.apache.geode.internal.serialization.DataSerializableFixedID;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
 import org.apache.geode.internal.serialization.StaticSerialization;
-import org.apache.geode.internal.serialization.Version;
 
 /**
  * The GMSMembershipView class represents a membership view For Geode this is translated
@@ -167,9 +167,7 @@ public class GMSMembershipView<ID extends MemberIdentifier> implements DataSeria
   }
 
   public void setPublicKeys(GMSMembershipView<ID> otherView) {
-    if (otherView.publicKeys != null) {
-      this.publicKeys.putAll(otherView.publicKeys);
-    }
+    this.publicKeys.putAll(otherView.publicKeys);
   }
 
   public void setViewId(int viewId) {
@@ -647,13 +645,32 @@ public class GMSMembershipView<ID extends MemberIdentifier> implements DataSeria
   }
 
   @Override
-  public Version[] getSerializationVersions() {
+  public KnownVersion[] getSerializationVersions() {
     return null;
   }
 
   @Override
   public int getDSFID() {
     return NETVIEW;
+  }
+
+  /**
+   * GEODE-8240 could cause a coordinator to produce a view with a wrong version during
+   * rolling upgrade. This method lets a view recipient repair the damaged version in
+   * its own member identifier.
+   *
+   * Mutates the version of the member identifier corresponding to memberID in this view.
+   *
+   * Remove this method when version Geode version 1.12.0 is no longer running in the wild.
+   *
+   * @param memberID is the identifier of the member of interest
+   */
+  public void correctWrongVersionIn(final ID memberID) {
+    final ID oldID = getCanonicalID(memberID);
+    if (!oldID.getVersion().equals(KnownVersion.getCurrentVersion())) {
+      // don't remove/add the ID lest we change it's relative position in the list
+      oldID.setVersionForTest(KnownVersion.getCurrentVersion());
+    }
   }
 
 }

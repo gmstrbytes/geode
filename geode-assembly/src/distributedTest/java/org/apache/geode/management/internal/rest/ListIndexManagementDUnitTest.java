@@ -15,6 +15,7 @@
 
 package org.apache.geode.management.internal.rest;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.SoftAssertions.assertSoftly;
@@ -29,13 +30,12 @@ import org.junit.ClassRule;
 import org.junit.Test;
 
 import org.apache.geode.cache.query.QueryService;
-import org.apache.geode.management.api.BaseConnectionConfig;
 import org.apache.geode.management.api.ClusterManagementGetResult;
 import org.apache.geode.management.api.ClusterManagementListResult;
 import org.apache.geode.management.api.ClusterManagementRealizationResult;
 import org.apache.geode.management.api.ClusterManagementService;
 import org.apache.geode.management.api.EntityGroupInfo;
-import org.apache.geode.management.client.ClusterManagementServiceBuilder;
+import org.apache.geode.management.cluster.client.ClusterManagementServiceBuilder;
 import org.apache.geode.management.configuration.Index;
 import org.apache.geode.management.configuration.IndexType;
 import org.apache.geode.management.configuration.Region;
@@ -63,27 +63,26 @@ public class ListIndexManagementDUnitTest {
     MemberVM server2 = lsRule.startServerVM(2, locator.getPort());
     MemberVM server3 = lsRule.startServerVM(3, "group1", locator.getPort());
 
-    cms = new ClusterManagementServiceBuilder().setConnectionConfig(
-        new BaseConnectionConfig("localhost", locator.getHttpPort()))
+    cms = new ClusterManagementServiceBuilder().setPort(locator.getHttpPort())
         .build();
 
     Region config = new Region();
     config.setName("region1");
     config.setType(RegionType.REPLICATE);
     cms.create(config);
-    locator.waitUntilRegionIsReadyOnExactlyThisManyServers("/region1", 3);
+    locator.waitUntilRegionIsReadyOnExactlyThisManyServers(SEPARATOR + "region1", 3);
 
     Index index1 = new Index();
     index1.setName("index1");
     index1.setExpression("id");
-    index1.setRegionPath("/region1");
+    index1.setRegionPath(SEPARATOR + "region1");
     index1.setIndexType(IndexType.KEY);
     cms.create(index1);
 
     Index index2 = new Index();
     index2.setName("index2");
     index2.setExpression("key");
-    index2.setRegionPath("/region1");
+    index2.setRegionPath(SEPARATOR + "region1");
     index2.setIndexType(IndexType.KEY);
     cms.create(index2);
 
@@ -142,7 +141,7 @@ public class ListIndexManagementDUnitTest {
 
   @Test
   public void getIndex_succeeds_with_index_name_and_region_name_filter() {
-    indexConfig.setRegionPath("/region1");
+    indexConfig.setRegionPath(SEPARATOR + "region1");
     indexConfig.setName("index1");
     ClusterManagementGetResult<Index, IndexInfo> clusterManagementGetResult = cms.get(indexConfig);
     Index indexConfig = clusterManagementGetResult.getResult().getConfigurations().get(0);
@@ -153,10 +152,10 @@ public class ListIndexManagementDUnitTest {
           .isEqualTo("region1");
       softly.assertThat(indexConfig.getName()).as("get index: index name").isEqualTo("index1");
       softly.assertThat(indexConfig.getRegionPath()).as("get index: region path")
-          .isEqualTo("/region1");
+          .isEqualTo(SEPARATOR + "region1");
       softly.assertThat(indexConfig.getExpression()).as("get index: expression").isEqualTo("id");
       EntityGroupInfo<Index, IndexInfo> entityGroupInfo =
-          cms.get(this.indexConfig).getResult().getConfigurationByGroup().get(0);
+          cms.get(this.indexConfig).getResult().getGroups().get(0);
       Index indexConfigTwo = entityGroupInfo.getConfiguration();
       softly.assertThat(indexConfigTwo.getLinks().getLinks()).as("get index: links key")
           .containsKey("region");
@@ -186,7 +185,8 @@ public class ListIndexManagementDUnitTest {
   public void getIndex_fails_when_region_name_is_missing_from_filter() {
     indexConfig.setName("index1");
     assertThatThrownBy(() -> cms.get(indexConfig))
-        .hasMessageContaining("Error while extracting response for type");
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Unable to construct the URI with the current configuration");
   }
 
   @Test
@@ -213,7 +213,7 @@ public class ListIndexManagementDUnitTest {
           .isEqualTo("region1");
       softly.assertThat(indexConfig.getName()).as("list index: index name").isEqualTo("index1");
       softly.assertThat(indexConfig.getRegionPath()).as("list index: region path")
-          .isEqualTo("/region1");
+          .isEqualTo(SEPARATOR + "region1");
       softly.assertThat(indexConfig.getExpression()).as("list index: expression").isEqualTo("id");
       softly.assertThat(runtimeResult).extracting(IndexInfo::getMemberName)
           .as("list index: runtime servers")
@@ -247,12 +247,12 @@ public class ListIndexManagementDUnitTest {
     region.setType(RegionType.REPLICATE);
     region.setGroup("group1");
     cms.create(region);
-    locator.waitUntilRegionIsReadyOnExactlyThisManyServers("/region2", 1);
+    locator.waitUntilRegionIsReadyOnExactlyThisManyServers(SEPARATOR + "region2", 1);
 
     Index index = new Index();
     index.setName("index");
     index.setExpression("key");
-    index.setRegionPath("/region2");
+    index.setRegionPath(SEPARATOR + "region2");
     index.setIndexType(IndexType.KEY);
     cms.create(index);
 
@@ -265,7 +265,7 @@ public class ListIndexManagementDUnitTest {
       softly.assertThat(fetchedIndexConfig.getName()).as("index create: index name")
           .isEqualTo("index");
       softly.assertThat(fetchedIndexConfig.getRegionPath()).as("index create: region path")
-          .isEqualTo("/region2");
+          .isEqualTo(SEPARATOR + "region2");
       softly.assertThat(fetchedIndexConfig.getExpression()).as("index create: expression")
           .isEqualTo("key");
       softly.assertThat(runtimeResult).extracting(IndexInfo::getMemberName)
@@ -292,12 +292,12 @@ public class ListIndexManagementDUnitTest {
     region.setName("region2");
     region.setType(RegionType.REPLICATE);
     cms.create(region);
-    locator.waitUntilRegionIsReadyOnExactlyThisManyServers("/region2", 3);
+    locator.waitUntilRegionIsReadyOnExactlyThisManyServers(SEPARATOR + "region2", 3);
 
     Index index = new Index();
     index.setName("index.1");
     index.setExpression("key");
-    index.setRegionPath("/region2");
+    index.setRegionPath(SEPARATOR + "region2");
     index.setIndexType(IndexType.KEY);
     cms.create(index);
 
@@ -310,7 +310,7 @@ public class ListIndexManagementDUnitTest {
       softly.assertThat(fetchedIndexConfig.getName()).as("index create: index name")
           .isEqualTo("index.1");
       softly.assertThat(fetchedIndexConfig.getRegionPath()).as("index create: index path")
-          .isEqualTo("/region2");
+          .isEqualTo(SEPARATOR + "region2");
       softly.assertThat(fetchedIndexConfig.getExpression()).as("index create: index expression")
           .isEqualTo("key");
       softly.assertThat(runtimeResult).as("index create: runtime servers")

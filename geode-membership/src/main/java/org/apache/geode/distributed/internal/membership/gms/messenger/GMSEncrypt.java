@@ -35,7 +35,7 @@ import org.apache.geode.distributed.internal.membership.api.MemberIdentifier;
 import org.apache.geode.distributed.internal.membership.gms.GMSMembershipView;
 import org.apache.geode.distributed.internal.membership.gms.Services;
 import org.apache.geode.distributed.internal.membership.gms.locator.GMSLocator;
-import org.apache.geode.internal.lang.JavaWorkarounds;
+import org.apache.geode.internal.lang.utils.JavaWorkarounds;
 
 public final class GMSEncrypt<ID extends MemberIdentifier> {
   // Parameters for the Diffie-Hellman key exchange
@@ -176,14 +176,15 @@ public final class GMSEncrypt<ID extends MemberIdentifier> {
   }
 
   protected byte[] getPublicKey(ID member) {
+    ID localMbr = services.getMessenger().getMemberID();
     try {
-      ID localMbr = services.getMessenger().getMemberID();
-      if (localMbr != null && localMbr.equals(member)) {
+      if (localMbr != null && localMbr.compareTo(member, false, false) == 0) {
         return this.dhPublicKey.getEncoded();// local one
       }
       return lookupKeyByMember(member);
     } catch (Exception e) {
-      throw new RuntimeException("Not found public key for member " + member, e);
+      throw new RuntimeException(
+          "Not found public key for member " + member + "; my address is " + localMbr, e);
     }
   }
 

@@ -35,18 +35,24 @@ import org.apache.geode.util.internal.GeodeGlossary;
  *
  * @since 8.0
  */
-public class ChangeLogLevelFunction implements InternalFunction {
+public class ChangeLogLevelFunction implements InternalFunction<Object[]> {
   private static final Logger logger = LogService.getLogger();
   private static final long serialVersionUID = 1L;
 
-  public static final String ID = ChangeLogLevelFunction.class.getName();
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.ChangeLogLevelFunction";
 
   @Override
-  public void execute(FunctionContext context) {
+  public String getId() {
+    return ID;
+  }
+
+  @Override
+  public void execute(FunctionContext<Object[]> context) {
     InternalCache cache = (InternalCache) context.getCache();
     Map<String, String> result = new HashMap<>();
     try {
-      Object[] args = (Object[]) context.getArguments();
+      Object[] args = context.getArguments();
       String logLevel = (String) args[0];
 
       Level log4jLevel = LogLevel.getLevel(logLevel);
@@ -66,11 +72,6 @@ public class ChangeLogLevelFunction implements InternalFunction {
           "ChangeLogLevelFunction exception " + ex.getMessage());
       context.getResultSender().lastResult(result);
     }
-  }
-
-  @Override
-  public String getId() {
-    return ID;
   }
 
   @Override

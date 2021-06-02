@@ -30,8 +30,8 @@ import org.apache.geode.internal.InternalInstantiator;
 import org.apache.geode.internal.InternalInstantiator.InstantiatorAttributesHolder;
 import org.apache.geode.internal.logging.log4j.LogMarker;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
-import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
@@ -77,7 +77,7 @@ public class StartupResponseMessage extends DistributionMessage
     this.distributedSystemId = dm.getDistributedSystemId();
     this.redundancyZone = dm.getRedundancyZone(dm.getId());
 
-    /**
+    /*
      * To fix B39705, we have added the instance variables to initialize the information about the
      * instantiators. While preparing the response message, we populate this information.
      **/
@@ -203,7 +203,7 @@ public class StartupResponseMessage extends DistributionMessage
   }
 
   @Override
-  public Version[] getSerializationVersions() {
+  public KnownVersion[] getSerializationVersions() {
     return null;
   }
 

@@ -29,9 +29,11 @@ import org.apache.logging.log4j.Logger;
 import org.apache.geode.CancelException;
 import org.apache.geode.ForcedDisconnectException;
 import org.apache.geode.annotations.internal.MutableForTesting;
+import org.apache.geode.cache.client.SocketFactory;
 import org.apache.geode.cache.wan.GatewaySender;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.ServerLocation;
+import org.apache.geode.distributed.internal.tcpserver.HostAndPort;
 import org.apache.geode.internal.cache.tier.ClientSideHandshake;
 import org.apache.geode.internal.cache.tier.CommunicationMode;
 import org.apache.geode.internal.cache.tier.sockets.ServerConnection;
@@ -85,10 +87,13 @@ public class ConnectionImpl implements Connection {
 
   public ServerQueueStatus connect(EndpointManager endpointManager, ServerLocation location,
       ClientSideHandshake handshake, int socketBufferSize, int handshakeTimeout, int readTimeout,
-      CommunicationMode communicationMode, GatewaySender sender, SocketCreator sc)
+      CommunicationMode communicationMode, GatewaySender sender, SocketCreator sc,
+      SocketFactory socketFactory)
       throws IOException {
-    theSocket = sc.connectForClient(location.getHostName(), location.getPort(), handshakeTimeout,
-        socketBufferSize);
+    theSocket =
+        sc.forClient().connect(new HostAndPort(location.getHostName(), location.getPort()),
+            handshakeTimeout,
+            socketBufferSize, socketFactory::createSocket);
     theSocket.setTcpNoDelay(true);
     theSocket.setSendBufferSize(socketBufferSize);
 
@@ -105,6 +110,7 @@ public class ConnectionImpl implements Connection {
       commBufferForAsyncRead = ServerConnection.allocateCommBuffer(socketBufferSize, theSocket);
     }
     theSocket.setSoTimeout(readTimeout);
+
     endpoint = endpointManager.referenceEndpoint(location, status.getMemberId());
     connectFinished = true;
     endpoint.getStats().incConnections(1);
@@ -219,6 +225,16 @@ public class ConnectionImpl implements Connection {
   }
 
   @Override
+  public long getBirthDate() {
+    return 0;
+  }
+
+  @Override
+  public void setBirthDate(long ts) {
+    // nothing
+  }
+
+  @Override
   public OutputStream getOutputStream() {
     return out;
   }
@@ -232,6 +248,11 @@ public class ConnectionImpl implements Connection {
   @Override
   public ConnectionStats getStats() {
     return endpoint.getStats();
+  }
+
+  @Override
+  public boolean isActive() {
+    return false;
   }
 
   @Override
@@ -262,7 +283,11 @@ public class ConnectionImpl implements Connection {
     synchronized (this) {
       result = op.attempt(this);
     }
-    endpoint.updateLastExecute();
+    // Do not call endpoint.updateLastExecute here because it should have been
+    // called on the final destination endpoint inside LiverServerPinger
+    if (!(op instanceof PingOp.PingOpImpl)) {
+      endpoint.updateLastExecute();
+    }
     return result;
 
   }

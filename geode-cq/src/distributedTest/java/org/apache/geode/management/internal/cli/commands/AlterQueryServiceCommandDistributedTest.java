@@ -14,6 +14,7 @@
  */
 package org.apache.geode.management.internal.cli.commands;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.cache.query.internal.QueryConfigurationServiceImpl.CONTINUOUS_QUERIES_RUNNING_MESSAGE;
 import static org.apache.geode.management.internal.cli.commands.AlterQueryServiceCommand.AUTHORIZER_NAME;
 import static org.apache.geode.management.internal.cli.commands.AlterQueryServiceCommand.COMMAND_NAME;
@@ -77,9 +78,9 @@ public class AlterQueryServiceCommandDistributedTest {
         .statusIsSuccess();
     locator.invoke(() -> {
       ClusterStartupRule.memberStarter
-          .waitUntilRegionIsReadyOnExactlyThisManyServers("/" + REPLICATE_REGION_NAME, 1);
+          .waitUntilRegionIsReadyOnExactlyThisManyServers(SEPARATOR + REPLICATE_REGION_NAME, 1);
       ClusterStartupRule.memberStarter
-          .waitUntilRegionIsReadyOnExactlyThisManyServers("/" + PARTITION_REGION_NAME, 1);
+          .waitUntilRegionIsReadyOnExactlyThisManyServers(SEPARATOR + PARTITION_REGION_NAME, 1);
     });
 
     client = cluster.startClientVM(2, ccf -> ccf.withCredential("data", "data")
@@ -139,7 +140,7 @@ public class AlterQueryServiceCommandDistributedTest {
   public void commandShouldFailWhenThereAreCqsRunningAndForceUpdateFlagIsFalse(String regionName,
       boolean initialResults) {
     verifyCurrentAuthorizerClass(DEFAULT_AUTHORIZER_CLASS);
-    createClientCq("SELECT * FROM /" + regionName, initialResults);
+    createClientCq("SELECT * FROM " + SEPARATOR + regionName, initialResults);
     String command = buildCommand(DummyMethodAuthorizer.class.getName(), false);
 
     gfsh.executeAndAssertThat(command).statusIsError()
@@ -153,7 +154,7 @@ public class AlterQueryServiceCommandDistributedTest {
   public void commandShouldSucceedWhenThereAreCqsRunningAndForceUpdateFlagIsTrue(String regionName,
       boolean initialResults) {
     verifyCurrentAuthorizerClass(DEFAULT_AUTHORIZER_CLASS);
-    createClientCq("SELECT * FROM /" + regionName, initialResults);
+    createClientCq("SELECT * FROM " + SEPARATOR + regionName, initialResults);
     String command = buildCommand(DummyMethodAuthorizer.class.getName(), true);
 
     gfsh.executeAndAssertThat(command).statusIsSuccess();

@@ -14,6 +14,7 @@
  */
 package org.apache.geode.internal.cache.tier.sockets;
 
+import static org.apache.geode.cache.Region.SEPARATOR_CHAR;
 import static org.apache.geode.distributed.ConfigurationProperties.DURABLE_CLIENT_ID;
 
 import java.io.DataInput;
@@ -40,8 +41,9 @@ import org.apache.geode.internal.net.SocketCreator;
 import org.apache.geode.internal.serialization.ByteArrayDataInput;
 import org.apache.geode.internal.serialization.DataSerializableFixedID;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.Versioning;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.util.internal.GeodeGlossary;
 
@@ -183,7 +185,7 @@ public class ClientProxyMembershipID
     }
     {
       systemMemberId = sys.getDistributedMember();
-      try {
+      try (HeapDataOutputStream hdos = new HeapDataOutputStream(256, KnownVersion.CURRENT)) {
         if (systemMemberId != null) {
           // update the durable id of the member identifier before serializing in case
           // a pool name has been established
@@ -192,7 +194,6 @@ public class ClientProxyMembershipID
             ((InternalDistributedMember) systemMemberId).setDurableId(attributes.getId());
           }
         }
-        HeapDataOutputStream hdos = new HeapDataOutputStream(256, Version.CURRENT);
         DataSerializer.writeObject(systemMemberId, hdos);
         client_side_identity = hdos.toByteArray();
       } catch (IOException ioe) {
@@ -347,8 +348,11 @@ public class ClientProxyMembershipID
     // {toString(); this.transientPort = ((InternalDistributedMember)this.memberId).getPort();}
   }
 
-  public Version getClientVersion() {
-    return ((InternalDistributedMember) getDistributedMember()).getVersionObject();
+  public KnownVersion getClientVersion() {
+    return Versioning
+        .getKnownVersionOrDefault(
+            ((InternalDistributedMember) getDistributedMember()).getVersion(),
+            KnownVersion.CURRENT);
   }
 
   public String getDSMembership() {
@@ -369,7 +373,7 @@ public class ClientProxyMembershipID
   private String getMemberIdAsString() {
     String memberIdAsString = null;
     InternalDistributedMember idm = (InternalDistributedMember) getDistributedMember();
-    if (getClientVersion().compareTo(Version.GFE_90) < 0) {
+    if (getClientVersion().isOlderThan(KnownVersion.GFE_90)) {
       memberIdAsString = idm.toString();
     } else {
       StringBuilder sb = new StringBuilder();
@@ -403,9 +407,8 @@ public class ClientProxyMembershipID
 
   public DistributedMember getDistributedMember() {
     if (memberId == null) {
-      ByteArrayDataInput dataInput = new ByteArrayDataInput(identity);
-      try {
-        memberId = (DistributedMember) DataSerializer.readObject(dataInput);
+      try (ByteArrayDataInput dataInput = new ByteArrayDataInput(identity)) {
+        memberId = DataSerializer.readObject(dataInput);
       } catch (Exception e) {
         logger.error("Unable to deserialize membership id", e);
       }
@@ -488,13 +491,14 @@ public class ClientProxyMembershipID
     // new Exception("stack trace")
     // ));
     // }
-    HeapDataOutputStream hdos = new HeapDataOutputStream(256, Version.CURRENT);
-    try {
-      DataSerializer.writeObject(idm, hdos);
-    } catch (IOException e) {
-      throw new InternalGemFireException("Unable to serialize member: " + this.memberId, e);
+    try (HeapDataOutputStream hdos = new HeapDataOutputStream(256, KnownVersion.CURRENT)) {
+      try {
+        DataSerializer.writeObject(idm, hdos);
+      } catch (IOException e) {
+        throw new InternalGemFireException("Unable to serialize member: " + this.memberId, e);
+      }
+      this.identity = hdos.toByteArray();
     }
-    this.identity = hdos.toByteArray();
     if (this.memberId != null && this.memberId == systemMemberId) {
       systemMemberId = idm;
       // client_side_identity = this.identity;
@@ -531,8 +535,8 @@ public class ClientProxyMembershipID
 
   private String getBaseRegionName() {
     String id = isDurable() ? getDurableId() : getDSMembership();
-    if (id.indexOf('/') >= 0) {
-      id = id.replace('/', ':');
+    if (id.indexOf(SEPARATOR_CHAR) >= 0) {
+      id = id.replace(SEPARATOR_CHAR, ':');
     }
     StringBuffer buffer = new StringBuffer().append("_gfe_").append(isDurable() ? "" : "non_")
         .append("durable_client_").append("with_id_" + id).append("_").append(this.uniqueId);
@@ -602,7 +606,7 @@ public class ClientProxyMembershipID
   }
 
   @Override
-  public Version[] getSerializationVersions() {
+  public KnownVersion[] getSerializationVersions() {
     return null;
   }
 

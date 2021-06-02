@@ -37,8 +37,8 @@ import org.apache.geode.distributed.DistributedSystem;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.internal.cache.execute.InternalFunction;
 import org.apache.geode.logging.internal.log4j.api.LogService;
-import org.apache.geode.management.internal.cli.CliUtil;
-import org.apache.geode.management.internal.cli.CliUtil.DeflaterInflaterData;
+import org.apache.geode.management.internal.cli.CliUtils;
+import org.apache.geode.management.internal.cli.CliUtils.DeflaterInflaterData;
 import org.apache.geode.management.internal.cli.GfshParser;
 import org.apache.geode.management.internal.i18n.CliStrings;
 
@@ -48,17 +48,23 @@ import org.apache.geode.management.internal.i18n.CliStrings;
  * @since GemFire 7.0
  */
 @SuppressWarnings({"serial"})
-public class NetstatFunction implements InternalFunction {
+public class NetstatFunction implements InternalFunction<NetstatFunction.NetstatFunctionArgument> {
   private static final Logger logger = LogService.getLogger();
   private static final long serialVersionUID = 1L;
 
   @Immutable
   public static final NetstatFunction INSTANCE = new NetstatFunction();
 
-  private static final String ID = NetstatFunction.class.getName();
-
   private static final String NETSTAT_COMMAND = "netstat";
   private static final String LSOF_COMMAND = "lsof";
+
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.NetstatFunction";
+
+  @Override
+  public String getId() {
+    return ID;
+  }
 
   @Override
   public boolean hasResult() {
@@ -66,14 +72,14 @@ public class NetstatFunction implements InternalFunction {
   }
 
   @Override
-  public void execute(final FunctionContext context) {
+  public void execute(final FunctionContext<NetstatFunctionArgument> context) {
     DistributedSystem ds = InternalDistributedSystem.getConnectedInstance();
     if (ds == null || !ds.isConnected()) {
       return;
     }
 
     String host = ds.getDistributedMember().getHost();
-    NetstatFunctionArgument args = (NetstatFunctionArgument) context.getArguments();
+    NetstatFunctionArgument args = context.getArguments();
     boolean withlsof = args.isWithlsof();
     String lineSeparator = args.getLineSeparator();
 
@@ -85,7 +91,7 @@ public class NetstatFunction implements InternalFunction {
     addMemberHostHeader(netstatInfo, "{0}", host, lineSeparator);
 
     NetstatFunctionResult result = new NetstatFunctionResult(host, netstatInfo.toString(),
-        CliUtil.compressBytes(netstatOutput.getBytes()));
+        CliUtils.compressBytes(netstatOutput.getBytes()));
 
     context.getResultSender().lastResult(result);
   }
@@ -95,10 +101,6 @@ public class NetstatFunction implements InternalFunction {
 
     String osInfo = getOsName() + " " + getOsVersion() + " " + getOsArchitecture();
 
-    StringBuilder memberPlatFormInfo = new StringBuilder();
-    memberPlatFormInfo.append(CliStrings.format(CliStrings.NETSTAT__MSG__FOR_HOST_1_OS_2_MEMBER_0,
-        new Object[] {id, host, osInfo, lineSeparator}));
-
     int nameIdLength = Math.max(Math.max(id.length(), host.length()), osInfo.length()) * 2;
 
     StringBuilder netstatInfoBottom = new StringBuilder();
@@ -107,7 +109,9 @@ public class NetstatFunction implements InternalFunction {
       netstatInfoBottom.append("#");
     }
 
-    netstatInfo.append(lineSeparator).append(memberPlatFormInfo.toString()).append(lineSeparator)
+    String memberPlatFormInfo = CliStrings.format(CliStrings.NETSTAT__MSG__FOR_HOST_1_OS_2_MEMBER_0,
+        id, host, osInfo, lineSeparator);
+    netstatInfo.append(lineSeparator).append(memberPlatFormInfo).append(lineSeparator)
         .append(netstatInfoBottom.toString()).append(lineSeparator);
   }
 
@@ -130,25 +134,27 @@ public class NetstatFunction implements InternalFunction {
     }
 
     ProcessBuilder processBuilder = new ProcessBuilder(cmdOptionsList);
+    Process netstat = null;
+    InputStreamReader inputStreamReader = null;
+    BufferedReader breader = null;
     try {
-      Process netstat = processBuilder.start();
+      netstat = processBuilder.start();
 
       InputStream is = netstat.getInputStream();
-      BufferedReader breader = new BufferedReader(new InputStreamReader(is));
+      inputStreamReader = new InputStreamReader(is);
+      breader = new BufferedReader(inputStreamReader);
       String line;
 
       while ((line = breader.readLine()) != null) {
         netstatInfo.append(line).append(lineSeparator);
       }
-
-      // TODO: move to finally-block
-      netstat.destroy();
     } catch (IOException e) {
       // TODO: change this to keep the full stack trace
       netstatInfo.append(CliStrings.format(CliStrings.NETSTAT__MSG__COULD_NOT_EXECUTE_0_REASON_1,
-          new Object[] {NETSTAT_COMMAND, e.getMessage()}));
+          NETSTAT_COMMAND, e.getMessage()));
     } finally {
       netstatInfo.append(lineSeparator); // additional new line
+      releaseResources(netstat, inputStreamReader, breader);
     }
   }
 
@@ -164,35 +170,57 @@ public class NetstatFunction implements InternalFunction {
       cmdOptionsList.add("-P");
 
       ProcessBuilder procBuilder = new ProcessBuilder(cmdOptionsList);
+
+      Process lsof = null;
+      InputStreamReader reader = null;
+      BufferedReader breader = null;
       try {
-        Process lsof = procBuilder.start();
-        InputStreamReader reader = new InputStreamReader(lsof.getInputStream());
-        BufferedReader breader = new BufferedReader(reader);
-        String line = "";
+        lsof = procBuilder.start();
+        reader = new InputStreamReader(lsof.getInputStream());
+        breader = new BufferedReader(reader);
+        String line;
 
         while ((line = breader.readLine()) != null) {
           existingNetstatInfo.append(line).append(lineSeparator);
         }
-        // TODO: move this to finally-block
-        lsof.destroy();
       } catch (IOException e) {
         // TODO: change this to keep the full stack trace
         String message = e.getMessage();
         if (message.contains("error=2, No such file or directory")) {
           existingNetstatInfo
               .append(CliStrings.format(CliStrings.NETSTAT__MSG__COULD_NOT_EXECUTE_0_REASON_1,
-                  new Object[] {LSOF_COMMAND, CliStrings.NETSTAT__MSG__LSOF_NOT_IN_PATH}));
+                  LSOF_COMMAND, CliStrings.NETSTAT__MSG__LSOF_NOT_IN_PATH));
         } else {
           existingNetstatInfo
               .append(CliStrings.format(CliStrings.NETSTAT__MSG__COULD_NOT_EXECUTE_0_REASON_1,
-                  new Object[] {LSOF_COMMAND, e.getMessage()}));
+                  LSOF_COMMAND, e.getMessage()));
         }
       } finally {
+        releaseResources(lsof, reader, breader);
         existingNetstatInfo.append(lineSeparator); // additional new line
       }
     } else {
       existingNetstatInfo.append(CliStrings.NETSTAT__MSG__NOT_AVAILABLE_FOR_WINDOWS)
           .append(lineSeparator);
+    }
+  }
+
+  private static void releaseResources(Process netstat, InputStreamReader inputStreamReader,
+      BufferedReader breader) {
+    if (breader != null) {
+      try {
+        breader.close();
+      } catch (IOException ignore) {
+      }
+    }
+    if (inputStreamReader != null) {
+      try {
+        inputStreamReader.close();
+      } catch (IOException ignore) {
+      }
+    }
+    if (netstat != null) {
+      netstat.destroy();
     }
   }
 
@@ -206,11 +234,6 @@ public class NetstatFunction implements InternalFunction {
     }
 
     return netstatInfo.toString();
-  }
-
-  @Override
-  public String getId() {
-    return ID;
   }
 
   @Override

@@ -18,9 +18,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
+import org.apache.geode.annotations.VisibleForTesting;
+import org.apache.geode.cache.EntryDestroyedException;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.query.AmbiguousNameException;
 import org.apache.geode.cache.query.FunctionDomainException;
+import org.apache.geode.cache.query.Index;
 import org.apache.geode.cache.query.IndexType;
 import org.apache.geode.cache.query.NameResolutionException;
 import org.apache.geode.cache.query.QueryInvocationTargetException;
@@ -28,9 +31,12 @@ import org.apache.geode.cache.query.QueryService;
 import org.apache.geode.cache.query.SelectResults;
 import org.apache.geode.cache.query.Struct;
 import org.apache.geode.cache.query.TypeMismatchException;
+import org.apache.geode.cache.query.internal.index.AbstractIndex;
+import org.apache.geode.cache.query.internal.index.AbstractMapIndex;
 import org.apache.geode.cache.query.internal.index.IndexData;
 import org.apache.geode.cache.query.internal.index.IndexProtocol;
 import org.apache.geode.cache.query.internal.index.IndexUtils;
+import org.apache.geode.cache.query.internal.index.PartitionedIndex;
 import org.apache.geode.cache.query.internal.parse.OQLLexerTokenTypes;
 import org.apache.geode.cache.query.internal.types.StructTypeImpl;
 import org.apache.geode.cache.query.internal.types.TypeUtils;
@@ -85,10 +91,18 @@ public class CompiledComparison extends AbstractCompiledValue
     Object right = _right.evaluate(context);
 
     if (context.isCqQueryContext() && left instanceof Region.Entry) {
-      left = ((Region.Entry) left).getValue();
+      try {
+        left = ((Region.Entry<?, ?>) left).getValue();
+      } catch (EntryDestroyedException ex) {
+        left = null;
+      }
     }
     if (context.isCqQueryContext() && right instanceof Region.Entry) {
-      right = ((Region.Entry) right).getValue();
+      try {
+        right = ((Region.Entry<?, ?>) right).getValue();
+      } catch (EntryDestroyedException ex) {
+        right = null;
+      }
     }
 
     if (left == null || right == null) {
@@ -296,13 +310,21 @@ public class CompiledComparison extends AbstractCompiledValue
   public int getSizeEstimate(ExecutionContext context) throws FunctionDomainException,
       TypeMismatchException, NameResolutionException, QueryInvocationTargetException {
     IndexInfo[] idxInfo = getIndexInfo(context);
-    if (idxInfo == null) {
-      // Asif: This implies it is an independent condition. So evaluate it first
-      // in filter operand
+
+    // Both operands are indexed, evaluate it first in the filter operand.
+    if (idxInfo != null && idxInfo.length > 1) {
       return 0;
     }
+
+    // Asif: This implies it is an independent condition. So evaluate it second in filter operand.
+    if (idxInfo == null) {
+      return 1;
+    }
+
     assert idxInfo.length == 1;
     Object key = idxInfo[0].evaluateIndexKey(context);
+
+    // Key not found (indexes have mapping for UNDEFINED), evaluation is fast so do it first.
     if (key != null && key.equals(QueryService.UNDEFINED)) {
       return 0;
     }
@@ -318,11 +340,10 @@ public class CompiledComparison extends AbstractCompiledValue
     int op = reflectOnOperator(idxInfo[0]._key());
 
     return idxInfo[0]._index.getSizeEstimate(key, op, idxInfo[0]._matchLevel);
-
   }
 
-  /** **************** PRIVATE METHODS ************************** */
-  /**
+  /* **************** PRIVATE METHODS ************************** */
+  /*
    * evaluate as a filter, involving a single iterator. Use an index if possible.
    */
   // Invariant: the receiver is dependent on the current iterator.
@@ -626,13 +647,23 @@ public class CompiledComparison extends AbstractCompiledValue
     } else {
       CompiledValue path = pAndK._path;
       CompiledValue indexKey = pAndK._key;
-      IndexData indexData = null;
+      IndexData indexData;
       // CompiledLike should not use HashIndex and PrimarKey Index.
       if (this instanceof CompiledLike) {
         indexData =
             QueryUtils.getAvailableIndexIfAny(path, context, OQLLexerTokenTypes.LITERAL_like);
       } else {
         indexData = QueryUtils.getAvailableIndexIfAny(path, context, this._operator);
+      }
+
+      if (indexCannotBeUsed(context, indexData)) {
+        Index prIndex = ((AbstractIndex) indexData.getIndex()).getPRIndex();
+        if (prIndex != null) {
+          ((PartitionedIndex) prIndex).releaseIndexReadLockForRemove();
+        } else {
+          ((AbstractIndex) indexData.getIndex()).releaseIndexReadLockForRemove();
+        }
+        return null;
       }
 
       IndexProtocol index = null;
@@ -651,6 +682,42 @@ public class CompiledComparison extends AbstractCompiledValue
       privSetIndexInfo(NO_INDEXES_IDENTIFIER, context);
     }
     return newIndexInfo;
+  }
+
+  /**
+   *
+   * @return true if the index is a MapIndex of type allkeys ([*]) and this is a != comparison
+   *         or it is comparing the map value against null
+   */
+  @VisibleForTesting
+  boolean indexCannotBeUsed(ExecutionContext context, IndexData indexData) {
+    if (indexData == null) {
+      return false;
+    }
+    if (!(indexData.getIndex() instanceof AbstractMapIndex)) {
+      return false;
+    }
+    if (!(((AbstractMapIndex) indexData.getIndex()).getIsAllKeys())) {
+      return false;
+    }
+    if (this._operator == TOK_NE) {
+      return true;
+    }
+    try {
+      if (this._right != null
+          && (this._right instanceof CompiledLiteral)
+          && this._right.evaluate(context) == null) {
+        return true;
+      }
+      if (this._left != null
+          && (this._left instanceof CompiledLiteral)
+          && this._left.evaluate(context) == null) {
+        return true;
+      }
+    } catch (Exception e) {
+      return false;
+    }
+    return false;
   }
 
   CompiledValue getKey(ExecutionContext context)

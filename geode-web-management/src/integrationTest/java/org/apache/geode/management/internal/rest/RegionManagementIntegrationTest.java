@@ -15,6 +15,7 @@
 
 package org.apache.geode.management.internal.rest;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.test.junit.assertions.ClusterManagementRealizationResultAssert.assertManagementResult;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -43,7 +44,7 @@ import org.springframework.web.context.WebApplicationContext;
 import org.apache.geode.management.api.ClusterManagementResult;
 import org.apache.geode.management.api.ClusterManagementService;
 import org.apache.geode.management.api.RestTemplateClusterManagementServiceTransport;
-import org.apache.geode.management.client.ClusterManagementServiceBuilder;
+import org.apache.geode.management.cluster.client.ClusterManagementServiceBuilder;
 import org.apache.geode.management.configuration.Index;
 import org.apache.geode.management.configuration.IndexType;
 import org.apache.geode.management.configuration.Region;
@@ -161,7 +162,7 @@ public class RegionManagementIntegrationTest {
   @Test
   public void postToIndexRegionEndPoint() throws Exception {
     index.setName("index");
-    index.setRegionPath("/customers");
+    index.setRegionPath(SEPARATOR + "customers");
     index.setExpression("id");
     context.perform(post("/v1/regions/products/indexes").content(mapper.writeValueAsString(index)))
         .andExpect(status().isBadRequest())
@@ -216,7 +217,7 @@ public class RegionManagementIntegrationTest {
         .andExpect(jsonPath("$.statusCode", Matchers.is("OK")))
         .andExpect(jsonPath("$.statusMessage",
             Matchers
-                .containsString("Successfully removed configuration for [cluster].")));
+                .containsString("Successfully updated configuration for cluster.")));
 
     deleteRegion();
   }
@@ -232,7 +233,7 @@ public class RegionManagementIntegrationTest {
         .andExpect(jsonPath("$.statusCode", Matchers.is("OK")))
         .andExpect(jsonPath("$.statusMessage",
             Matchers
-                .containsString("Successfully removed configuration for [group1].")));
+                .containsString("Successfully updated configuration for group1.")));
 
     deleteRegion();
   }
@@ -249,7 +250,7 @@ public class RegionManagementIntegrationTest {
         .andExpect(jsonPath("$.statusCode", Matchers.is("OK")))
         .andExpect(jsonPath("$.statusMessage",
             Matchers
-                .containsString("Successfully removed configuration for [cluster]")));
+                .containsString("Successfully updated configuration for cluster")));
 
     deleteRegion();
   }
@@ -265,7 +266,7 @@ public class RegionManagementIntegrationTest {
         .andExpect(jsonPath("$.statusCode", Matchers.is("OK")))
         .andExpect(jsonPath("$.statusMessage",
             Matchers
-                .containsString("Successfully removed configuration for [group1]")));
+                .containsString("Successfully updated configuration for group1")));
 
     deleteRegion();
   }

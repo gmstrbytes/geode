@@ -18,13 +18,19 @@ import org.apache.geode.cache.execute.FunctionContext;
 import org.apache.geode.cache.execute.FunctionService;
 import org.apache.geode.internal.cache.execute.InternalFunction;
 
-public class UnregisterFunction implements InternalFunction {
-  public static final String ID = UnregisterFunction.class.getName();
+public class UnregisterFunction implements InternalFunction<Object[]> {
   private static final long serialVersionUID = 1L;
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.UnregisterFunction";
 
   @Override
-  public void execute(FunctionContext context) {
-    Object[] args = (Object[]) context.getArguments();
+  public String getId() {
+    return ID;
+  }
+
+  @Override
+  public void execute(FunctionContext<Object[]> context) {
+    Object[] args = context.getArguments();
     String functionId = (String) args[0];
     try {
       FunctionService.unregisterFunction(functionId);
@@ -32,11 +38,6 @@ public class UnregisterFunction implements InternalFunction {
       context.getResultSender().lastResult("Failed in unregistering " + e.getMessage());
     }
     context.getResultSender().lastResult("Succeeded in unregistering");
-  }
-
-  @Override
-  public String getId() {
-    return UnregisterFunction.ID;
   }
 
   @Override

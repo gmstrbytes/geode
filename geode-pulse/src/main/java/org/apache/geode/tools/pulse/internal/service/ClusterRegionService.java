@@ -20,7 +20,6 @@ package org.apache.geode.tools.pulse.internal.service;
 import static org.apache.geode.tools.pulse.internal.data.PulseConstants.FOUR_PLACE_DECIMAL_FORMAT;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +30,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
@@ -54,19 +54,19 @@ public class ClusterRegionService implements PulseService {
   private final ObjectMapper mapper = new ObjectMapper();
 
   // String constants used for forming a json response
-  private final String ENTRY_SIZE = "entrySize";
+  private static final String ENTRY_SIZE = "entrySize";
+  private final Repository repository;
+
+  @Autowired
+  public ClusterRegionService(Repository repository) {
+    this.repository = repository;
+  }
 
   // Comparator based upon regions entry count
   private static Comparator<Cluster.Region> regionEntryCountComparator = (r1, r2) -> {
     long r1Cnt = r1.getSystemRegionEntryCount();
     long r2Cnt = r2.getSystemRegionEntryCount();
-    if (r1Cnt < r2Cnt) {
-      return -1;
-    } else if (r1Cnt > r2Cnt) {
-      return 1;
-    } else {
-      return 0;
-    }
+    return Long.compare(r1Cnt, r2Cnt);
   };
 
   @Override
@@ -75,7 +75,7 @@ public class ClusterRegionService implements PulseService {
     String userName = request.getUserPrincipal().getName();
 
     // get cluster object
-    Cluster cluster = Repository.get().getCluster();
+    Cluster cluster = repository.getCluster();
 
     // json object to be sent as response
     ObjectNode responseJSON = mapper.createObjectNode();
@@ -83,7 +83,7 @@ public class ClusterRegionService implements PulseService {
     // getting cluster's Regions
     responseJSON.put("clusterName", cluster.getServerName());
     responseJSON.put("userName", userName);
-    responseJSON.put("region", getRegionJson(cluster));
+    responseJSON.set("region", getRegionJson(cluster));
 
     // Send json response
     return responseJSON;
@@ -102,14 +102,11 @@ public class ClusterRegionService implements PulseService {
 
     Map<String, Cluster.Region> clusterRegions = cluster.getClusterRegions();
 
-    List<Cluster.Region> clusterRegionsList = new ArrayList<Cluster.Region>();
-    clusterRegionsList.addAll(clusterRegions.values());
-
-    Collections.sort(clusterRegionsList, regionEntryCountComparator);
+    List<Cluster.Region> clusterRegionsList = new ArrayList<>(clusterRegions.values());
+    clusterRegionsList.sort(regionEntryCountComparator);
 
     ArrayNode regionListJson = mapper.createArrayNode();
-    for (int count = 0; count < clusterRegionsList.size(); count++) {
-      Cluster.Region reg = clusterRegionsList.get(count);
+    for (Cluster.Region reg : clusterRegionsList) {
       ObjectNode regionJSON = mapper.createObjectNode();
 
       regionJSON.put("name", reg.getName());
@@ -142,7 +139,7 @@ public class ClusterRegionService implements PulseService {
         }
       }
 
-      regionJSON.put("memberNames", memberNameArray);
+      regionJSON.set("memberNames", memberNameArray);
       regionJSON.put("entryCount", reg.getSystemRegionEntryCount());
 
       boolean persistent = reg.getPersistentEnabled();
@@ -166,26 +163,24 @@ public class ClusterRegionService implements PulseService {
         regionJSON.put("compressionCodec", VALUE_NA);
       }
 
-
       regionJSON.put("regionPath", reg.getFullPath());
 
-
-      regionJSON.put("memoryReadsTrend", mapper
+      regionJSON.set("memoryReadsTrend", mapper
           .valueToTree(reg.getRegionStatisticTrend(Cluster.Region.REGION_STAT_GETS_PER_SEC_TREND)));
-      regionJSON.put("memoryWritesTrend", mapper
+      regionJSON.set("memoryWritesTrend", mapper
           .valueToTree(reg.getRegionStatisticTrend(Cluster.Region.REGION_STAT_PUTS_PER_SEC_TREND)));
-      regionJSON.put("diskReadsTrend", mapper.valueToTree(
+      regionJSON.set("diskReadsTrend", mapper.valueToTree(
           reg.getRegionStatisticTrend(Cluster.Region.REGION_STAT_DISK_READS_PER_SEC_TREND)));
-      regionJSON.put("diskWritesTrend", mapper.valueToTree(
+      regionJSON.set("diskWritesTrend", mapper.valueToTree(
           reg.getRegionStatisticTrend(Cluster.Region.REGION_STAT_DISK_WRITES_PER_SEC_TREND)));
       regionJSON.put("emptyNodes", reg.getEmptyNode());
       long entrySize = reg.getEntrySize();
       String entrySizeInMB = FOUR_PLACE_DECIMAL_FORMAT.format(entrySize / (1024f * 1024f));
 
       if (entrySize < 0) {
-        regionJSON.put(this.ENTRY_SIZE, VALUE_NA);
+        regionJSON.put(ENTRY_SIZE, VALUE_NA);
       } else {
-        regionJSON.put(this.ENTRY_SIZE, entrySizeInMB);
+        regionJSON.put(ENTRY_SIZE, entrySizeInMB);
       }
       regionJSON.put("dataUsage", reg.getDiskUsage());
       regionJSON.put("wanEnabled", reg.getWanEnabled());

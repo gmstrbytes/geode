@@ -57,6 +57,11 @@ public interface DataSerializableFixedID extends SerializationVersions, BasicSer
   // NOTE, codes < -65536 will take 4 bytes to serialize
   // NOTE, codes < -128 will take 2 bytes to serialize
 
+  short DISTRIBUTED_PING_MESSAGE = -162;
+
+  short REGION_REDUNDANCY_STATUS = -161;
+  short RESTORE_REDUNDANCY_RESULTS = -160;
+
   short CREATE_REGION_MESSAGE_LUCENE = -159;
   short FINAL_CHECK_PASSED_MESSAGE = -158;
   short NETWORK_PARTITION_MESSAGE = -157;
@@ -224,8 +229,9 @@ public interface DataSerializableFixedID extends SerializationVersions, BasicSer
   byte LATEST_LAST_ACCESS_TIME_MESSAGE = -20;
 
   byte REMOVE_CACHESERVER_PROFILE_UPDATE = -19;
-
-  // IDs -18 through -10 unused
+  byte QUEUE_SYNCHRONIZATION_MESSAGE = -18;
+  byte QUEUE_SYNCHRONIZATION_REPLY_MESSAGE = -17;
+  // IDs -16 through -10 unused
 
   byte PR_REMOVE_ALL_MESSAGE = -9;
   byte REMOVE_ALL_MESSAGE = -8;
@@ -331,7 +337,7 @@ public interface DataSerializableFixedID extends SerializationVersions, BasicSer
   byte PR_INDEX_CREATION_REPLY_MSG = 68;
   byte PR_MANAGE_BUCKET_REPLY_MESSAGE = 69;
 
-  // 70 unused
+  byte REDIS_BYTE_ARRAY_WRAPPER = 70;
 
   byte UPDATE_MESSAGE = 71;
   byte REPLY_MESSAGE = 72;
@@ -455,7 +461,9 @@ public interface DataSerializableFixedID extends SerializationVersions, BasicSer
   short UPDATE_ENTRY_VERSION_MESSAGE = 158;
   short PR_UPDATE_ENTRY_VERSION_MESSAGE = 159;
 
-  // 160 through 164 unused
+  short REDIS_KEY = 160;
+
+  // 161 through 164 unused
 
   short PR_FETCH_BULK_ENTRIES_MESSAGE = 165;
   short PR_FETCH_BULK_ENTRIES_REPLY_MESSAGE = 166;
@@ -673,7 +681,15 @@ public interface DataSerializableFixedID extends SerializationVersions, BasicSer
   short GATEWAY_SENDER_QUEUE_ENTRY_SYNCHRONIZATION_ENTRY = 2182;
   short ABORT_BACKUP_REQUEST = 2183;
   short MEMBER_IDENTIFIER = 2184;
-
+  short HOST_AND_PORT = 2185;
+  short REDIS_SET_ID = 2186;
+  short REDIS_STRING_ID = 2187;
+  short REDIS_HASH_ID = 2188;
+  short REDIS_NULL_DATA_ID = 2189;
+  short REDIS_SET_OPTIONS_ID = 2190;
+  short REDIS_MEMBER_INFO_ID = 2191;
+  short REDIS_SORTED_SET_ID = 2192;
+  short REDIS_SORTED_SET_OPTIONS_ID = 2193;
   // NOTE, codes > 65535 will take 4 bytes to serialize
 
   /**
@@ -695,7 +711,7 @@ public interface DataSerializableFixedID extends SerializationVersions, BasicSer
    * <br>
    * Note: For rolling upgrades, if there is a change in the object format from previous version,
    * add a new toDataPre_GFE_X_X_X_X() method and add an entry for the current {@link
-   * Version} in the getSerializationVersions array of the
+   * KnownVersion} in the getSerializationVersions array of the
    * implementing class. e.g. if msg format changed in version 80, create toDataPre_GFE_8_0_0_0, add
    * Version.GFE_80 to the getSerializationVersions array and copy previous toData contents to this
    * newly created toDataPre_GFE_X_X_X_X() method.
@@ -709,7 +725,7 @@ public interface DataSerializableFixedID extends SerializationVersions, BasicSer
    * <br>
    * Note: For rolling upgrades, if there is a change in the object format from previous version,
    * add a new fromDataPre_GFE_X_X_X_X() method and add an entry for the current {@link
-   * Version} in the getSerializationVersions array of the
+   * KnownVersion} in the getSerializationVersions array of the
    * implementing class. e.g. if msg format changed in version 80, create fromDataPre_GFE_8_0_0_0,
    * add Version.GFE_80 to the getSerializationVersions array and copy previous fromData contents to
    * this newly created fromDataPre_GFE_X_X_X_X() method.

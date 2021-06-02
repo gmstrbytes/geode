@@ -17,6 +17,8 @@ package org.apache.geode.internal.cache.partitioned.colocation;
 import static java.lang.System.lineSeparator;
 import static java.util.Collections.singleton;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static org.apache.geode.cache.Region.SEPARATOR;
+import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -25,7 +27,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
-import static org.mockito.Mockito.verifyZeroInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.Set;
@@ -39,7 +40,6 @@ import org.junit.Rule;
 import org.junit.Test;
 
 import org.apache.geode.CancelCriterion;
-import org.apache.geode.cache.Region;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.util.CollectionUtils;
@@ -48,7 +48,7 @@ import org.apache.geode.test.junit.rules.ExecutorServiceRule;
 
 public class SingleThreadColocationLoggerTest {
 
-  private static final long TIMEOUT_MILLIS = GeodeAwaitility.getTimeout().getValueInMS();
+  private static final long TIMEOUT_MILLIS = GeodeAwaitility.getTimeout().toMillis();
 
   private Function<PartitionedRegion, Set<String>> allColocationRegionsProvider;
   private Consumer<String> logger;
@@ -70,7 +70,7 @@ public class SingleThreadColocationLoggerTest {
     InternalDistributedSystem system = mock(InternalDistributedSystem.class);
 
     when(region.getFullPath())
-        .thenReturn(Region.SEPARATOR + regionName);
+        .thenReturn(SEPARATOR + regionName);
     when(region.getName())
         .thenReturn(regionName);
     when(region.getSystem())
@@ -125,13 +125,13 @@ public class SingleThreadColocationLoggerTest {
             allColocationRegionsProvider, executorService);
     colocationLogger.start();
 
-    String missingChild1 = "/childRegion1";
+    String missingChild1 = SEPARATOR + "childRegion1";
     colocationLogger.addMissingChildRegion(missingChild1);
 
-    String missingChild2 = "/childRegion2";
+    String missingChild2 = SEPARATOR + "childRegion2";
     colocationLogger.addMissingChildRegion(missingChild2);
 
-    String missingChild3 = "/childRegion3";
+    String missingChild3 = SEPARATOR + "childRegion3";
     colocationLogger.addMissingChildRegion(missingChild3);
 
     assertThat(colocationLogger.getMissingChildren())
@@ -144,7 +144,7 @@ public class SingleThreadColocationLoggerTest {
         new SingleThreadColocationLogger(region, 100, 200, logger,
             allColocationRegionsProvider, executorService);
     colocationLogger.start();
-    String missingChild = "/childRegion";
+    String missingChild = SEPARATOR + "childRegion";
 
     colocationLogger.addMissingChildRegion(missingChild);
 
@@ -164,7 +164,7 @@ public class SingleThreadColocationLoggerTest {
             allColocationRegionsProvider, executorService);
     colocationLogger.start();
     Future<?> completed = colocationLogger.getFuture();
-    String missingChild = "/childRegion";
+    String missingChild = SEPARATOR + "childRegion";
     when(allColocationRegionsProvider.apply(eq(region)))
         .thenReturn(singleton(missingChild));
     colocationLogger.addMissingChildRegion(missingChild);
@@ -189,9 +189,9 @@ public class SingleThreadColocationLoggerTest {
     Future<?> completed = colocationLogger.getFuture();
     completed.get(TIMEOUT_MILLIS, MILLISECONDS);
 
-    colocationLogger.addMissingChildRegion("/childRegion");
+    colocationLogger.addMissingChildRegion(SEPARATOR + "childRegion");
 
-    verifyZeroInteractions(logger);
+    verifyNoMoreInteractions(logger);
   }
 
   @Test
@@ -200,11 +200,11 @@ public class SingleThreadColocationLoggerTest {
         new SingleThreadColocationLogger(region, 100, 200, logger,
             allColocationRegionsProvider, executorService);
     colocationLogger.start();
-    String missingChild1 = "/childRegion1";
+    String missingChild1 = SEPARATOR + "childRegion1";
     colocationLogger.addMissingChildRegion(missingChild1);
-    String missingChild2 = "/childRegion2";
+    String missingChild2 = SEPARATOR + "childRegion2";
     colocationLogger.addMissingChildRegion(missingChild2);
-    String missingChild3 = "/childRegion3";
+    String missingChild3 = SEPARATOR + "childRegion3";
     colocationLogger.addMissingChildRegion(missingChild3);
     when(allColocationRegionsProvider.apply(eq(region)))
         .thenReturn(CollectionUtils.asSet(missingChild1, missingChild2, missingChild3));
@@ -213,5 +213,19 @@ public class SingleThreadColocationLoggerTest {
 
     assertThat(colocationLogger.getMissingChildren())
         .isEmpty();
+  }
+
+  @Test
+  public void stopTerminatesExecutorService() {
+    SingleThreadColocationLogger colocationLogger =
+        new SingleThreadColocationLogger(region, 500, 1000, logger,
+            allColocationRegionsProvider, executorService);
+    colocationLogger.start();
+
+    colocationLogger.stop();
+
+    // Wait until the ExecutorService is terminated
+    await().untilAsserted(
+        () -> assertThat(colocationLogger.getExecutorService().isTerminated()).isTrue());
   }
 }

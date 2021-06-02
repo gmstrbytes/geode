@@ -14,7 +14,11 @@
  */
 package org.apache.geode.internal.cache.rollingupgrade;
 
+import static org.apache.geode.distributed.ConfigurationProperties.HTTP_SERVICE_PORT;
+import static org.apache.geode.distributed.ConfigurationProperties.JMX_MANAGER_PORT;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPorts;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
@@ -47,10 +51,13 @@ import org.apache.geode.cache30.CacheSerializableRunnable;
 import org.apache.geode.distributed.DistributedSystem;
 import org.apache.geode.distributed.Locator;
 import org.apache.geode.distributed.internal.DistributionConfig;
+import org.apache.geode.distributed.internal.DistributionManager;
+import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.InternalLocator;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
+import org.apache.geode.distributed.internal.membership.api.MembershipView;
 import org.apache.geode.distributed.internal.membership.gms.membership.GMSJoinLeave;
-import org.apache.geode.internal.AvailablePortHelper;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.test.dunit.DistributedTestUtils;
 import org.apache.geode.test.dunit.Host;
@@ -140,7 +147,6 @@ public abstract class RollingUpgradeDUnitTest extends JUnit4DistributedTestCase 
     VM server2 = host.getVM(startingVersion, 1); // testingDirs[1]
     VM locator = host.getVM(startingVersion, 2); // locator must be last
 
-
     String regionName = "aRegion";
     String shortcutName = RegionShortcut.REPLICATE.name();
     if (regionType.equals("replicate")) {
@@ -159,10 +165,16 @@ public abstract class RollingUpgradeDUnitTest extends JUnit4DistributedTestCase 
       }
     }
 
-    int[] locatorPorts = AvailablePortHelper.getRandomAvailableTCPPorts(1);
+    int[] ports = getRandomAvailableTCPPorts(3);
+    int[] locatorPorts = new int[] {ports[0]};
+    int jmxManagerPort = ports[1];
+    int httpServicePort = ports[2];
     String hostName = NetworkUtils.getServerHostName(host);
     String locatorString = getLocatorString(locatorPorts);
     final Properties locatorProps = new Properties();
+    locatorProps.setProperty(JMX_MANAGER_PORT, String.valueOf(jmxManagerPort));
+    locatorProps.setProperty(HTTP_SERVICE_PORT, String.valueOf(httpServicePort));
+
     // configure all class loaders for each vm
 
     try {
@@ -191,8 +203,8 @@ public abstract class RollingUpgradeDUnitTest extends JUnit4DistributedTestCase 
       }
 
       putAndVerify(objectType, server1, regionName, 0, 10, server2);
-      locator = rollLocatorToCurrent(locator, hostName, locatorPorts[0], getTestMethodName(),
-          locatorString);
+      locator = rollLocatorToCurrent(locator, hostName, locatorPorts[0], jmxManagerPort,
+          httpServicePort, getTestMethodName(), locatorString);
 
       server1 = rollServerToCurrentAndCreateRegion(server1, regionType, testingDirs[0],
           shortcutName, regionName, locatorPorts);
@@ -204,6 +216,22 @@ public abstract class RollingUpgradeDUnitTest extends JUnit4DistributedTestCase 
           shortcutName, regionName, locatorPorts);
       verifyValues(objectType, regionName, 0, 10, server2);
       putAndVerify(objectType, server2, regionName, 15, 25, server1);
+
+      final short versionOrdinalAfterUpgrade = KnownVersion.getCurrentVersion().ordinal();
+      locator.invoke(() -> {
+
+        final Locator theLocator = Locator.getLocator();
+        final DistributedSystem distributedSystem = theLocator.getDistributedSystem();
+        final InternalDistributedSystem ids =
+            (InternalDistributedSystem) distributedSystem;
+        final DistributionManager distributionManager = ids.getDistributionManager();
+        final MembershipView<InternalDistributedMember> view =
+            distributionManager.getDistribution().getView();
+
+        for (final InternalDistributedMember member : view.getMembers()) {
+          assertThat(member.getVersionOrdinal()).isEqualTo(versionOrdinalAfterUpgrade);
+        }
+      });
 
     } finally {
       invokeRunnableInVMs(true, invokeStopLocator(), locator);
@@ -330,12 +358,14 @@ public abstract class RollingUpgradeDUnitTest extends JUnit4DistributedTestCase 
   }
 
   private VM rollLocatorToCurrent(VM oldLocator, final String serverHostName, final int port,
-      final String testName, final String locatorString) {
+      int jmxManagerPort, int httpServicePort, final String testName, final String locatorString) {
     // Roll the locator
     oldLocator.invoke(invokeStopLocator());
     VM rollLocator = Host.getHost(0).getVM(VersionManager.CURRENT_VERSION, oldLocator.getId());
     final Properties props = new Properties();
     props.setProperty(DistributionConfig.ENABLE_CLUSTER_CONFIGURATION_NAME, "false");
+    props.setProperty(JMX_MANAGER_PORT, String.valueOf(jmxManagerPort));
+    props.setProperty(HTTP_SERVICE_PORT, String.valueOf(httpServicePort));
     rollLocator
         .invoke(invokeStartLocator(serverHostName, port, testName, locatorString, props, false));
     return rollLocator;
@@ -659,7 +689,7 @@ public abstract class RollingUpgradeDUnitTest extends JUnit4DistributedTestCase 
   private static void assertVersion(Cache cache, short ordinal) {
     DistributedSystem ds = cache.getDistributedSystem();
     InternalDistributedMember member = (InternalDistributedMember) ds.getDistributedMember();
-    Version thisVersion = member.getVersionObject();
+    final Version thisVersion = member.getVersion();
     short thisOrdinal = thisVersion.ordinal();
     if (ordinal != thisOrdinal) {
       throw new Error(

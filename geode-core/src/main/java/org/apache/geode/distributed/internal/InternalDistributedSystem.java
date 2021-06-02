@@ -79,6 +79,7 @@ import org.apache.geode.distributed.internal.membership.InternalDistributedMembe
 import org.apache.geode.distributed.internal.membership.api.MembershipInformation;
 import org.apache.geode.distributed.internal.membership.api.MembershipLocator;
 import org.apache.geode.distributed.internal.membership.api.QuorumChecker;
+import org.apache.geode.distributed.internal.tcpserver.HostAddress;
 import org.apache.geode.internal.Assert;
 import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.InternalInstantiator;
@@ -881,9 +882,6 @@ public class InternalDistributedSystem extends DistributedSystem
   /**
    * Starts a locator in this JVM iff the distribution config wants one started.
    *
-   * @return the membershipLocatorArg if the distribution config has no locator specified;
-   *         otherwise starts a new InternalLocator and returns its associated MembershipLocator
-   *
    * @since GemFire 5.7
    * @param membershipLocatorArg on initial startup, a MembershipLocator provided explicitly by
    *        a caller, or null; on restart, the old MembershipLocator (from the previous instance of
@@ -917,8 +915,9 @@ public class InternalDistributedSystem extends DistributedSystem
     try {
       startedLocator =
           InternalLocator.createLocator(locId.getPort(), NullLoggingSession.create(), null,
-              logWriter, securityLogWriter, locId.getHost().getAddress(),
-              locId.getHostnameForClients(), originalConfig.toProperties(), false);
+              logWriter, securityLogWriter, new HostAddress(locId.getHost()),
+              locId.getHostnameForClients(), originalConfig.toProperties(),
+              false);
 
       // if locator is started this way, cluster config is not enabled, set the flag correctly
       startedLocator.getConfig().setEnableClusterConfiguration(false);
@@ -959,13 +958,6 @@ public class InternalDistributedSystem extends DistributedSystem
         }
       }
     }
-  }
-
-  /**
-   * record a locator as a dependent of this distributed system
-   */
-  void setDependentLocator(InternalLocator theLocator) {
-    startedLocator = theLocator;
   }
 
   /**
@@ -1566,7 +1558,7 @@ public class InternalDistributedSystem extends DistributedSystem
             isDisconnectThread.set(Boolean.TRUE); // bug #42663 - this must be set while
             // closing the cache
             try {
-              currentCache.close(reason, dm.getRootCause(), keepAlive, true); // fix for 42150
+              currentCache.close(reason, dm.getRootCause(), keepAlive, true, false);
             } catch (VirtualMachineError e) {
               SystemFailure.initiateFailure(e);
               throw e;
@@ -1625,14 +1617,14 @@ public class InternalDistributedSystem extends DistributedSystem
           // we close the locator after the DM so that when split-brain detection
           // is enabled, loss of the locator doesn't cause the DM to croak
           if (startedLocator != null) {
-            startedLocator.stop(forcedDisconnect, preparingForReconnect, false);
+            startedLocator.stop(forcedDisconnect, preparingForReconnect, true);
             startedLocator = null;
           }
         } finally { // timer canceled
           // bug 38501: this has to happen *after*
           // the DM is closed :-(
           if (!preparingForReconnect) {
-            SystemTimer.cancelSwarm(this);
+            SystemTimer.cancelTimers(this);
           }
         } // finally timer cancelled
       } // finally dm closed
@@ -2098,7 +2090,8 @@ public class InternalDistributedSystem extends DistributedSystem
         // ignore
         logger.info("Skipping notifyResourceEventListeners for {} due to cancellation", event);
       } catch (GemFireSecurityException | ManagementException ex) {
-        if (event == ResourceEvent.CACHE_CREATE) {
+        if (event == ResourceEvent.CACHE_CREATE
+            || event == ResourceEvent.CLUSTER_CONFIGURATION_APPLIED) {
           throw ex;
         } else {
           logger.warn(ex.getMessage(), ex);

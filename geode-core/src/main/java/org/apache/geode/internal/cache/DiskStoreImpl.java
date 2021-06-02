@@ -14,6 +14,7 @@
  */
 package org.apache.geode.internal.cache;
 
+import static org.apache.geode.cache.Region.SEPARATOR_CHAR;
 import static org.apache.geode.distributed.ConfigurationProperties.CACHE_XML_FILE;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
@@ -74,6 +75,7 @@ import org.apache.geode.CancelCriterion;
 import org.apache.geode.CancelException;
 import org.apache.geode.StatisticsFactory;
 import org.apache.geode.SystemFailure;
+import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.annotations.internal.MakeNotStatic;
 import org.apache.geode.annotations.internal.MutableForTesting;
 import org.apache.geode.cache.Cache;
@@ -112,7 +114,7 @@ import org.apache.geode.internal.cache.versions.RegionVersionVector;
 import org.apache.geode.internal.cache.versions.VersionSource;
 import org.apache.geode.internal.cache.versions.VersionStamp;
 import org.apache.geode.internal.cache.versions.VersionTag;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.util.BlobHelper;
 import org.apache.geode.logging.internal.executors.LoggingExecutors;
 import org.apache.geode.logging.internal.executors.LoggingThread;
@@ -458,7 +460,7 @@ public class DiskStoreImpl implements DiskStore {
     } else {
       this.asyncQueue = new ForceableLinkedBlockingQueue<Object>();
     }
-    if (!isValidating() && !isOfflineCompacting()) {
+    if (!isOffline()) {
       startAsyncFlusher();
     }
 
@@ -480,7 +482,7 @@ public class DiskStoreImpl implements DiskStore {
       if (dirSizes[i] == DiskStoreFactory.DEFAULT_DISK_DIR_SIZE) {
         this.totalDiskStoreSpace = ManagementConstants.NOT_AVAILABLE_LONG;
       } else if (this.totalDiskStoreSpace != ManagementConstants.NOT_AVAILABLE_LONG) {
-        this.totalDiskStoreSpace += dirSizes[i] * (1024 * 1024);
+        this.totalDiskStoreSpace += (1024 * 1024) * ((long) dirSizes[i]);
       }
     }
     // stored in bytes
@@ -506,10 +508,10 @@ public class DiskStoreImpl implements DiskStore {
       this.oplogCompactor = null;
     }
 
-    this.diskStoreTaskPool = LoggingExecutors.newFixedThreadPoolWithFeedSize("Idle OplogCompactor",
-        MAX_CONCURRENT_COMPACTIONS, Integer.MAX_VALUE);
+    this.diskStoreTaskPool = LoggingExecutors.newFixedThreadPoolWithFeedSize(
+        MAX_CONCURRENT_COMPACTIONS, Integer.MAX_VALUE, "Idle OplogCompactor");
     this.delayedWritePool =
-        LoggingExecutors.newFixedThreadPoolWithFeedSize("Oplog Delete Task", 1, MAX_PENDING_TASKS);
+        LoggingExecutors.newFixedThreadPoolWithFeedSize(1, MAX_PENDING_TASKS, "Oplog Delete Task");
   }
 
   // //////////////////// Instance Methods //////////////////////
@@ -835,7 +837,7 @@ public class DiskStoreImpl implements DiskStore {
           if (logger.isDebugEnabled()) {
             logger.debug(
                 "DiskRegion: Tried {}, getBytesAndBitsWithoutLock returns wrong byte array: {}",
-                count, Arrays.toString(bb.getBytes()));
+                count, Arrays.toString(bb != null ? bb.getBytes() : null));
           }
           ex = e;
         }
@@ -1912,7 +1914,7 @@ public class DiskStoreImpl implements DiskStore {
 
   private String getRecoveredGFVersionName() {
     String currentVersionStr = "GFE pre-7.0";
-    Version version = getRecoveredGFVersion();
+    KnownVersion version = getRecoveredGFVersion();
     if (version != null) {
       currentVersionStr = version.toString();
     }
@@ -1962,7 +1964,7 @@ public class DiskStoreImpl implements DiskStore {
         this.initFile =
             new DiskInitFile(partialFileName, this, ifRequired, persistentBackupFiles.keySet());
         if (this.upgradeVersionOnly) {
-          if (Version.CURRENT.compareTo(getRecoveredGFVersion()) <= 0) {
+          if (KnownVersion.CURRENT.compareTo(getRecoveredGFVersion()) <= 0) {
             if (getCache() != null) {
               getCache().close();
             }
@@ -1971,7 +1973,7 @@ public class DiskStoreImpl implements DiskStore {
                     getRecoveredGFVersionName()));
           }
         } else {
-          if (Version.GFE_70.compareTo(getRecoveredGFVersion()) > 0) {
+          if (KnownVersion.GFE_70.compareTo(getRecoveredGFVersion()) > 0) {
             // TODO: In each new version, need to modify the highest version
             // that needs converstion.
             if (getCache() != null) {
@@ -3516,33 +3518,85 @@ public class DiskStoreImpl implements DiskStore {
   }
 
   /**
-   * Set of OplogEntryIds (longs). Memory is optimized by using an int[] for ids in the unsigned int
-   * range.
+   * Set of OplogEntryIds (longs).
+   * Memory is optimized by using an int[] for ids in the unsigned int range.
+   * By default we can't have more than 805306401 ids for a load factor of 0.75, the internal lists
+   * are used to overcome this limit, allowing the disk-store to recover successfully (the internal
+   * class is **only** used during recovery to read all deleted entries).
    */
   static class OplogEntryIdSet {
-    private final IntOpenHashSet ints = new IntOpenHashSet((int) INVALID_ID);
-    private final LongOpenHashSet longs = new LongOpenHashSet((int) INVALID_ID);
+    private final List<IntOpenHashSet> allInts;
+    private final List<LongOpenHashSet> allLongs;
+    private final AtomicReference<IntOpenHashSet> currentInts;
+    private final AtomicReference<LongOpenHashSet> currentLongs;
+
+    // For testing purposes only.
+    @VisibleForTesting
+    OplogEntryIdSet(List<IntOpenHashSet> allInts, List<LongOpenHashSet> allLongs) {
+      this.allInts = allInts;
+      this.currentInts = new AtomicReference<>(this.allInts.get(0));
+
+      this.allLongs = allLongs;
+      this.currentLongs = new AtomicReference<>(this.allLongs.get(0));
+    }
+
+    public OplogEntryIdSet() {
+      IntOpenHashSet intHashSet = new IntOpenHashSet((int) INVALID_ID);
+      this.allInts = new ArrayList<>();
+      this.allInts.add(intHashSet);
+      this.currentInts = new AtomicReference<>(intHashSet);
+
+      LongOpenHashSet longHashSet = new LongOpenHashSet((int) INVALID_ID);
+      this.allLongs = new ArrayList<>();
+      this.allLongs.add(longHashSet);
+      this.currentLongs = new AtomicReference<>(longHashSet);
+    }
 
     public void add(long id) {
       if (id == 0) {
         throw new IllegalArgumentException();
-      } else if (id > 0 && id <= 0x00000000FFFFFFFFL) {
-        this.ints.add((int) id);
-      } else {
-        this.longs.add(id);
+      }
+
+      try {
+        if (id > 0 && id <= 0x00000000FFFFFFFFL) {
+          this.currentInts.get().add((int) id);
+        } else {
+          this.currentLongs.get().add(id);
+        }
+      } catch (IllegalArgumentException illegalArgumentException) {
+        // See GEODE-8029.
+        // Too many entries on the accumulated drf files, overflow and continue.
+        logger.warn(
+            "There is a large number of deleted entries within the disk-store, please execute an offline compaction.");
+
+        // Overflow to the next [Int|Long]OpenHashSet and continue.
+        if (id > 0 && id <= 0x00000000FFFFFFFFL) {
+          IntOpenHashSet overflownHashSet = new IntOpenHashSet((int) INVALID_ID);
+          allInts.add(overflownHashSet);
+          currentInts.set(overflownHashSet);
+
+          currentInts.get().add((int) id);
+        } else {
+          LongOpenHashSet overflownHashSet = new LongOpenHashSet((int) INVALID_ID);
+          allLongs.add(overflownHashSet);
+          currentLongs.set(overflownHashSet);
+
+          currentLongs.get().add(id);
+        }
       }
     }
 
     public boolean contains(long id) {
       if (id >= 0 && id <= 0x00000000FFFFFFFFL) {
-        return this.ints.contains((int) id);
+        return allInts.stream().anyMatch(ints -> ints.contains((int) id));
       } else {
-        return this.longs.contains(id);
+        return allLongs.stream().anyMatch(longs -> longs.contains(id));
       }
     }
 
-    public int size() {
-      return this.ints.size() + this.longs.size();
+    public long size() {
+      return allInts.stream().mapToInt(IntOpenHashSet::size).sum()
+          + allLongs.stream().mapToInt(LongOpenHashSet::size).sum();
     }
   }
 
@@ -3590,7 +3644,8 @@ public class DiskStoreImpl implements DiskStore {
   public final boolean upgradeVersionOnly;
 
   boolean isUpgradeVersionOnly() {
-    return this.upgradeVersionOnly && Version.GFE_70.compareTo(this.getRecoveredGFVersion()) > 0;
+    return this.upgradeVersionOnly
+        && KnownVersion.GFE_70.compareTo(this.getRecoveredGFVersion()) > 0;
   }
 
   private final boolean offlineCompacting;
@@ -3903,7 +3958,7 @@ public class DiskStoreImpl implements DiskStore {
         String regionName = (drv.isBucket() ? ph.getPrName() : drv.getName());
         SnapshotWriter writer = regions.get(regionName);
         if (writer == null) {
-          String fname = regionName.substring(1).replace('/', '-');
+          String fname = regionName.substring(1).replace(SEPARATOR_CHAR, '-');
           File f = new File(out, "snapshot-" + name + "-" + fname + ".gfd");
           writer = GFSnapshot.create(f, regionName, cache);
           regions.put(regionName, writer);
@@ -3972,13 +4027,13 @@ public class DiskStoreImpl implements DiskStore {
     return this.liveEntryCount;
   }
 
-  private int deadRecordCount;
+  private long deadRecordCount;
 
-  void incDeadRecordCount(int count) {
+  void incDeadRecordCount(long count) {
     this.deadRecordCount += count;
   }
 
-  public int getDeadRecordCount() {
+  public long getDeadRecordCount() {
     return this.deadRecordCount;
   }
 
@@ -4271,9 +4326,23 @@ public class DiskStoreImpl implements DiskStore {
   }
 
   public static void validate(String name, File[] dirs) throws Exception {
+    offlineValidate(name, dirs);
+  }
+
+  /**
+   * Validates the disk-store in offline mode, and returns the validated DiskStore instance.
+   *
+   * @param name Disk store name.
+   * @param dirs Directories of the disk-store to validate.
+   * @return The validted {@link DiskStore}.
+   * @throws Exception If there's a problem while loading or validating the disk-store.
+   */
+  public static DiskStore offlineValidate(String name, File[] dirs) throws Exception {
     try {
-      DiskStoreImpl dsi = createForOfflineValidate(name, dirs);
-      dsi.validate();
+      DiskStoreImpl diskStore = createForOfflineValidate(name, dirs);
+      diskStore.validate();
+
+      return diskStore;
     } finally {
       cleanupOffline();
     }
@@ -4627,11 +4696,11 @@ public class DiskStoreImpl implements DiskStore {
     oplogSet.updateDiskRegion(dr);
   }
 
-  public Version getRecoveredGFVersion() {
+  public KnownVersion getRecoveredGFVersion() {
     return getRecoveredGFVersion(this.initFile);
   }
 
-  Version getRecoveredGFVersion(DiskInitFile initFile) {
+  KnownVersion getRecoveredGFVersion(DiskInitFile initFile) {
     return initFile.currentRecoveredGFVersion();
   }
 

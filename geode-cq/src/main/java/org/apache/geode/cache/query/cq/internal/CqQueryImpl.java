@@ -56,8 +56,6 @@ public abstract class CqQueryImpl implements InternalCqQuery {
 
   protected String queryString;
 
-  static final Object TOKEN = new Object();
-
   LocalRegion cqBaseRegion;
 
   protected Query query = null;
@@ -210,7 +208,7 @@ public abstract class CqQueryImpl implements InternalCqQuery {
 
     // Set Query ExecutionContext, that will be used in later execution.
     this.setQueryExecutionContext(
-        new QueryExecutionContext(null, (InternalCache) this.cqService.getCache()));
+        new QueryExecutionContext(null, (InternalCache) this.cqService.getCache(), true));
   }
 
   /**

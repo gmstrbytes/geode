@@ -29,7 +29,7 @@ import org.apache.geode.internal.HeapDataOutputStream;
 import org.apache.geode.internal.offheap.AddressableMemoryManager;
 import org.apache.geode.internal.offheap.StoredObject;
 import org.apache.geode.internal.serialization.DSCODE;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 
 /**
  * Represents one unit of information (essentially a <code>byte</code> array) in the wire protocol.
@@ -44,7 +44,7 @@ public class Part {
   private static final byte BYTE_CODE = 0;
   private static final byte OBJECT_CODE = 1;
 
-  private Version version;
+  private KnownVersion version;
 
   /**
    * Used to represent and empty byte array for bug 36279
@@ -401,8 +401,11 @@ public class Part {
         }
       } else {
         HeapDataOutputStream hdos = (HeapDataOutputStream) this.part;
-        hdos.sendTo(out, buf);
-        hdos.rewind();
+        try {
+          hdos.sendTo(out, buf);
+        } finally {
+          hdos.rewind();
+        }
       }
     }
   }
@@ -431,8 +434,11 @@ public class Part {
         }
       } else {
         HeapDataOutputStream hdos = (HeapDataOutputStream) this.part;
-        hdos.sendTo(buf);
-        hdos.rewind();
+        try {
+          hdos.sendTo(buf);
+        } finally {
+          hdos.rewind();
+        }
       }
     }
   }
@@ -497,8 +503,11 @@ public class Part {
         }
       } else {
         HeapDataOutputStream hdos = (HeapDataOutputStream) this.part;
-        hdos.sendTo(sc, buf);
-        hdos.rewind();
+        try {
+          hdos.sendTo(sc, buf);
+        } finally {
+          hdos.rewind();
+        }
       }
     }
   }
@@ -525,7 +534,7 @@ public class Part {
     return sb.toString();
   }
 
-  public void setVersion(Version clientVersion) {
+  public void setVersion(KnownVersion clientVersion) {
     this.version = clientVersion;
   }
 }

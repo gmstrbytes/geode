@@ -35,14 +35,14 @@ import org.springframework.shell.core.annotation.CliCommand;
 import org.springframework.shell.core.annotation.CliOption;
 
 import org.apache.geode.annotations.Immutable;
-import org.apache.geode.internal.admin.SSLConfig;
+import org.apache.geode.internal.net.SSLConfig;
 import org.apache.geode.internal.net.SSLConfigurationFactory;
+import org.apache.geode.internal.net.SSLUtil;
 import org.apache.geode.internal.security.SecurableCommunicationChannel;
 import org.apache.geode.management.cli.CliMetaData;
 import org.apache.geode.management.cli.ConverterHint;
 import org.apache.geode.management.internal.JmxManagerLocatorRequest;
 import org.apache.geode.management.internal.JmxManagerLocatorResponse;
-import org.apache.geode.management.internal.SSLUtil;
 import org.apache.geode.management.internal.cli.LogWrapper;
 import org.apache.geode.management.internal.cli.converters.ConnectionEndpointConverter;
 import org.apache.geode.management.internal.cli.domain.ConnectToLocatorResult;
@@ -86,10 +86,12 @@ public class ConnectCommand extends OfflineGfshCommand {
           unspecifiedDefaultValue = "false",
           help = CliStrings.CONNECT__USE_HTTP__HELP) boolean useHttp,
       @CliOption(key = {CliStrings.CONNECT__URL}, help = CliStrings.CONNECT__URL__HELP) String url,
-      @CliOption(key = {CliStrings.CONNECT__USERNAME},
+      @CliOption(key = {CliStrings.CONNECT__USERNAME}, specifiedDefaultValue = "",
           help = CliStrings.CONNECT__USERNAME__HELP) String userName,
-      @CliOption(key = {CliStrings.CONNECT__PASSWORD},
+      @CliOption(key = {CliStrings.CONNECT__PASSWORD}, specifiedDefaultValue = "",
           help = CliStrings.CONNECT__PASSWORD__HELP) String password,
+      @CliOption(key = {CliStrings.CONNECT__TOKEN}, specifiedDefaultValue = "",
+          help = CliStrings.CONNECT__TOKEN__HELP) String token,
       @CliOption(key = {CliStrings.CONNECT__KEY_STORE},
           help = CliStrings.CONNECT__KEY_STORE__HELP) String keystore,
       @CliOption(key = {CliStrings.CONNECT__KEY_STORE_PASSWORD},
@@ -124,6 +126,14 @@ public class ConnectCommand extends OfflineGfshCommand {
       useSsl = true;
     }
 
+    if ("".equals(token)) {
+      return ResultModel.createError("--token requires a value, for example --token=foo");
+    }
+
+    if (token != null && (userName != null || password != null)) {
+      return ResultModel.createError("--token cannot be combined with --user or --password");
+    }
+
     // ssl options are passed in in the order defined in USER_INPUT_PROPERTIES, note the two types
     // are null, because we don't have connect command options for them yet
     Properties gfProperties = resolveSslProperties(gfsh, useSsl, null, gfSecurityPropertiesFile,
@@ -137,12 +147,14 @@ public class ConnectCommand extends OfflineGfshCommand {
     // if username is specified in the option but password is not, prompt for the password
     // note if gfProperties has username but no password, we would not prompt for password yet,
     // because we may not need username/password combination to connect.
-    if (userName != null) {
+    if (userName != null && !"".equals(userName)) {
       gfProperties.setProperty(ResourceConstants.USER_NAME, userName);
-      if (password == null) {
+      if (password == null || "".equals(password)) {
         password = UserInputProperty.PASSWORD.promptForAcceptableValue(gfsh);
       }
       gfProperties.setProperty(UserInputProperty.PASSWORD.getKey(), password);
+    } else if (token != null) {
+      gfProperties.setProperty(ResourceConstants.TOKEN, token);
     }
 
     if (StringUtils.isNotEmpty(url)) {
@@ -156,26 +168,27 @@ public class ConnectCommand extends OfflineGfshCommand {
       return result;
     }
 
-    String gfshVersion = gfsh.getVersion();
     String remoteVersion = null;
+    String remoteGeodeSerializationVersion = null;
     try {
-      String gfshGeodeSerializationVersion = gfsh.getGeodeSerializationVersion();
-      String remoteGeodeSerializationVersion = invoker.getRemoteGeodeSerializationVersion();
-      if (hasSameMajorMinor(gfshGeodeSerializationVersion, remoteGeodeSerializationVersion)) {
-        return result;
-      }
-    } catch (Exception e) {
-      // we failed to get the remote geode serialization version; get remote product version for
-      // error message
-      try {
-        remoteVersion = invoker.getRemoteVersion();
-      } catch (Exception ex) {
-        gfsh.logInfo("failed to get the the remote version.", ex);
-      }
+      remoteVersion = invoker.getRemoteVersion();
+      remoteGeodeSerializationVersion = getRemoteSerializationVersion(invoker);
+    } catch (Exception ex) {
+      // if unable to get the remote version, we are certainly talking to
+      // a pre-1.5 cluster
+      gfsh.logInfo("failed to get the the remote version.", ex);
+    }
+
+    String ourSerializationVersion = gfsh.getGeodeSerializationVersion();
+    if (shouldConnect(ourSerializationVersion, remoteVersion, remoteGeodeSerializationVersion)) {
+      InfoResultModel versionInfo = result.addInfo("versionInfo");
+      versionInfo.addLine("You are connected to a cluster of version: " + remoteVersion);
+      return result;
     }
 
     // will reach here only when remoteVersion is not available or does not match
     invoker.stop();
+    String gfshVersion = gfsh.getVersion();
     if (remoteVersion == null) {
       return ResultModel.createError(
           String.format("Cannot use a %s gfsh client to connect to this cluster.", gfshVersion));
@@ -185,16 +198,56 @@ public class ConnectCommand extends OfflineGfshCommand {
     }
   }
 
-  private static boolean hasSameMajorMinor(String gfshVersion, String remoteVersion) {
-    return versionComponent(remoteVersion, VERSION_MAJOR)
-        .equalsIgnoreCase(versionComponent(gfshVersion, VERSION_MAJOR))
-        && versionComponent(remoteVersion, VERSION_MINOR)
-            .equalsIgnoreCase(versionComponent(gfshVersion, VERSION_MINOR));
+  private static String getRemoteSerializationVersion(OperationInvoker invoker) {
+    try {
+      return invoker.getRemoteGeodeSerializationVersion();
+    } catch (Exception ignore) {
+      // expected to fail for Geode cluster older than 1.12
+      return null;
+    }
   }
 
-  private static String versionComponent(String version, int component) {
+  /**
+   * because remote serialization version was not exposed until 1.12, but we are compatible back to
+   * 1.10, then any 1.x remote serialization version implies compatibility; otherwise make some
+   * narrow assumptions about product version numbers known to be associated with 1.10/1.11 to fill
+   * the gap.
+   *
+   * It seems reasonable to commit to future compatibility with any future Geode of the same major,
+   * but we should probably draw the line somewhere and not promise that gfsh 1.x will be eternally
+   * compatible with Geode 2.x and later
+   */
+  static boolean shouldConnect(String ourSerializationVersion, String remoteVersion,
+      String remoteSerializationVersion) {
+    // pre 1.5
+    if (remoteVersion == null) {
+      return false;
+    }
+
+    // at least 1.12 (but only promise forward compatibility within same major)
+    if (remoteSerializationVersion != null) {
+      int ourMajor = versionComponent(ourSerializationVersion, VERSION_MAJOR);
+      int remoteMajor = versionComponent(remoteSerializationVersion, VERSION_MAJOR);
+      // assume Geode 2.x will support backward compatibility to 1.x
+      return remoteMajor >= 1 && remoteMajor <= ourMajor;
+    }
+
+    // after 1.5 but before 1.12, use remoteVersion to determine if 1.10 or after
+    int remoteMajorVersion = versionComponent(remoteVersion, VERSION_MAJOR);
+    int remoteMinorVersion = versionComponent(remoteVersion, VERSION_MINOR);
+    return remoteMajorVersion == 9 && remoteMinorVersion == 9 ||
+        remoteMajorVersion == 1 && remoteMinorVersion == 10 ||
+        remoteMajorVersion == 1 && remoteMinorVersion == 11;
+  }
+
+  private static int versionComponent(String version, int component) {
     String[] versionComponents = StringUtils.split(version, '.');
-    return versionComponents.length >= component + 1 ? versionComponents[component] : "";
+    try {
+      return versionComponents.length >= component + 1
+          ? Integer.parseInt(versionComponents[component]) : -1;
+    } catch (Exception invalidFormat) {
+      return -1;
+    }
   }
 
   /**
@@ -251,6 +304,7 @@ public class ConnectCommand extends OfflineGfshCommand {
     return sslOptions != null && Arrays.stream(sslOptions).anyMatch(Objects::nonNull);
   }
 
+  @SuppressWarnings("deprecation")
   static boolean containsLegacySSLConfig(Properties properties) {
     return properties.stringPropertyNames().stream()
         .anyMatch(key -> key.startsWith(CLUSTER_SSL_PREFIX)
@@ -287,7 +341,8 @@ public class ConnectCommand extends OfflineGfshCommand {
     } catch (SecurityException | AuthenticationFailedException e) {
       // if it's security exception, and we already sent in username and password, still returns the
       // connection error
-      if (gfProperties.containsKey(ResourceConstants.USER_NAME)) {
+      if (gfProperties.containsKey(ResourceConstants.USER_NAME)
+          || gfProperties.containsKey(ResourceConstants.TOKEN)) {
         return handleException(e);
       }
 
@@ -363,7 +418,8 @@ public class ConnectCommand extends OfflineGfshCommand {
     } catch (SecurityException | AuthenticationFailedException e) {
       // if it's security exception, and we already sent in username and password, still returns the
       // connection error
-      if (gfProperties.containsKey(ResourceConstants.USER_NAME)) {
+      if (gfProperties.containsKey(ResourceConstants.USER_NAME)
+          || gfProperties.containsKey(ResourceConstants.TOKEN)) {
         return handleException(e, jmxHostPortToConnect);
       }
 

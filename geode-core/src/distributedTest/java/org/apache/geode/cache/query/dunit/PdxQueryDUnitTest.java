@@ -14,6 +14,7 @@
  */
 package org.apache.geode.cache.query.dunit;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.internal.Assert.fail;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
@@ -1022,9 +1023,12 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
   @Test
   public void testClientServerQueryMixedTypes() throws CacheException {
 
-    final String[] testQueries = new String[] {"select ticker from /root/" + regionName,
-        "select ticker from /root/" + regionName + " p where IS_DEFINED(p.ticker)",
-        "select ticker from /root/" + regionName + " where ticker = 'vmware'",};
+    final String[] testQueries =
+        new String[] {"select ticker from " + SEPARATOR + "root" + SEPARATOR + regionName,
+            "select ticker from " + SEPARATOR + "root" + SEPARATOR + regionName
+                + " p where IS_DEFINED(p.ticker)",
+            "select ticker from " + SEPARATOR + "root" + SEPARATOR + regionName
+                + " where ticker = 'vmware'",};
     final Host host = Host.getHost(0);
     VM vm0 = host.getVM(0);
     VM vm1 = host.getVM(1);
@@ -2607,7 +2611,7 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
         }
         // Create Index on empty region
         try {
-          cache.getQueryService().createIndex("myFuncIndex", "intId", "/" + name);
+          cache.getQueryService().createIndex("myFuncIndex", "intId", SEPARATOR + name);
         } catch (Exception e) {
           Assert.fail("index creation failed", e);
         }
@@ -2679,7 +2683,8 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
             PortfolioPdx v = new PortfolioPdx(x, x);
             region.put(k, v);
           }
-          Query q = queryService.newQuery("SELECT DISTINCT * from /" + name + " WHERE ID = 2");
+          Query q =
+              queryService.newQuery("SELECT DISTINCT * from " + SEPARATOR + name + " WHERE ID = 2");
           SelectResults qResult = (SelectResults) q.execute();
           for (Object o : qResult.asList()) {
             System.out.println("o = " + o);
@@ -2709,7 +2714,7 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
     final VM vm2 = host.getVM(2);
     final VM vm3 = host.getVM(3);
     final int numberOfEntries = 10;
-    final String name = "/" + regionName;
+    final String name = SEPARATOR + regionName;
     final String[] qs = {"select * from " + name + " where pdxStatus = 'active'",
         "select pdxStatus from " + name + " where id > 4"};
 
@@ -2720,7 +2725,7 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
         getCache().createRegionFactory(RegionShortcut.REPLICATE).create(regionName);
 
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;
@@ -2734,7 +2739,7 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
         Region r1 = getCache().createRegionFactory(RegionShortcut.REPLICATE).create(regionName);
 
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;
@@ -2815,7 +2820,7 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
     final VM vm2 = host.getVM(2);
     final VM vm3 = host.getVM(3);
     final int numberOfEntries = 10;
-    final String name = "/" + regionName;
+    final String name = SEPARATOR + regionName;
     final String[] qs = {"select * from " + name + " where status = 'active'",
         "select status from " + name + " where id >= 5"};
 
@@ -2826,7 +2831,7 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
         Region r1 = getCache().createRegionFactory(RegionShortcut.PARTITION).create(regionName);
 
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;
@@ -2840,7 +2845,7 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
         Region r1 = getCache().createRegionFactory(RegionShortcut.PARTITION).create(regionName);
 
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;
@@ -2854,7 +2859,7 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
         Region r1 = getCache().createRegionFactory(RegionShortcut.PARTITION).create(regionName);
 
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;
@@ -2961,7 +2966,7 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
     final VM vm2 = host.getVM(2);
     final VM vm3 = host.getVM(3);
     final int numberOfEntries = 10;
-    final String name = "/" + regionName;
+    final String name = SEPARATOR + regionName;
     final String[] qs = {"select pdxStatus from " + name + " where pdxStatus = 'active'",
         "select pdxStatus from " + name + " where id > 8 and id < 14"};
 
@@ -2972,7 +2977,7 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
         Region r1 = getCache().createRegionFactory(RegionShortcut.REPLICATE).create(regionName);
 
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;
@@ -2986,7 +2991,7 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
         Region r1 = getCache().createRegionFactory(RegionShortcut.REPLICATE).create(regionName);
 
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;
@@ -3198,7 +3203,7 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
     final VM vm2 = host.getVM(2);
     final VM vm3 = host.getVM(3);
     final int numberOfEntries = 10;
-    final String name = "/" + regionName;
+    final String name = SEPARATOR + regionName;
     final String[] qs = {"select pdxStatus from " + name + " where pdxStatus = 'active'",
         "select status from " + name + " where id > 8 and id < 14"};
 
@@ -3209,7 +3214,7 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
         Region r1 = getCache().createRegionFactory(RegionShortcut.REPLICATE).create(regionName);
 
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;
@@ -3223,7 +3228,7 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
         Region r1 = getCache().createRegionFactory(RegionShortcut.REPLICATE).create(regionName);
 
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;
@@ -3334,7 +3339,7 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
     final VM vm0 = host.getVM(0);
     final VM vm3 = host.getVM(3);
     final int numberOfEntries = 10;
-    final String name = "/" + regionName;
+    final String name = SEPARATOR + regionName;
     final String[] qs = {"select * from " + name + " where pdxStatus = 'active'",
         "select pdxStatus from " + name + " where id > 4"};
 
@@ -3345,7 +3350,7 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
         Region r1 = getCache().createRegionFactory(RegionShortcut.REPLICATE).create(regionName);
 
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;
@@ -3423,7 +3428,7 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
     final VM vm0 = host.getVM(0);
     final VM vm1 = host.getVM(1);
     final int numberOfEntries = 10;
-    final String name = "/" + regionName;
+    final String name = SEPARATOR + regionName;
     final String query =
         "select stringField, booleanField, charField, shortField, intField, longField, floatField, doubleField from "
             + name;
@@ -3434,7 +3439,7 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
       public Object call() throws Exception {
         Region r1 = getCache().createRegionFactory(RegionShortcut.REPLICATE).create(regionName);
         CacheServer server = getCache().addCacheServer();
-        int port = AvailablePortHelper.getRandomAvailablePortForDUnitSite();
+        int port = AvailablePortHelper.getRandomAvailableTCPPort();
         server.setPort(port);
         server.start();
         return port;
@@ -3639,7 +3644,8 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
         try {
           SelectResults results = (SelectResults) qs
               .newQuery(
-                  "select r from /testJson r, r.Address a, a.phones pn where pn.number = '412'")
+                  "select r from " + SEPARATOR
+                      + "testJson r, r.Address a, a.phones pn where pn.number = '412'")
               .execute();
           assertEquals(results.size(), 1);
         } catch (Exception e) {
@@ -3689,10 +3695,14 @@ public class PdxQueryDUnitTest extends PDXQueryTestBase {
         QueryService qs = getCache().getQueryService();
         try {
           SelectResults result = (SelectResults) qs
-              .newQuery("select r from /testJson r, r.Address a where a.Line1 = 'NYC'").execute();
+              .newQuery(
+                  "select r from " + SEPARATOR + "testJson r, r.Address a where a.Line1 = 'NYC'")
+              .execute();
           assertEquals(1, result.size());
           result = (SelectResults) qs
-              .newQuery("select r from /testJson r, r.Address a where a = 'my address'").execute();
+              .newQuery(
+                  "select r from " + SEPARATOR + "testJson r, r.Address a where a = 'my address'")
+              .execute();
           assertEquals(1, result.size());
         } catch (Exception e) {
           e.printStackTrace();

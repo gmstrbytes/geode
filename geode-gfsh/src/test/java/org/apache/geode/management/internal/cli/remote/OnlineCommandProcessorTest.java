@@ -15,8 +15,8 @@
 
 package org.apache.geode.management.internal.cli.remote;
 
-import static org.assertj.core.api.Java6Assertions.assertThat;
-import static org.assertj.core.api.Java6Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -29,12 +29,12 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import org.apache.geode.internal.security.SecurityService;
+import org.apache.geode.management.internal.cli.CommandManager;
+import org.apache.geode.management.internal.cli.GfshParser;
 import org.apache.geode.management.internal.cli.result.model.ResultModel;
 import org.apache.geode.security.NotAuthorizedException;
 
 public class OnlineCommandProcessorTest {
-
-  Properties properties;
   SecurityService securityService;
   CommandExecutor executor;
   OnlineCommandProcessor onlineCommandProcessor;
@@ -45,50 +45,53 @@ public class OnlineCommandProcessorTest {
 
   @Before
   public void before() {
-    properties = new Properties();
     securityService = mock(SecurityService.class);
+    GfshParser gfshParser = new GfshParser(new CommandManager(new Properties(), null));
     executor = mock(CommandExecutor.class);
     result = mock(ResultModel.class);
     when(executor.execute(any())).thenReturn(result);
 
     onlineCommandProcessor =
-        new OnlineCommandProcessor(properties, securityService, executor, null);
+        new OnlineCommandProcessor(gfshParser, securityService, executor);
   }
 
   @Test
-  public void executeWithNullThrowsNPE() throws Exception {
+  public void executeWithNullThrowsNPE() {
     assertThatThrownBy(() -> onlineCommandProcessor.executeCommand(null))
         .isInstanceOf(NullPointerException.class);
   }
 
   @Test
-  public void executeWithEmpty() throws Exception {
+  public void executeWithEmpty() {
     assertThat(onlineCommandProcessor.executeCommand("")).isNull();
   }
 
   @Test
-  public void executeStripsComments() throws Exception {
+  public void executeStripsComments() {
     Object commandResult = onlineCommandProcessor.executeCommand("/*comment*/");
     assertThat(commandResult).isNull();
   }
 
   @Test
-  public void executeReturnsExecutorResult() throws Exception {
+  public void executeReturnsExecutorResult() {
     ResultModel commandResult = onlineCommandProcessor.executeCommand("start locator");
     assertThat(commandResult).isSameAs(result);
   }
 
   @Test
-  public void handlesNotAuthorizedException() throws Exception {
+  public void handlesNotAuthorizedException() {
     when(executor.execute(any())).thenThrow(new NotAuthorizedException("not authorized"));
     assertThatThrownBy(() -> onlineCommandProcessor.executeCommand("start locator"))
         .isInstanceOf(NotAuthorizedException.class);
   }
 
   @Test
-  public void handlesParsingError() throws Exception {
+  public void handlesParsingError() {
     ResultModel commandResult = onlineCommandProcessor.executeCommand("foo --bar");
     assertThat(commandResult).isInstanceOf(ResultModel.class);
-    assertThat(commandResult.toString()).contains("Could not parse command string. foo --bar");
+    assertThat(commandResult.toString())
+        .contains("Could not parse command string. foo --bar")
+        .contains(
+            "The command or some options in this command may not be supported by this locator");
   }
 }

@@ -14,6 +14,7 @@
  */
 package org.apache.geode.cache.query.internal;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.SECURITY_MANAGER;
 import static org.apache.geode.distributed.ConfigurationProperties.SERIALIZABLE_OBJECT_FILTER;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
@@ -242,7 +243,8 @@ public class QueryConfigurationServiceConstraintsDistributedTest implements Seri
     String regionName = testName.getMethodName();
     createAndPopulateRegion(regionName, regionShortcut);
     String queryString =
-        "<TRACE> SELECT object." + QueryObject.GET_NAME_METHOD + " FROM /" + regionName + " object";
+        "<TRACE> SELECT object." + QueryObject.GET_NAME_METHOD + " FROM " + SEPARATOR + regionName
+            + " object";
 
     // Set test query observer.
     server.invoke(() -> {
@@ -289,7 +291,8 @@ public class QueryConfigurationServiceConstraintsDistributedTest implements Seri
     String regionName = testName.getMethodName();
     createAndPopulateRegion(regionName, regionShortcut);
     String queryString =
-        "<TRACE> SELECT object." + QueryObject.GET_NAME_METHOD + " FROM /" + regionName + " object";
+        "<TRACE> SELECT object." + QueryObject.GET_NAME_METHOD + " FROM " + SEPARATOR + regionName
+            + " object";
 
     server.invoke(() -> {
       // Set test query observer.
@@ -337,7 +340,7 @@ public class QueryConfigurationServiceConstraintsDistributedTest implements Seri
       // Index is valid.
       QueryService queryService = internalCache.getQueryService();
       queryService.createIndex(NAME_INDEX_IDENTIFIER, "e." + QueryObject.GET_NAME_METHOD,
-          "/" + regionName + " e");
+          SEPARATOR + regionName + " e");
       Index index =
           queryService.getIndex(internalCache.getRegion(regionName), NAME_INDEX_IDENTIFIER);
       assertThat(index.isValid()).isTrue();
@@ -391,7 +394,7 @@ public class QueryConfigurationServiceConstraintsDistributedTest implements Seri
       // Index is valid.
       QueryService queryService = internalCache.getQueryService();
       queryService.createIndex(NAME_INDEX_IDENTIFIER, "e." + QueryObject.GET_NAME_METHOD,
-          "/" + regionName + " e");
+          SEPARATOR + regionName + " e");
       Index index =
           queryService.getIndex(internalCache.getRegion(regionName), NAME_INDEX_IDENTIFIER);
       assertThat(index.isValid()).isTrue();
@@ -440,7 +443,7 @@ public class QueryConfigurationServiceConstraintsDistributedTest implements Seri
       // Index is valid.
       QueryService queryService = internalCache.getQueryService();
       queryService.createIndex(ID_INDEX_IDENTIFIER, "e." + QueryObject.GET_ID_METHOD,
-          "/" + regionName + " e");
+          SEPARATOR + regionName + " e");
       Index index = queryService.getIndex(internalCache.getRegion(regionName), ID_INDEX_IDENTIFIER);
       assertThat(index.isValid()).isTrue();
 
@@ -493,7 +496,7 @@ public class QueryConfigurationServiceConstraintsDistributedTest implements Seri
       // Index is valid.
       QueryService queryService = internalCache.getQueryService();
       queryService.createIndex(ID_INDEX_IDENTIFIER, "e." + QueryObject.GET_ID_METHOD,
-          "/" + regionName + " e");
+          SEPARATOR + regionName + " e");
       Index index = queryService.getIndex(internalCache.getRegion(regionName), ID_INDEX_IDENTIFIER);
       assertThat(index.isValid()).isTrue();
 

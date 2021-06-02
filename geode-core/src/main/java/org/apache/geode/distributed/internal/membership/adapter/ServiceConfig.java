@@ -66,10 +66,9 @@ public class ServiceConfig implements MembershipConfig {
 
     joinTimeout = Long.getLong("p2p.joinTimeout", defaultJoinTimeout).longValue();
 
-    // if network partition detection is enabled, we must connect to the locators
-    // more frequently in order to make sure we're not isolated from them
     SocketCreator.resolve_dns = true;
-    if (theConfig.getEnableNetworkPartitionDetection()) {
+    if (theConfig.getEnableNetworkPartitionDetection() &&
+        !theConfig.getSSLEndPointIdentificationEnabled()) {
       if (!SocketCreator.FORCE_DNS_USE) {
         SocketCreator.resolve_dns = false;
       }
@@ -318,7 +317,7 @@ public class ServiceConfig implements MembershipConfig {
   }
 
   @Override
-  public Object getOldDSMembershipInfo() {
+  public Object getOldMembershipInfo() {
     return transport.getOldDSMembershipInfo();
   }
 

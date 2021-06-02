@@ -23,8 +23,7 @@ import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.CacheClosedException;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.management.DependenciesNotFoundException;
-import org.apache.geode.management.internal.cli.CliUtil;
-import org.apache.geode.management.internal.cli.remote.MemberCommandService;
+import org.apache.geode.management.internal.cli.CliUtils;
 
 /**
  * Processes remote GemFire Command Line Interface (CLI) commands. Refer to the vFabric GemFire
@@ -37,6 +36,7 @@ import org.apache.geode.management.internal.cli.remote.MemberCommandService;
  *
  * @deprecated since 1.3 use OnlineCommandProcessor directly
  */
+@Deprecated
 public abstract class CommandService {
   @Immutable
   protected static final Map<String, String> EMPTY_ENV = Collections.emptyMap();
@@ -123,7 +123,7 @@ public abstract class CommandService {
     }
 
     if (localCommandService == null || !localCommandService.isUsable()) {
-      String nonExistingDependency = CliUtil.cliDependenciesExist(false);
+      String nonExistingDependency = CliUtils.cliDependenciesExist(false);
       if (nonExistingDependency != null) {
         throw new DependenciesNotFoundException(
             String.format(
@@ -131,7 +131,9 @@ public abstract class CommandService {
                 nonExistingDependency));
       }
 
-      localCommandService = new MemberCommandService((InternalCache) cache);
+      localCommandService =
+          new org.apache.geode.management.internal.cli.remote.MemberCommandService(
+              (InternalCache) cache);
     }
 
     return localCommandService;

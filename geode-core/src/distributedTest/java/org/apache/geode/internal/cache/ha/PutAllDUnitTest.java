@@ -14,8 +14,10 @@
  */
 package org.apache.geode.internal.cache.ha;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
@@ -46,7 +48,6 @@ import org.apache.geode.cache.util.CacheListenerAdapter;
 import org.apache.geode.cache30.CacheSerializableRunnable;
 import org.apache.geode.cache30.ClientServerTestCase;
 import org.apache.geode.distributed.DistributedSystem;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.cache.CacheServerImpl;
 import org.apache.geode.internal.cache.EntryEventImpl;
 import org.apache.geode.internal.cache.EventID;
@@ -157,7 +158,7 @@ public class PutAllDUnitTest extends JUnit4DistributedTestCase {
     cache.createRegion(REGION_NAME, attrs);
     server = (CacheServerImpl) cache.addCacheServer();
     assertNotNull(server);
-    int port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    int port = getRandomAvailableTCPPort();
     server.setPort(port);
     server.setNotifyBySubscription(true);
     server.start();
@@ -202,7 +203,7 @@ public class PutAllDUnitTest extends JUnit4DistributedTestCase {
     factory.setCacheListener(clientListener);
     RegionAttributes attrs = factory.create();
     cache.createRegion(REGION_NAME, attrs);
-    Region region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region region = cache.getRegion(SEPARATOR + REGION_NAME);
     assertNotNull(region);
     region.registerInterest("ALL_KEYS", InterestResultPolicy.NONE);
     pool = p;
@@ -233,7 +234,7 @@ public class PutAllDUnitTest extends JUnit4DistributedTestCase {
     factory.setCacheListener(clientListener);
     RegionAttributes attrs = factory.create();
     cache.createRegion(REGION_NAME, attrs);
-    Region region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region region = cache.getRegion(SEPARATOR + REGION_NAME);
     assertNotNull(region);
     region.registerInterest("ALL_KEYS", InterestResultPolicy.NONE);
     pool = p;
@@ -389,7 +390,7 @@ public class PutAllDUnitTest extends JUnit4DistributedTestCase {
   }
 
   public static void assertGotAllValues() {
-    Region region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region region = cache.getRegion(SEPARATOR + REGION_NAME);
     assertNotNull(region);
     assertTrue(region.get(PUTALL_KEY1).equals(PUTALL_VALUE1));
     assertTrue(region.get(PUTALL_KEY2).equals(PUTALL_VALUE2));
@@ -413,7 +414,7 @@ public class PutAllDUnitTest extends JUnit4DistributedTestCase {
    * in a static variable*
    */
   public static Object[] putAll() {
-    Region region = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region region = cache.getRegion(SEPARATOR + REGION_NAME);
     assertNotNull(region);
     try {
       Map map = new LinkedHashMap();

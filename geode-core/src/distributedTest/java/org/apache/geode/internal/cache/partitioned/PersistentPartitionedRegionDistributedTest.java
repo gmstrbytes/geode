@@ -39,11 +39,7 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.junit.Assert.assertEquals;
 
 import java.io.Serializable;
-import java.net.Inet4Address;
 import java.net.InetAddress;
-import java.net.NetworkInterface;
-import java.net.SocketException;
-import java.net.UnknownHostException;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
@@ -125,7 +121,7 @@ public class PersistentPartitionedRegionDistributedTest implements Serializable 
   private VM vm2;
   private VM vm3;
 
-  private static final long TIMEOUT_MILLIS = GeodeAwaitility.getTimeout().getValueInMS();
+  private static final long TIMEOUT_MILLIS = GeodeAwaitility.getTimeout().toMillis();
 
   @Rule
   public DistributedRule distributedRule = new DistributedRule();
@@ -209,7 +205,7 @@ public class PersistentPartitionedRegionDistributedTest implements Serializable 
         .isInstanceOf(IllegalStateException.class).hasMessageContaining(
             String.format(
                 "For partition region %s,total-num-buckets %s should not be changed. Previous configured number is %s.",
-                "/" + partitionedRegionName, 2, 5));
+                SEPARATOR + partitionedRegionName, 2, 5));
 
     getCache().close();
 
@@ -217,7 +213,7 @@ public class PersistentPartitionedRegionDistributedTest implements Serializable 
         .isInstanceOf(IllegalStateException.class).hasMessageContaining(
             String.format(
                 "For partition region %s,total-num-buckets %s should not be changed. Previous configured number is %s.",
-                "/" + partitionedRegionName, 10, 5));
+                SEPARATOR + partitionedRegionName, 10, 5));
   }
 
   @Test
@@ -370,6 +366,8 @@ public class PersistentPartitionedRegionDistributedTest implements Serializable 
     Set<Integer> bucketsOnVM1 = vm1.invoke(this::getBucketList);
     assertThat(bucketsOnVM1).isEqualTo(bucketsOnVM0);
 
+    InetAddress vm1Address = vm1.invoke(() -> getSystem().getDistributedMember().getInetAddress());
+
     // This should fail with a revocation failed message
     try (IgnoredException ie = addIgnoredException(RevokeFailedException.class)) {
       vm2.invoke("revoke disk store should fail", () -> {
@@ -380,7 +378,7 @@ public class PersistentPartitionedRegionDistributedTest implements Serializable 
 
           try {
             adminDS.waitToBeConnected(MINUTES.toMillis(2));
-            adminDS.revokePersistentMember(getFirstInet4Address(), null);
+            adminDS.revokePersistentMember(vm1Address, null);
           } finally {
             adminDS.disconnect();
           }
@@ -402,7 +400,7 @@ public class PersistentPartitionedRegionDistributedTest implements Serializable 
       adminDS.connect();
       try {
         adminDS.waitToBeConnected(MINUTES.toMillis(2));
-        adminDS.revokePersistentMember(getFirstInet4Address(), diskDirPathOnVM1);
+        adminDS.revokePersistentMember(vm1Address, diskDirPathOnVM1);
       } finally {
         adminDS.disconnect();
       }
@@ -1528,7 +1526,7 @@ public class PersistentPartitionedRegionDistributedTest implements Serializable 
         .isInstanceOf(PartitionOfflineException.class);
 
     assertThatThrownBy(() -> getCache().getQueryService()
-        .newQuery("select * from /" + partitionedRegionName).execute())
+        .newQuery("select * from " + SEPARATOR + partitionedRegionName).execute())
             .isInstanceOf(PartitionOfflineException.class);
 
     Set<?> keys = region.keySet();
@@ -1671,19 +1669,6 @@ public class PersistentPartitionedRegionDistributedTest implements Serializable 
     } finally {
       adminDS.disconnect();
     }
-  }
-
-  private static InetAddress getFirstInet4Address() throws SocketException, UnknownHostException {
-    for (NetworkInterface netint : Collections.list(NetworkInterface.getNetworkInterfaces())) {
-      for (InetAddress inetAddress : Collections.list(netint.getInetAddresses())) {
-        if (inetAddress instanceof Inet4Address && !inetAddress.isLoopbackAddress()) {
-          return inetAddress;
-        }
-      }
-    }
-
-    // If no INet4Address was found for any of the interfaces above, default to getLocalHost()
-    return InetAddress.getLocalHost();
   }
 
   private InternalCache getCache() {

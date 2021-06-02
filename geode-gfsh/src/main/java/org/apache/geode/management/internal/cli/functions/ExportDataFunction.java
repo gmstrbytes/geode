@@ -34,12 +34,20 @@ import org.apache.geode.management.internal.i18n.CliStrings;
  *
  *
  */
-public class ExportDataFunction extends CliFunction {
+public class ExportDataFunction extends CliFunction<String[]> {
   private static final long serialVersionUID = 1L;
 
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.ExportDataFunction";
+
   @Override
-  public CliFunctionResult executeFunction(FunctionContext context) throws Exception {
-    final String[] args = (String[]) context.getArguments();
+  public String getId() {
+    return ID;
+  }
+
+  @Override
+  public CliFunctionResult executeFunction(FunctionContext<String[]> context) throws Exception {
+    final String[] args = context.getArguments();
     if (args.length < 3) {
       throw new IllegalStateException(
           "Arguments length does not match required length. Export command may have been sent from incompatible older version");
@@ -50,16 +58,16 @@ public class ExportDataFunction extends CliFunction {
     CliFunctionResult result;
 
     Cache cache = ((InternalCache) context.getCache()).getCacheForProcessingClientRequests();
-    Region<?, ?> region = cache.getRegion(regionName);
+    Region<Object, Object> region = cache.getRegion(regionName);
     String hostName = cache.getDistributedSystem().getDistributedMember().getHost();
     if (region != null) {
-      RegionSnapshotService<?, ?> snapshotService = region.getSnapshotService();
+      RegionSnapshotService<Object, Object> snapshotService = region.getSnapshotService();
       final File exportFile = new File(fileName);
       if (parallel) {
-        SnapshotOptions options = new SnapshotOptionsImpl<>().setParallelMode(true);
-        snapshotService.save(exportFile, SnapshotFormat.GEMFIRE, options);
+        SnapshotOptions<Object, Object> options = new SnapshotOptionsImpl<>().setParallelMode(true);
+        snapshotService.save(exportFile, SnapshotFormat.GEODE, options);
       } else {
-        snapshotService.save(exportFile, SnapshotFormat.GEMFIRE);
+        snapshotService.save(exportFile, SnapshotFormat.GEODE);
       }
 
       String successMessage = CliStrings.format(CliStrings.EXPORT_DATA__SUCCESS__MESSAGE,
@@ -73,10 +81,4 @@ public class ExportDataFunction extends CliFunction {
 
     return result;
   }
-
-  @Override
-  public String getId() {
-    return ExportDataFunction.class.getName();
-  }
-
 }

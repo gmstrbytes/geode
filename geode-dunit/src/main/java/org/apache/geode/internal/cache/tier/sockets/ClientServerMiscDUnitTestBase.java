@@ -14,10 +14,13 @@
  */
 package org.apache.geode.internal.cache.tier.sockets;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.LOG_LEVEL;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
+import static org.apache.geode.test.dunit.IgnoredException.addIgnoredException;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.Assert.assertEquals;
@@ -73,7 +76,6 @@ import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.DistributedSystem;
 import org.apache.geode.distributed.DistributedSystemDisconnectedException;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.cache.CachePerfStats;
 import org.apache.geode.internal.cache.CacheServerImpl;
 import org.apache.geode.internal.cache.GemFireCacheImpl;
@@ -83,7 +85,6 @@ import org.apache.geode.logging.internal.OSProcess;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.test.dunit.DistributedTestUtils;
 import org.apache.geode.test.dunit.Host;
-import org.apache.geode.test.dunit.IgnoredException;
 import org.apache.geode.test.dunit.NetworkUtils;
 import org.apache.geode.test.dunit.VM;
 import org.apache.geode.test.dunit.Wait;
@@ -168,7 +169,8 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
   }
 
   int initServerCache(boolean notifyBySub, VM vm, boolean isHA) {
-    return vm.invoke(() -> createServerCache(notifyBySub, getMaxThreads(), isHA));
+    int port = getRandomAvailableTCPPort();
+    return vm.invoke(() -> createServerCache(notifyBySub, getMaxThreads(), isHA, port));
   }
 
   @Test
@@ -180,11 +182,11 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
     host.getVM(testVersion, 1).invoke(() -> createClientCacheV(serverName, port2));
     LogService.getLogger()
         .info("Testing concurrent map operations from a client with a distributed region");
-    concurrentMapTest(host.getVM(testVersion, 0), "/" + REGION_NAME1);
+    concurrentMapTest(host.getVM(testVersion, 0), SEPARATOR + REGION_NAME1);
     // TODO add verification in vm1
     LogService.getLogger()
         .info("Testing concurrent map operations from a client with a partitioned region");
-    concurrentMapTest(host.getVM(testVersion, 0), "/" + PR_REGION_NAME);
+    concurrentMapTest(host.getVM(testVersion, 0), SEPARATOR + PR_REGION_NAME);
     // TODO add verification in vm1
   }
 
@@ -244,11 +246,11 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
     host.getVM(testVersion, 1).invoke(() -> createClientCacheV(serverName, port2));
     LogService.getLogger()
         .info("Testing concurrent map operations from a client with a distributed region");
-    concurrentMapTest(host.getVM(testVersion, 0), "/" + REGION_NAME1);
+    concurrentMapTest(host.getVM(testVersion, 0), SEPARATOR + REGION_NAME1);
     // TODO add verification in vm1
     LogService.getLogger()
         .info("Testing concurrent map operations from a client with a partitioned region");
-    concurrentMapTest(host.getVM(testVersion, 0), "/" + PR_REGION_NAME);
+    concurrentMapTest(host.getVM(testVersion, 0), SEPARATOR + PR_REGION_NAME);
     // TODO add verification in vm1
   }
 
@@ -738,7 +740,7 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
   @Test
   public void testSystemCanBeCycledWithAnInitializedPool() {
     // work around GEODE-477
-    IgnoredException.addIgnoredException("Connection reset");
+    addIgnoredException("Connection reset");
     Properties props = new Properties();
     props.setProperty(MCAST_PORT, "0");
     props.setProperty(LOCATORS, "");
@@ -787,7 +789,7 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
 
   @Test(expected = GemFireConfigException.class)
   public void clientIsPreventedFromConnectingToLocatorAsServer() {
-    IgnoredException.addIgnoredException("Improperly configured client detected");
+    addIgnoredException("Improperly configured client detected", VM.getLocator());
     ClientCacheFactory clientCacheFactory = new ClientCacheFactory();
     clientCacheFactory.addPoolServer("localhost", DistributedTestUtils.getDUnitLocatorPort());
     clientCacheFactory.setPoolSubscriptionEnabled(true);
@@ -944,8 +946,8 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
   }
 
 
-  public static Integer createServerCache(Boolean notifyBySubscription, Integer maxThreads,
-      boolean isHA) throws Exception {
+  protected static Integer createServerCache(Boolean notifyBySubscription, Integer maxThreads,
+      boolean isHA, int port) throws Exception {
     Cache cache = new ClientServerMiscDUnitTestBase().createCacheV(new Properties());
     unsetSlowDispatcherFlag();
     AttributesFactory factory = new AttributesFactory();
@@ -970,7 +972,6 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
     assertNotNull(pr);
 
     CacheServer server = cache.addCacheServer();
-    int port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
     r1.getCache().getDistributedSystem().getLogWriter().info("Starting server on port " + port);
     server.setPort(port);
     server.setMaxThreads(maxThreads);
@@ -988,7 +989,7 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
 
   public static void registerInterest() {
     Cache cache = new ClientServerMiscDUnitTestBase().getCache();
-    Region r = cache.getRegion(Region.SEPARATOR + REGION_NAME2);
+    Region r = cache.getRegion(SEPARATOR + REGION_NAME2);
     assertNotNull(r);
     r.registerInterest("ALL_KEYS");
     r.getAttributesMutator().addCacheListener(new MemberIDVerifier());
@@ -997,9 +998,9 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
   private static void registerInterestForInvalidatesInBothTheRegions() {
     try {
       Cache cache = new ClientServerMiscDUnitTestBase().getCache();
-      Region r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME1);
+      Region r1 = cache.getRegion(SEPARATOR + REGION_NAME1);
       assertNotNull(r1);
-      Region r2 = cache.getRegion(Region.SEPARATOR + REGION_NAME2);
+      Region r2 = cache.getRegion(SEPARATOR + REGION_NAME2);
       assertNotNull(r2);
       r1.registerInterestForAllKeys(InterestResultPolicy.KEYS, false, false);
       r2.registerInterestForAllKeys(InterestResultPolicy.KEYS, false, false);
@@ -1012,9 +1013,9 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
   private static void registerInterestInBothTheRegions() {
     try {
       Cache cache = new ClientServerMiscDUnitTestBase().getCache();
-      Region r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME1);
+      Region r1 = cache.getRegion(SEPARATOR + REGION_NAME1);
       assertNotNull(r1);
-      Region r2 = cache.getRegion(Region.SEPARATOR + REGION_NAME2);
+      Region r2 = cache.getRegion(SEPARATOR + REGION_NAME2);
       assertNotNull(r2);
       r1.registerInterestForAllKeys();
       r2.registerInterestForAllKeys();
@@ -1027,7 +1028,7 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
   private static void closeRegion1() {
     try {
       Cache cache = new ClientServerMiscDUnitTestBase().getCache();
-      Region<String, String> r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME1);
+      Region<String, String> r1 = cache.getRegion(SEPARATOR + REGION_NAME1);
       assertNotNull(r1);
       r1.close();
     } catch (Exception e) {
@@ -1039,9 +1040,9 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
   private static void closeBothRegions() {
     try {
       Cache cache = new ClientServerMiscDUnitTestBase().getCache();
-      Region r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME1);
-      Region r2 = cache.getRegion(Region.SEPARATOR + REGION_NAME2);
-      Region pr = cache.getRegion(Region.SEPARATOR + PR_REGION_NAME);
+      Region r1 = cache.getRegion(SEPARATOR + REGION_NAME1);
+      Region r2 = cache.getRegion(SEPARATOR + REGION_NAME2);
+      Region pr = cache.getRegion(SEPARATOR + PR_REGION_NAME);
       assertNotNull(r1);
       assertNotNull(r2);
       assertNotNull(pr);
@@ -1057,7 +1058,7 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
   private static void destroyRegion1() {
     try {
       Cache cache = new ClientServerMiscDUnitTestBase().getCache();
-      Region r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME1);
+      Region r1 = cache.getRegion(SEPARATOR + REGION_NAME1);
       assertNotNull(r1);
       r1.destroyRegion();
     } catch (Exception e) {
@@ -1069,7 +1070,7 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
   private static void destroyRegion2() {
     try {
       Cache cache = new ClientServerMiscDUnitTestBase().getCache();
-      Region r2 = cache.getRegion(Region.SEPARATOR + REGION_NAME2);
+      Region r2 = cache.getRegion(SEPARATOR + REGION_NAME2);
       assertNotNull(r2);
       r2.destroyRegion();
     } catch (Exception e) {
@@ -1081,7 +1082,7 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
   private static void destroyPRRegion() {
     try {
       Cache cache = new ClientServerMiscDUnitTestBase().getCache();
-      Region r2 = cache.getRegion(Region.SEPARATOR + PR_REGION_NAME);
+      Region r2 = cache.getRegion(SEPARATOR + PR_REGION_NAME);
       assertNotNull(r2);
       r2.destroyRegion();
     } catch (Exception e) {
@@ -1102,9 +1103,9 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
         // CCP should not contain region1
         Set<String> akr = ccp.cils[RegisterInterestTracker.interestListIndex].regions;
         assertNotNull(akr);
-        assertTrue(!akr.contains(Region.SEPARATOR + REGION_NAME1));
+        assertTrue(!akr.contains(SEPARATOR + REGION_NAME1));
         // CCP should contain region2
-        assertTrue(akr.contains(Region.SEPARATOR + REGION_NAME2));
+        assertTrue(akr.contains(SEPARATOR + REGION_NAME2));
         assertEquals(1, akr.size());
       }
     } catch (Exception ex) {
@@ -1135,7 +1136,7 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
   private static void verifyCacheClientProxyOnServer(String regionName) {
     try {
       Cache cache = new ClientServerMiscDUnitTestBase().getCache();
-      assertNull(cache.getRegion(Region.SEPARATOR + regionName));
+      assertNull(cache.getRegion(SEPARATOR + regionName));
       verifyCacheClientProxyOnServer();
 
       // assertIndexDetailsEquals(1,
@@ -1162,8 +1163,8 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
 
   public static void populateCache() {
     Cache cache = new ClientServerMiscDUnitTestBase().getCache();
-    Region r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME1);
-    Region r2 = cache.getRegion(Region.SEPARATOR + REGION_NAME2);
+    Region r1 = cache.getRegion(SEPARATOR + REGION_NAME1);
+    Region r2 = cache.getRegion(SEPARATOR + REGION_NAME2);
     assertNotNull(r1);
     assertNotNull(r2);
 
@@ -1184,8 +1185,8 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
 
   public static void put() {
     Cache cache = new ClientServerMiscDUnitTestBase().getCache();
-    Region r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME1);
-    Region r2 = cache.getRegion(Region.SEPARATOR + REGION_NAME2);
+    Region r1 = cache.getRegion(SEPARATOR + REGION_NAME1);
+    Region r2 = cache.getRegion(SEPARATOR + REGION_NAME2);
     assertNotNull(r1);
     assertNotNull(r2);
 
@@ -1203,7 +1204,7 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
 
   static void putForClient() {
     Cache cache = new ClientServerMiscDUnitTestBase().getCache();
-    Region r2 = cache.getRegion(Region.SEPARATOR + REGION_NAME2);
+    Region r2 = cache.getRegion(SEPARATOR + REGION_NAME2);
     if (r2 == null) {
       r2 = cache.createRegionFactory(RegionShortcut.REPLICATE).create(REGION_NAME2);
     }
@@ -1214,8 +1215,8 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
 
   private static void verifyUpdates() {
     Cache cache = new ClientServerMiscDUnitTestBase().getCache();
-    final Region r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME1);
-    final Region r2 = cache.getRegion(Region.SEPARATOR + REGION_NAME2);
+    final Region r1 = cache.getRegion(SEPARATOR + REGION_NAME1);
+    final Region r2 = cache.getRegion(SEPARATOR + REGION_NAME2);
     assertNotNull(r1);
     assertNotNull(r2);
 
@@ -1254,8 +1255,8 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
   private static void verifyInvalidatesOnBothRegions() {
     try {
       Cache cache = new ClientServerMiscDUnitTestBase().getCache();
-      final Region r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME1);
-      final Region r2 = cache.getRegion(Region.SEPARATOR + REGION_NAME2);
+      final Region r1 = cache.getRegion(SEPARATOR + REGION_NAME1);
+      final Region r2 = cache.getRegion(SEPARATOR + REGION_NAME2);
       assertNotNull(r1);
       assertNotNull(r2);
 
@@ -1279,7 +1280,7 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
   private static void verifyUpdatesOnRegion2() {
     try {
       Cache cache = new ClientServerMiscDUnitTestBase().getCache();
-      final Region r2 = cache.getRegion(Region.SEPARATOR + REGION_NAME2);
+      final Region r2 = cache.getRegion(SEPARATOR + REGION_NAME2);
       assertNotNull(r2);
 
       await()
@@ -1336,8 +1337,8 @@ public class ClientServerMiscDUnitTestBase extends JUnit4CacheTestCase {
       // add another server for HA scenario
       initServerCache(true, host.getVM(VersionManager.CURRENT_VERSION, 1), true);
     }
-    String rName = "/" + REGION_NAME1;
-    String prName = "/" + PR_REGION_NAME;
+    String rName = SEPARATOR + REGION_NAME1;
+    String prName = SEPARATOR + PR_REGION_NAME;
 
     verifyIsEmptyOnServer(rName, true);
     verifyIsEmptyOnServer(prName, true);

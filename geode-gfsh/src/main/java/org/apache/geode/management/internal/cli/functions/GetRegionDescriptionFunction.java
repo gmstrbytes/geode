@@ -22,14 +22,20 @@ import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.execute.InternalFunction;
 import org.apache.geode.management.internal.cli.domain.RegionDescriptionPerMember;
 
-public class GetRegionDescriptionFunction implements InternalFunction {
-
-
+public class GetRegionDescriptionFunction implements InternalFunction<String> {
   private static final long serialVersionUID = 1L;
 
+  private static final String ID =
+      "org.apache.geode.management.internal.cli.functions.GetRegionDescriptionFunction";
+
   @Override
-  public void execute(FunctionContext context) {
-    String regionPath = (String) context.getArguments();
+  public String getId() {
+    return ID;
+  }
+
+  @Override
+  public void execute(FunctionContext<String> context) {
+    String regionPath = context.getArguments();
     try {
       Cache cache = ((InternalCache) context.getCache()).getCacheForProcessingClientRequests();
       Region<?, ?> region = cache.getRegion(regionPath);

@@ -20,6 +20,7 @@ import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.cache.client.internal.RegisterInterestTracker.interestListIndex;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.apache.geode.internal.cache.tier.InterestType.KEY;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -51,7 +52,6 @@ import org.apache.geode.cache.client.internal.ServerRegionProxy;
 import org.apache.geode.cache.server.CacheServer;
 import org.apache.geode.distributed.DistributedSystem;
 import org.apache.geode.distributed.internal.ServerLocation;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.cache.CacheServerImpl;
 import org.apache.geode.internal.cache.ClientServerObserverAdapter;
 import org.apache.geode.internal.cache.ClientServerObserverHolder;
@@ -305,7 +305,7 @@ public class HAInterestTestCase extends JUnit4DistributedTestCase {
   }
 
   public static void putK1andK2() {
-    Region r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region r1 = cache.getRegion(SEPARATOR + REGION_NAME);
     assertNotNull(r1);
     r1.put(k1, server_k1);
     r1.put(k2, server_k2);
@@ -347,7 +347,7 @@ public class HAInterestTestCase extends JUnit4DistributedTestCase {
           Thread t = new Thread() {
             @Override
             public void run() {
-              Region r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+              Region r1 = cache.getRegion(SEPARATOR + REGION_NAME);
               assertNotNull(r1);
               r1.put(k1, server_k1_updated);
             }
@@ -530,7 +530,7 @@ public class HAInterestTestCase extends JUnit4DistributedTestCase {
   }
 
   public static void createEntriesK1andK2OnServer() {
-    Region r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region r1 = cache.getRegion(SEPARATOR + REGION_NAME);
     assertNotNull(r1);
     if (!r1.containsKey(k1)) {
       r1.create(k1, server_k1);
@@ -543,7 +543,7 @@ public class HAInterestTestCase extends JUnit4DistributedTestCase {
   }
 
   public static void createEntriesK1andK2() {
-    Region r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region r1 = cache.getRegion(SEPARATOR + REGION_NAME);
     assertNotNull(r1);
     if (!r1.containsKey(k1)) {
       r1.create(k1, client_k1);
@@ -556,7 +556,7 @@ public class HAInterestTestCase extends JUnit4DistributedTestCase {
   }
 
   public static void createServerEntriesK1andK2() {
-    Region r1 = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region r1 = cache.getRegion(SEPARATOR + REGION_NAME);
     assertNotNull(r1);
     if (!r1.containsKey(k1)) {
       r1.create(k1, server_k1);
@@ -569,7 +569,7 @@ public class HAInterestTestCase extends JUnit4DistributedTestCase {
   }
 
   public static void registerK1AndK2() {
-    Region r = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region r = cache.getRegion(SEPARATOR + REGION_NAME);
     assertNotNull(r);
     List list = new ArrayList();
     list.add(k1);
@@ -578,7 +578,7 @@ public class HAInterestTestCase extends JUnit4DistributedTestCase {
   }
 
   public static void reRegisterK1AndK2() {
-    Region r = cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    Region r = cache.getRegion(SEPARATOR + REGION_NAME);
     assertNotNull(r);
     List list = new ArrayList();
     list.add(k1);
@@ -765,7 +765,7 @@ public class HAInterestTestCase extends JUnit4DistributedTestCase {
   public static void registerK1AndK2OnPrimaryAndSecondaryAndVerifyResponse() {
     ServerLocation primary = pool.getPrimary();
     ServerLocation secondary = (ServerLocation) pool.getRedundants().get(0);
-    LocalRegion r = (LocalRegion) cache.getRegion(Region.SEPARATOR + REGION_NAME);
+    LocalRegion r = (LocalRegion) cache.getRegion(SEPARATOR + REGION_NAME);
     assertNotNull(r);
     ServerRegionProxy srp = new ServerRegionProxy(r);
     List list = new ArrayList();
@@ -1015,7 +1015,7 @@ public class HAInterestTestCase extends JUnit4DistributedTestCase {
     cache.createRegion(REGION_NAME, factory.create());
 
     CacheServer server = cache.addCacheServer();
-    int port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    int port = getRandomAvailableTCPPort();
     server.setPort(port);
     server.setMaximumTimeBetweenPings(180000);
     // ensures updates to be sent instead of invalidations
@@ -1033,7 +1033,7 @@ public class HAInterestTestCase extends JUnit4DistributedTestCase {
     cache.createRegion(REGION_NAME, attrs);
 
     CacheServer server = cache.addCacheServer();
-    int port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    int port = getRandomAvailableTCPPort();
     server.setPort(port);
     // ensures updates to be sent instead of invalidations
     server.setNotifyBySubscription(true);

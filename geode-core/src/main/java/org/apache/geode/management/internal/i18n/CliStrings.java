@@ -85,6 +85,8 @@ public class CliStrings {
   public static final String JAR = "jar";
   public static final String JARS = "jars";
 
+  public static final String NULL = "null";
+
   public static final String IFEXISTS_HELP =
       "If true, the command will be a no-op if the entity does not exist.";
   public static final String IFNOTEXISTS_HELP =
@@ -95,6 +97,11 @@ public class CliStrings {
       "The name of the class implementing CustomExpiry for entry idle time. Append json string for initialization properties.";
   public static final String ENTRY_TTL_CUSTOM_EXPIRY_HELP =
       "The name of the class implementing CustomExpiry for entry time to live. Append json string for initialization properties.";
+  public static final String DEPLOYMENT__NAME = "name";
+  public static final String DEPLOYMENT__NAMES = "names";
+  public static final String DEPLOYMENT__NAME__HELP = "The name for the jar deployment.";
+  public static final String CANNOT_SPECIFY_JARS_AND_DEPLOYMENT_NAMES =
+      "Cannot specify jars and names";
   private static final String LOG_LEVEL_VALUES =
       "Possible values for log-level include: ALL, TRACE, DEBUG, INFO, WARN, ERROR, FATAL, OFF.";
 
@@ -318,6 +325,50 @@ public class CliStrings {
   public static final String ALTER_DISK_STORE__REMOVE = "remove";
   public static final String ALTER_DISK_STORE__REMOVE__HELP =
       "Whether to remove the region from the disk store.";
+
+  /* alter gateway-sender */
+  public static final String ALTER_GATEWAYSENDER = "alter gateway-sender";
+  public static final String ALTER_GATEWAYSENDER__HELP =
+      "Alter some options for the Gateway Sender on a member or members.";
+  public static final String ALTER_GATEWAYSENDER__ID = "id";
+  public static final String ALTER_GATEWAYSENDER__ID__HELP = "ID of the gateway sender.";
+
+  public static final String ALTER_GATEWAYSENDER__GROUP__HELP =
+      "Group(s) of members on which to alter the gateway sender option.";
+  public static final String ALTER_GATEWAYSENDER__MEMBER__HELP =
+      "Name/Id of the member on which to alter the gateway sender option.";
+
+  public static final String ALTER_GATEWAYSENDER__ALERTTHRESHOLD = "alert-threshold";
+  public static final String ALTER_GATEWAYSENDER__ALERTTHRESHOLD__HELP =
+      "The alert threshold for entries in a gateway sender's queue.";
+
+  public static final String ALTER_GATEWAYSENDER__BATCHSIZE = "batch-size";
+  public static final String ALTER_GATEWAYSENDER__BATCHSIZE__HELP =
+      "The batch size for the gateway sender.";
+
+  public static final String ALTER_GATEWAYSENDER__BATCHTIMEINTERVAL = "batch-time-interval";
+  public static final String ALTER_GATEWAYSENDER__BATCHTIMEINTERVAL__HELP =
+      "The batch time interval for the gateway sender.";
+
+  public static final String ALTER_GATEWAYSENDER__GATEWAYEVENTFILTER = "gateway-event-filter";
+  public static final String ALTER_GATEWAYSENDER__GATEWAYEVENTFILTER__HELP =
+      "The list of fully qualified class names of GatewayEventFilters (separated by commas) to be associated with the GatewaySender.\n"
+          + "This serves as a callback for users to filter out events before dispatching to the remote distributed system.\n"
+          + "E.g gateway-event-filter=com.user.filters.MyFilter1,com.user.filters.MyFilters2";
+
+  public static final String ALTER_GATEWAYSENDER__GROUPTRANSACTIONEVENTS =
+      "group-transaction-events";
+  public static final String ALTER_GATEWAYSENDER__GROUPTRANSACTIONEVENTS__HELP =
+      "Ensure that all the events of a transaction are sent in the same batch, i.e., they are never spread across different batches.\n"
+          + "Only allowed on serial gateway senders with 1 dispatcher thread or on parallel ones.\n"
+          + "Note that in order to work for a transaction, the regions to which the transaction \n"
+          + "events belong must be replicated by the same set of senders with this flag enabled.";
+
+  public static final String ALTER_GATEWAYSENDER__RELEVANT__OPTION__MESSAGE =
+      "Please provide a relevant parameter(s)";
+  public static final String ALTER_GATEWAYSENDER__MSG__CAN_NOT_CREATE_DIFFERENT_VERSIONS =
+      "Alter Gateway Sender cannot be performed until all members are the current version";
+
 
   /* 'alter region' command */
   public static final String ALTER_REGION = "alter region";
@@ -548,13 +599,8 @@ public class CliStrings {
   public static final String CONNECT__LOCATOR__HELP =
       "Network address of the Locator in the form: host[port].";
   public static final String CONNECT__URL = "url";
-  public static final String CONNECT__DEFAULT_BASE_URL =
-      "http://localhost:" + DistributionConfig.DEFAULT_HTTP_SERVICE_PORT + "/geode-mgmt/v1";
-  public static final String CONNECT__DEFAULT_SSL_BASE_URL =
-      "https://localhost:" + DistributionConfig.DEFAULT_HTTP_SERVICE_PORT + "/geode-mgmt/v1";
   public static final String CONNECT__URL__HELP =
-      "Indicates the base URL to the Manager's HTTP service.  For example: 'http://<host>:<port>/gemfire/v1' Default is '"
-          + CONNECT__DEFAULT_BASE_URL + "'";
+      "Indicates the base URL to the Manager's HTTP service.  For example: 'http://<host>:<port>/geode-mgmt/v1'";
   public static final String CONNECT__USE_HTTP = "use-http";
   public static final String CONNECT__USE_HTTP__HELP =
       "[Deprecated: inferred by the presence of --url]. Connects to Manager by sending HTTP requests to HTTP service hosting the Management REST API. You must first 'disconnect' in order to reconnect to the Manager via locator or jmx-manager using JMX.";
@@ -564,6 +610,8 @@ public class CliStrings {
   public static final String CONNECT__PASSWORD = "password";
   public static final String CONNECT__PASSWORD__HELP =
       "Password to securely connect to the jmx-manager.";
+  public static final String CONNECT__TOKEN = "token";
+  public static final String CONNECT__TOKEN__HELP = "Token to securely connect to the jmx-manager.";
   public static final String CONNECT__KEY_STORE = "key-store";
   public static final String CONNECT__KEY_STORE__HELP =
       "Java keystore file containing this application's certificate and private key. If the --key-store-password parameter is not specified then it will be prompted for.";
@@ -1653,6 +1701,14 @@ public class CliStrings {
   public static final String LIST_FUNCTION__NO_FUNCTIONS_FOUND_ERROR_MESSAGE = "No Functions Found";
 
   public static final String LIST_GATEWAY = "list gateways";
+  public static final String LIST_GATEWAY__SHOW_SENDERS_ONLY = "senders-only";
+  public static final String LIST_GATEWAY__SHOW_SENDERS_ONLY__HELP =
+      "Display gateway senders only.";
+  public static final String LIST_GATEWAY__SHOW_RECEIVERS_ONLY = "receivers-only";
+  public static final String LIST_GATEWAY__SHOW_RECEIVERS_ONLY__HELP =
+      "Display gateway receivers only.";
+  public static final String LIST_GATEWAY__ERROR_ON_SHOW_PARAMETERS =
+      "Options --senders-only and --receivers-only cannot be used together.";
   public static final String LIST_GATEWAY__HELP =
       "Display the Gateway Senders and Receivers for a member or members.";
   public static final String LIST_GATEWAY__GROUP__HELP =
@@ -1818,6 +1874,8 @@ public class CliStrings {
       "Cannot find regions <{0}> in any of the members";
   public static final String QUERY__MSG__NOT_SUPPORTED_ON_MEMBERS = CliStrings.QUERY
       + " command should be used only from shell. Use QueryService API for running query inside Geode VMs";
+  public static final String QUERY__MEMBER__HELP =
+      "Name/Id of a member on which to execute the query.";
 
   /* 'rebalance' command */
   public static final String REBALANCE = "rebalance";
@@ -1863,6 +1921,8 @@ public class CliStrings {
       "Total primaries transferred during this rebalance";
   public static final String REBALANCE__MSG__TOTALTIME =
       "Total time (in milliseconds) for this rebalance";
+  public static final String REBALANCE__MSG__MEMBER_COUNT =
+      "Total number of members in system on which rebalance is executed";
   public static final String REBALANCE__MSG__NO_REBALANCING_REGIONS_ON_DS =
       "Distributed system has no regions that can be rebalanced";
   public static final String REBALANCE__MSG__EXCEPTION_IN_REBALANCE_FOR_MEMBER_0_Exception =
@@ -1884,6 +1944,23 @@ public class CliStrings {
       "No regions associated with more than 1 members";
   public static final String REBALANCE__MSG__EXCEPTION_OCCURRED_WHILE_REBALANCING_0 =
       "Exception occurred while rebalancing. Reason : {0}";
+
+  /* redundancy commands */
+  public static final String STATUS_REDUNDANCY = "status redundancy";
+  public static final String STATUS_REDUNDANCY_HELP =
+      "Report the redundancy status for partitioned regions in connected members. The default is to report status for all regions.";
+  public static final String RESTORE_REDUNDANCY = "restore redundancy";
+  public static final String RESTORE_REDUNDANCY_HELP =
+      "Restore redundancy and optionally reassign primary bucket hosting for partitioned regions in connected members. The default is for all regions to have redundancy restored and for primary buckets to be reassigned for better load balance.";
+  public static final String REDUNDANCY_INCLUDE_REGION = "include-region";
+  public static final String REDUNDANCY_INCLUDE_REGION_HELP =
+      "Partitioned regions to be included in the operation. Includes take precedence over excludes.";
+  public static final String REDUNDANCY_EXCLUDE_REGION = "exclude-region";
+  public static final String REDUNDANCY_EXCLUDE_REGION_HELP =
+      "Partitioned regions to be excluded from the operation.";
+  public static final String REDUNDANCY_REASSIGN_PRIMARIES = "reassign-primaries";
+  public static final String REDUNDANCY_REASSIGN_PRIMARIES_HELP =
+      "If false, this operation will not attempt to reassign which members host primary buckets.";
 
   /* remove command */
   public static final String REMOVE = "remove";
@@ -2177,6 +2254,13 @@ public class CliStrings {
       "remote-distributed-system-id";
   public static final String CREATE_GATEWAYSENDER__REMOTEDISTRIBUTEDSYSTEMID__HELP =
       "Id of the remote distributed system to which the sender will send events.";
+  public static final String CREATE_GATEWAYSENDER__GROUPTRANSACTIONEVENTS =
+      "group-transaction-events";
+  public static final String CREATE_GATEWAYSENDER__GROUPTRANSACTIONEVENTS__HELP =
+      "Ensure that all the events of a transaction are sent in the same batch, i.e., they are never spread across different batches.\n"
+          + "Only allowed on serial gateway senders with 1 dispatcher thread or on parallel ones.\n"
+          + "Note that in order to work for a transaction, the regions to which the transaction \n"
+          + "events belong must be replicated by the same set of senders with this flag enabled.";
   public static final String CREATE_GATEWAYSENDER__PARALLEL = "parallel";
   public static final String CREATE_GATEWAYSENDER__PARALLEL__HELP =
       "Whether this is Parallel GatewaySender.";
@@ -2234,8 +2318,12 @@ public class CliStrings {
       "GatewaySender \"{0}\" created on \"{1}\"";
   public static final String CREATE_GATEWAYSENDER__MSG__CAN_NOT_CREATE_DIFFERENT_VERSIONS =
       "Gateway Sender cannot be created until all members are the current version";
+  public static final String CREATE_GATEWAYSENDER__ENFORCE_THREADS_CONNECT_SAME_RECEIVER =
+      "enforce-threads-connect-same-receiver";
+  public static final String CREATE_GATEWAYSENDER__ENFORCE_THREADS_CONNECT_SAME_RECEIVER__HELP =
+      "Whether or not the sender threads have to verify the receiver member id to verify if they are connected to the same server.";
 
-  /* stop gateway-receiver */
+  /* start gateway-sender */
   public static final String START_GATEWAYSENDER = "start gateway-sender";
   public static final String START_GATEWAYSENDER__HELP =
       "Start the Gateway Sender on a member or members.";
@@ -2246,6 +2334,10 @@ public class CliStrings {
   public static final String START_GATEWAYSENDER__MEMBER__HELP =
       "Name/Id of the member on which to start the Gateway Sender.";
 
+  public static final String START_GATEWAYSENDER__CLEAN_QUEUE = "clean-queues";
+  public static final String START_GATEWAYSENDER__CLEAN_QUEUE__HELP =
+      "Option to clean existing queue at start of the Gateway Sender. " +
+          "This option is only applicable for Gateway Senders with enabled persistence.";
 
   /* destroy gateway-sender */
   public static final String DESTROY_GATEWAYSENDER = "destroy gateway-sender";
@@ -2401,7 +2493,8 @@ public class CliStrings {
           + "\" directory.";
   public static final String START_LOCATOR__CLUSTER__CONFIG__DIR = "cluster-config-dir";
   public static final String START_LOCATOR__CLUSTER__CONFIG__DIR__HELP =
-      "Directory used by the cluster configuration service to store the cluster configuration on the filesystem";
+      "Deprecated: Since Geode 1.14, use import/export cluster-configuration command instead. " +
+          "This option has no effect since 1.12.";
   public static final String START_LOCATOR__HTTP_SERVICE_PORT = "http-service-port";
   public static final String START_LOCATOR__HTTP_SERVICE_PORT__HELP =
       "Port on which HTTP Service will listen on";
@@ -2531,16 +2624,18 @@ public class CliStrings {
   public static final String START_SERVER__PROPERTIES = "properties-file";
   public static final String START_SERVER__PROPERTIES__HELP =
       "The gemfire.properties file for configuring the Cache Server's distributed system. The file's path can be absolute or relative to the gfsh working directory.";
-  public static final String START_SERVER__REDIS_PORT = ConfigurationProperties.REDIS_PORT;
-  public static final String START_SERVER__REDIS_PORT__HELP =
-      "Sets the port that the Geode Redis service listens on for Redis clients.";
   public static final String START_SERVER__REDIS_BIND_ADDRESS =
       ConfigurationProperties.REDIS_BIND_ADDRESS;
   public static final String START_SERVER__REDIS_BIND_ADDRESS__HELP =
-      "Sets the IP address the Geode Redis service listens on for Redis clients. The default is to bind to the first non-loopback address for this machine.";
+      "Specifies the address on which the Redis API for Geode is listening. "
+          + "If set to the empty string or this property is not specified, the server listens on all local addresses.";
   public static final String START_SERVER__REDIS_PASSWORD = ConfigurationProperties.REDIS_PASSWORD;
   public static final String START_SERVER__REDIS_PASSWORD__HELP =
-      "Sets the authentication password for GeodeRedisServer";
+      "Specifies the password that the server uses when a client attempts to authenticate."
+          + " The default is none and no authentication will be required.";
+  public static final String START_SERVER__REDIS_PORT = ConfigurationProperties.REDIS_PORT;
+  public static final String START_SERVER__REDIS_PORT__HELP =
+      "Specifies the port on which the server listens for Redis API for Geode connections. A value of 0 selects a random port.  Default is 6379.";
   public static final String START_SERVER__SECURITY_PROPERTIES = "security-properties-file";
   public static final String START_SERVER__SECURITY_PROPERTIES__HELP =
       "The gfsecurity.properties file for configuring the Server's security configuration in the distributed system. The file's path can be absolute or relative to gfsh directory.";
@@ -2866,6 +2961,8 @@ public class CliStrings {
   public static final String SENDER_PARALLEL = "Parallel";
   public static final String SENDER_SERIAL = "Serial";
   public static final String GATEWAY_RUNNING = "Running";
+  public static final String GATEWAY_RUNNING_NOT_CONNECTED = "Running, not Connected";
+  public static final String GATEWAY_RUNNING_CONNECTED = "Running and Connected";
   public static final String GATEWAY_NOT_RUNNING = "Not Running";
   public static final String SENDER_PAUSED = "Paused";
   public static final String SENDER_PRIMARY = "Primary";
@@ -2930,6 +3027,8 @@ public class CliStrings {
       "Could not invoke start gateway sender {0} operation on members due to {1}";
   public static final String GATEWAY_SENDER_0_COULD_NOT_BE_STARTED_ON_MEMBER_DUE_TO_1 =
       "Could not start gateway sender {0} on member due to {1}";
+  public static final String GATEWAY_SENDER_0_IS_UPDATED_ON_MEMBER_1 =
+      "GatewaySender {0} is updated on member {1}";
   /* end gateway command messages */
 
   /***

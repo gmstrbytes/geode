@@ -16,12 +16,13 @@
  */
 package org.apache.geode.management.internal.configuration.realizers;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.powermock.api.mockito.PowerMockito.when;
+import static org.mockito.Mockito.when;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -42,6 +43,7 @@ public class RegionConfigRealizerTest {
   RegionConfigRealizer realizer;
   RegionConfigValidator validator;
   Region config;
+  org.apache.geode.cache.Region region;
 
   @Before
   public void setup() {
@@ -52,6 +54,7 @@ public class RegionConfigRealizerTest {
     realizer = new RegionConfigRealizer();
     config = new Region();
     config.setName("test");
+    region = mock(org.apache.geode.cache.Region.class);
   }
 
   @Test
@@ -73,7 +76,7 @@ public class RegionConfigRealizerTest {
   }
 
   @Test
-  public void getRegionFactory() throws Exception {
+  public void getRegionFactory() {
     config.setType(RegionType.REPLICATE);
     config.setDiskStoreName("diskstore");
     config.setKeyConstraint("java.lang.String");
@@ -88,7 +91,7 @@ public class RegionConfigRealizerTest {
 
 
   @Test
-  public void createPartitionRegion() throws Exception {
+  public void createPartitionRegion() {
     config.setType(RegionType.PARTITION);
     config.setRedundantCopies(2);
 
@@ -101,7 +104,7 @@ public class RegionConfigRealizerTest {
   }
 
   @Test
-  public void getRegionFactoryWhenValueNotSet() throws Exception {
+  public void getRegionFactoryWhenValueNotSet() {
     config.setType(RegionType.REPLICATE);
     config.setDiskStoreName(null);
     config.setKeyConstraint(null);
@@ -112,5 +115,30 @@ public class RegionConfigRealizerTest {
     verify(regionFactory, never()).setValueConstraint(any());
     verify(regionFactory, never()).setDiskStoreName(any());
     verify(regionFactory).setDataPolicy(DataPolicy.REPLICATE);
+  }
+
+  @Test
+  public void regionDoesNotExistIfNotInCache() {
+    config.setName("test");
+    when(cache.getRegion(SEPARATOR + "test")).thenReturn(null);
+    assertThat(realizer.exists(config, cache)).isFalse();
+  }
+
+
+  @Test
+  public void regionDoesNotExistIfDestroyed() {
+    when(cache.getRegion(SEPARATOR + "test")).thenReturn(region);
+    when(region.isDestroyed()).thenReturn(true);
+    assertThat(realizer.exists(config, cache)).isFalse();
+  }
+
+  @Test
+  public void regionExistsDoesNotGetRuntimeInfo() {
+    config.setName("test");
+    when(cache.getRegion(SEPARATOR + "test")).thenReturn(region);
+    when(region.isDestroyed()).thenReturn(false);
+    boolean exists = realizer.exists(config, cache);
+    assertThat(exists).isTrue();
+    verify(region, never()).size();
   }
 }

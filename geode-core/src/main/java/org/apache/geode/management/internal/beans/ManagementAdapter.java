@@ -40,6 +40,7 @@ import static org.apache.geode.management.JMXNotificationType.GATEWAY_SENDER_STO
 import static org.apache.geode.management.JMXNotificationType.LOCATOR_STARTED;
 import static org.apache.geode.management.JMXNotificationType.LOCK_SERVICE_CLOSED;
 import static org.apache.geode.management.JMXNotificationType.LOCK_SERVICE_CREATED;
+import static org.apache.geode.management.JMXNotificationType.MANAGER_STARTED;
 import static org.apache.geode.management.JMXNotificationType.REGION_CLOSED;
 import static org.apache.geode.management.JMXNotificationType.REGION_CREATED;
 import static org.apache.geode.management.JMXNotificationType.SYSTEM_ALERT;
@@ -71,6 +72,7 @@ import static org.apache.geode.management.internal.ManagementConstants.GATEWAY_S
 import static org.apache.geode.management.internal.ManagementConstants.LOCATOR_STARTED_PREFIX;
 import static org.apache.geode.management.internal.ManagementConstants.LOCK_SERVICE_CLOSED_PREFIX;
 import static org.apache.geode.management.internal.ManagementConstants.LOCK_SERVICE_CREATED_PREFIX;
+import static org.apache.geode.management.internal.ManagementConstants.MANAGER_STARTED_PREFIX;
 import static org.apache.geode.management.internal.ManagementConstants.REGION_CLOSED_PREFIX;
 import static org.apache.geode.management.internal.ManagementConstants.REGION_CREATED_PREFIX;
 
@@ -105,7 +107,7 @@ import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.InternalLocator;
 import org.apache.geode.distributed.internal.locks.DLockService;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
-import org.apache.geode.internal.ClassLoadUtil;
+import org.apache.geode.internal.ClassLoadUtils;
 import org.apache.geode.internal.cache.CacheService;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.PartitionedRegionHelper;
@@ -252,7 +254,7 @@ public class ManagementAdapter {
       try {
         ObjectInstance instance = mbeanServer.getObjectInstance(objectName);
         String className = instance.getClassName();
-        Class clazz = ClassLoadUtil.classFromName(className);
+        Class clazz = ClassLoadUtils.classFromName(className);
         Type[] interfaceTypes = clazz.getGenericInterfaces();
 
         FederationComponent federation =
@@ -311,7 +313,7 @@ public class ManagementAdapter {
       try {
         ObjectInstance instance = mbeanServer.getObjectInstance(objectName);
         String className = instance.getClassName();
-        Class clazz = ClassLoadUtil.classFromName(className);
+        Class clazz = ClassLoadUtils.classFromName(className);
         Type[] interfaceTypes = clazz.getGenericInterfaces();
 
         FederationComponent federation =
@@ -343,7 +345,12 @@ public class ManagementAdapter {
     ManagerMBeanBridge managerMBeanBridge = new ManagerMBeanBridge(service);
     ManagerMXBean managerMXBean = new ManagerMBean(managerMBeanBridge);
 
-    service.registerInternalMBean(managerMXBean, objectName);
+    ObjectName federatedName = service.registerInternalMBean(managerMXBean, objectName);
+    service.federate(federatedName, ManagerMXBean.class, true);
+
+    Notification notification = new Notification(MANAGER_STARTED, memberSource,
+        SequenceNumber.next(), System.currentTimeMillis(), MANAGER_STARTED_PREFIX);
+    memberLevelNotificationEmitter.sendNotification(notification);
   }
 
   /**

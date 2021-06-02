@@ -14,6 +14,7 @@
  */
 package org.apache.geode.rest.internal.web.controllers;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.HTTP_SERVICE_BIND_ADDRESS;
 import static org.apache.geode.distributed.ConfigurationProperties.HTTP_SERVICE_PORT;
 import static org.apache.geode.distributed.ConfigurationProperties.JMX_MANAGER;
@@ -22,6 +23,7 @@ import static org.apache.geode.distributed.ConfigurationProperties.JMX_MANAGER_S
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
 import static org.apache.geode.distributed.ConfigurationProperties.START_DEV_REST_API;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.BufferedReader;
@@ -61,9 +63,7 @@ import org.apache.geode.cache.client.ClientCache;
 import org.apache.geode.cache.client.ClientCacheFactory;
 import org.apache.geode.cache.client.ClientRegionFactory;
 import org.apache.geode.cache.client.ClientRegionShortcut;
-import org.apache.geode.cache.client.internal.LocatorTestBase;
 import org.apache.geode.cache.server.CacheServer;
-import org.apache.geode.internal.AvailablePortHelper;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.xmlcache.RegionAttributesCreation;
 import org.apache.geode.pdx.PdxInstance;
@@ -77,19 +77,23 @@ import org.apache.geode.test.junit.runners.CategoryWithParameterizedRunnerFactor
  *
  * @since GemFire 8.0
  */
+@SuppressWarnings("deprecation")
 @Category({RestAPITest.class})
 @RunWith(Parameterized.class)
 @Parameterized.UseParametersRunnerFactory(CategoryWithParameterizedRunnerFactory.class)
-public class RestAPIsAndInterOpsDUnitTest extends LocatorTestBase {
+public class RestAPIsAndInterOpsDUnitTest
+    extends org.apache.geode.cache.client.internal.LocatorTestBase {
 
   private static final String PEOPLE_REGION_NAME = "People";
 
   private static final String findAllPeopleQuery =
-      "/queries?id=findAllPeople&q=SELECT%20*%20FROM%20/People";
+      "/queries?id=findAllPeople&q=SELECT%20*%20FROM%20" + SEPARATOR + "People";
   private static final String findPeopleByGenderQuery =
-      "/queries?id=filterByGender&q=SELECT%20*%20from%20/People%20where%20gender=$1";
+      "/queries?id=filterByGender&q=SELECT%20*%20from%20" + SEPARATOR
+          + "People%20where%20gender=$1";
   private static final String findPeopleByLastNameQuery =
-      "/queries?id=filterByLastName&q=SELECT%20*%20from%20/People%20where%20lastName=$1";
+      "/queries?id=filterByLastName&q=SELECT%20*%20from%20" + SEPARATOR
+          + "People%20where%20lastName=$1";
 
   private static final String[] PARAM_QUERY_IDS_ARRAY =
       {"findAllPeople", "filterByGender", "filterByLastName"};
@@ -164,6 +168,8 @@ public class RestAPIsAndInterOpsDUnitTest extends LocatorTestBase {
   }
 
   private int startManager(final String locators, final String[] regions) throws IOException {
+    int httpPort = getRandomAvailableTCPPort();
+
     Properties props = new Properties();
     props.setProperty(MCAST_PORT, String.valueOf(0));
     props.setProperty(LOCATORS, locators);
@@ -172,7 +178,6 @@ public class RestAPIsAndInterOpsDUnitTest extends LocatorTestBase {
     props.setProperty(JMX_MANAGER_START, "true");
     props.setProperty(JMX_MANAGER_PORT, "0");
 
-    final int httpPort = AvailablePortHelper.getRandomAvailableTCPPort();
     // Set REST service related configuration
     props.setProperty(START_DEV_REST_API, "true");
     props.setProperty(HTTP_SERVICE_BIND_ADDRESS, "localhost");
@@ -186,7 +191,7 @@ public class RestAPIsAndInterOpsDUnitTest extends LocatorTestBase {
 
   private String startBridgeServerWithRestService(final String hostName, final String locators,
       final String[] regions) throws IOException {
-    final int serverPort = AvailablePortHelper.getRandomAvailableTCPPort();
+    final int serverPort = getRandomAvailableTCPPort();
     // create Cache of given VM and start HTTP service with REST APIs service
     Properties props = new Properties();
     props.setProperty(MCAST_PORT, String.valueOf(0));
@@ -195,14 +200,14 @@ public class RestAPIsAndInterOpsDUnitTest extends LocatorTestBase {
     props.setProperty(HTTP_SERVICE_BIND_ADDRESS, hostName);
     props.setProperty(HTTP_SERVICE_PORT, String.valueOf(serverPort));
 
-    InternalCache cache = (InternalCache) new CacheFactory(props).create();
-    cache.setReadSerializedForTest(true);
+    InternalCache cache =
+        (InternalCache) new CacheFactory(props).setPdxReadSerialized(true).create();
     CacheServer server = createRegionAndStartCacheServer(regions, cache);
 
     remoteObjects.put(CACHE_KEY, cache);
     server.getPort();
 
-    return "http://" + hostName + ":" + serverPort + this.urlContext + "/v1";
+    return "http://" + hostName + ":" + serverPort + urlContext + "/v1";
   }
 
   private void doPutsInClientCache() {

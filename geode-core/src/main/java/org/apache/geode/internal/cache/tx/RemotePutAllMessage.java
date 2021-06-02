@@ -62,9 +62,9 @@ import org.apache.geode.internal.logging.log4j.LogMarker;
 import org.apache.geode.internal.offheap.annotations.Released;
 import org.apache.geode.internal.serialization.ByteArrayDataInput;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
 import org.apache.geode.internal.serialization.StaticSerialization;
-import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 
 /**
@@ -237,10 +237,10 @@ public class RemotePutAllMessage extends RemoteOperationMessageWithDirectReply {
     this.putAllDataCount = (int) InternalDataSerializer.readUnsignedVL(in);
     this.putAllData = new PutAllEntryData[putAllDataCount];
     if (this.putAllDataCount > 0) {
-      final Version version = StaticSerialization.getVersionForDataStreamOrNull(in);
+      final KnownVersion version = StaticSerialization.getVersionForDataStreamOrNull(in);
       final ByteArrayDataInput bytesIn = new ByteArrayDataInput();
       for (int i = 0; i < this.putAllDataCount; i++) {
-        this.putAllData[i] = new PutAllEntryData(in, context, this.eventId, i, version, bytesIn);
+        this.putAllData[i] = new PutAllEntryData(in, context, this.eventId, i);
       }
 
       boolean hasTags = in.readBoolean();
@@ -363,6 +363,7 @@ public class RemotePutAllMessage extends RemoteOperationMessageWithDirectReply {
       final DistributedPutAllOperation dpao =
           new DistributedPutAllOperation(baseEvent, putAllDataCount, false);
       try {
+        r.lockRVVForBulkOp();
         final VersionedObjectList versions =
             new VersionedObjectList(putAllDataCount, true, dr.getConcurrencyChecksEnabled());
         dr.syncBulkOp(new Runnable() {
@@ -397,6 +398,7 @@ public class RemotePutAllMessage extends RemoteOperationMessageWithDirectReply {
             this.putAllDataCount);
         return false;
       } finally {
+        r.unlockRVVForBulkOp();
         dpao.freeOffHeapResources();
       }
     } finally {

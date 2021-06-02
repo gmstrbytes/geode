@@ -104,6 +104,7 @@ import org.apache.geode.internal.cache.tier.sockets.ClientDataSerializerMessage;
 import org.apache.geode.internal.cache.tier.sockets.ClientProxyMembershipID;
 import org.apache.geode.internal.cache.tier.sockets.OldClientSupportService;
 import org.apache.geode.internal.cache.tier.sockets.Part;
+import org.apache.geode.internal.classloader.ClassPathLoader;
 import org.apache.geode.internal.lang.ClassUtils;
 import org.apache.geode.internal.logging.log4j.LogMarker;
 import org.apache.geode.internal.serialization.BasicSerializable;
@@ -113,12 +114,12 @@ import org.apache.geode.internal.serialization.DSFIDSerializerFactory;
 import org.apache.geode.internal.serialization.DataSerializableFixedID;
 import org.apache.geode.internal.serialization.DeserializationContext;
 import org.apache.geode.internal.serialization.DscodeHelper;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.ObjectDeserializer;
 import org.apache.geode.internal.serialization.ObjectSerializer;
 import org.apache.geode.internal.serialization.SerializationContext;
 import org.apache.geode.internal.serialization.SerializationVersions;
 import org.apache.geode.internal.serialization.StaticSerialization;
-import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.internal.serialization.VersionedDataStream;
 import org.apache.geode.internal.util.concurrent.CopyOnWriteHashMap;
 import org.apache.geode.logging.internal.log4j.api.LogService;
@@ -245,10 +246,7 @@ public abstract class InternalDataSerializer extends DataSerializer {
   private static final ConcurrentHashMap<String, SerializerAttributesHolder> supportedClassesToHolders =
       new ConcurrentHashMap<>();
   private static final Object listenersSync = new Object();
-  @MakeNotStatic
-  private static final ConcurrentMap<Integer, String> dsfidToClassMap =
-      logger.isTraceEnabled(LogMarker.SERIALIZER_WRITE_DSFID_VERBOSE) ? new ConcurrentHashMap<>()
-          : null;
+
   private static final ThreadLocal<Boolean> pdxSerializationInProgress = new ThreadLocal<>();
   @MakeNotStatic
   private static final CopyOnWriteHashMap<String, WeakReference<Class<?>>> classCache =
@@ -355,9 +353,9 @@ public abstract class InternalDataSerializer extends DataSerializer {
 
     if (out instanceof VersionedDataStream) {
       VersionedDataStream vout = (VersionedDataStream) out;
-      Version version = vout.getVersion();
+      KnownVersion version = vout.getVersion();
       if (null != version) {
-        if (version.compareTo(Version.GEODE_1_9_0) < 0) {
+        if (version.isOlderThan(KnownVersion.GEODE_1_9_0)) {
           if (name.equals(POST_GEODE_190_SERVER_CQIMPL)) {
             return PRE_GEODE_190_SERVER_CQIMPL;
           }
@@ -406,10 +404,9 @@ public abstract class InternalDataSerializer extends DataSerializer {
    */
   public static Collection<String> loadClassNames(URL sanctionedSerializables) throws IOException {
     ArrayList<String> result = new ArrayList<>(1000);
-    InputStream inputStream = sanctionedSerializables.openStream();
-    InputStreamReader reader = new InputStreamReader(inputStream);
-    BufferedReader in = new BufferedReader(reader);
-    try {
+    try (InputStream inputStream = sanctionedSerializables.openStream();
+        InputStreamReader reader = new InputStreamReader(inputStream);
+        BufferedReader in = new BufferedReader(reader)) {
       String line;
       while ((line = in.readLine()) != null) {
         line = line.trim();
@@ -418,8 +415,6 @@ public abstract class InternalDataSerializer extends DataSerializer {
           result.add(line.substring(0, line.indexOf(',')));
         }
       }
-    } finally {
-      inputStream.close();
     }
     // logger.info("loaded {} class names from {}", result.size(), sanctionedSerializables);
     return result;
@@ -2166,6 +2161,11 @@ public abstract class InternalDataSerializer extends DataSerializer {
           public void write(int b) throws IOException {
             out2.write(b);
           }
+
+          @Override
+          public void write(byte[] b, int off, int len) throws IOException {
+            out2.write(b, off, len);
+          }
         };
       }
       boolean wasDoNotCopy = false;
@@ -2179,8 +2179,8 @@ public abstract class InternalDataSerializer extends DataSerializer {
       try {
         ObjectOutput oos = new ObjectOutputStream(stream);
         if (stream instanceof VersionedDataStream) {
-          Version v = ((VersionedDataStream) stream).getVersion();
-          if (v != null && v != Version.CURRENT) {
+          KnownVersion v = ((VersionedDataStream) stream).getVersion();
+          if (v != null && v != KnownVersion.CURRENT) {
             oos = new VersionedObjectOutput(oos, v);
           }
         }
@@ -2212,11 +2212,11 @@ public abstract class InternalDataSerializer extends DataSerializer {
         return;
       }
       boolean invoked = false;
-      Version v = StaticSerialization.getVersionForDataStreamOrNull(out);
+      KnownVersion v = StaticSerialization.getVersionForDataStreamOrNull(out);
 
-      if (Version.CURRENT != v && v != null) {
+      if (KnownVersion.CURRENT != v && v != null) {
         // get versions where DataOutput was upgraded
-        Version[] versions = null;
+        KnownVersion[] versions = null;
         if (serializableObject instanceof SerializationVersions) {
           SerializationVersions sv = (SerializationVersions) serializableObject;
           versions = sv.getSerializationVersions();
@@ -2224,7 +2224,7 @@ public abstract class InternalDataSerializer extends DataSerializer {
         // check if the version of the peer or diskstore is different and
         // there has been a change in the message
         if (versions != null) {
-          for (Version version : versions) {
+          for (KnownVersion version : versions) {
             // if peer version is less than the greatest upgraded version
             if (v.compareTo(version) < 0) {
               serializableObject.getClass().getMethod("toDataPre_" + version.getMethodSuffix(),
@@ -2281,10 +2281,10 @@ public abstract class InternalDataSerializer extends DataSerializer {
     }
     try {
       boolean invoked = false;
-      Version v = StaticSerialization.getVersionForDataStreamOrNull(in);
-      if (Version.CURRENT != v && v != null) {
+      KnownVersion v = StaticSerialization.getVersionForDataStreamOrNull(in);
+      if (KnownVersion.CURRENT != v && v != null) {
         // get versions where DataOutput was upgraded
-        Version[] versions = null;
+        KnownVersion[] versions = null;
         if (deserializableObject instanceof SerializationVersions) {
           SerializationVersions vds = (SerializationVersions) deserializableObject;
           versions = vds.getSerializationVersions();
@@ -2292,7 +2292,7 @@ public abstract class InternalDataSerializer extends DataSerializer {
         // check if the version of the peer or diskstore is different and
         // there has been a change in the message
         if (versions != null) {
-          for (Version version : versions) {
+          for (KnownVersion version : versions) {
             // if peer version is less than the greatest upgraded version
             if (v.compareTo(version) < 0) {
               deserializableObject.getClass()
@@ -2680,8 +2680,8 @@ public abstract class InternalDataSerializer extends DataSerializer {
       ObjectInput ois = new DSObjectInputStream(stream);
       serializationFilter.setFilterOn((ObjectInputStream) ois);
       if (stream instanceof VersionedDataStream) {
-        Version v = ((VersionedDataStream) stream).getVersion();
-        if (Version.CURRENT != v && v != null) {
+        KnownVersion v = ((VersionedDataStream) stream).getVersion();
+        if (KnownVersion.CURRENT != v && v != null) {
           ois = new VersionedObjectInput(ois, v);
         }
       }
@@ -2892,24 +2892,26 @@ public abstract class InternalDataSerializer extends DataSerializer {
 
         return new PdxInstanceImpl(pdxType, in, len);
       } else if (type == DSCODE.PDX_ENUM.toByte()) {
-        PdxInputStream in = new PdxInputStream(dataBytes);
-        in.readByte(); // throw away the type byte
-        int dsId = in.readByte();
-        int tmp = readArrayLength(in);
-        int enumId = dsId << 24 | tmp & 0xFFFFFF;
-        TypeRegistry tr = internalCache.getPdxRegistry();
-        EnumInfo ei = tr.getEnumInfoById(enumId);
-        if (ei == null) {
-          throw new IllegalStateException("Unknown pdx enum id=" + enumId);
+        try (PdxInputStream in = new PdxInputStream(dataBytes)) {
+          in.readByte(); // throw away the type byte
+          int dsId = in.readByte();
+          int tmp = readArrayLength(in);
+          int enumId = dsId << 24 | tmp & 0xFFFFFF;
+          TypeRegistry tr = internalCache.getPdxRegistry();
+          EnumInfo ei = tr.getEnumInfoById(enumId);
+          if (ei == null) {
+            throw new IllegalStateException("Unknown pdx enum id=" + enumId);
+          }
+          return ei.getPdxInstance(enumId);
         }
-        return ei.getPdxInstance(enumId);
       } else if (type == DSCODE.PDX_INLINE_ENUM.toByte()) {
-        PdxInputStream in = new PdxInputStream(dataBytes);
-        in.readByte(); // throw away the type byte
-        String className = DataSerializer.readString(in);
-        String enumName = DataSerializer.readString(in);
-        int enumOrdinal = InternalDataSerializer.readArrayLength(in);
-        return new PdxInstanceEnum(className, enumName, enumOrdinal);
+        try (PdxInputStream in = new PdxInputStream(dataBytes)) {
+          in.readByte(); // throw away the type byte
+          String className = DataSerializer.readString(in);
+          String enumName = DataSerializer.readString(in);
+          int enumOrdinal = InternalDataSerializer.readArrayLength(in);
+          return new PdxInstanceEnum(className, enumName, enumOrdinal);
+        }
       }
     } catch (IOException ignore) {
     }
@@ -3094,7 +3096,7 @@ public abstract class InternalDataSerializer extends DataSerializer {
 
   /* test only method */
   public static int calculateBytesForTSandDSID(int dsid) {
-    HeapDataOutputStream out = new HeapDataOutputStream(4 + 8, Version.CURRENT);
+    HeapDataOutputStream out = new HeapDataOutputStream(4 + 8, KnownVersion.CURRENT);
     long now = System.currentTimeMillis();
     try {
       writeUnsignedVL(now, out);
@@ -3381,7 +3383,7 @@ public abstract class InternalDataSerializer extends DataSerializer {
      * The versions in which this message was modified
      */
     @Immutable
-    private static final Version[] dsfidVersions = new Version[] {};
+    private static final KnownVersion[] dsfidVersions = new KnownVersion[] {};
     /**
      * The eventId of the {@code DataSerializer} that was registered
      */
@@ -3504,7 +3506,7 @@ public abstract class InternalDataSerializer extends DataSerializer {
     }
 
     @Override
-    public Version[] getSerializationVersions() {
+    public KnownVersion[] getSerializationVersions() {
       return dsfidVersions;
     }
   }

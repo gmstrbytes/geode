@@ -37,6 +37,7 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.InternalGemFireError;
 import org.apache.geode.InternalGemFireException;
+import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.cache.AttributesFactory;
 import org.apache.geode.cache.AttributesMutator;
 import org.apache.geode.cache.Cache;
@@ -450,11 +451,11 @@ public class PartitionedRegionDataStore implements HasCachePerfStats {
               try {
                 buk.initializePrimaryElector(creationRequestor);
                 if (getPartitionedRegion().getColocatedWith() == null) {
-                  buk.getBucketAdvisor().setShadowBucketDestroyed(false);
+                  buk.getBucketAdvisor().markAllShadowBucketsAsNonDestroyed();
                 }
                 if (getPartitionedRegion().isShadowPR()) {
                   getPartitionedRegion().getColocatedWithRegion().getRegionAdvisor()
-                      .getBucketAdvisor(possiblyFreeBucketId).setShadowBucketDestroyed(false);
+                      .getBucketAdvisor(possiblyFreeBucketId).markAllShadowBucketsAsNonDestroyed();
                 }
                 bukReg = createBucketRegion(possiblyFreeBucketId);
                 // Mark the bucket as hosting and distribute to peers
@@ -471,7 +472,7 @@ public class PartitionedRegionDataStore implements HasCachePerfStats {
                   bukReg.invokePartitionListenerAfterBucketCreated();
                 } else {
                   if (buk.getPartitionedRegion().getColocatedWith() == null) {
-                    buk.getBucketAdvisor().setShadowBucketDestroyed(true);
+                    buk.getBucketAdvisor().markAllShadowBucketsAsDestroyed();
                     // clear tempQueue for all the shadowPR buckets
                     clearAllTempQueueForShadowPR(buk.getBucketId());
                   }
@@ -1422,7 +1423,7 @@ public class PartitionedRegionDataStore implements HasCachePerfStats {
                     && buk.getPartitionedRegion().isShadowPR()) {
                   if (buk.getPartitionedRegion().getColocatedWithRegion() != null) {
                     buk.getPartitionedRegion().getColocatedWithRegion().getRegionAdvisor()
-                        .getBucketAdvisor(bucketId).setShadowBucketDestroyed(true);
+                        .getBucketAdvisor(bucketId).markShadowBucketAsDestroyed(buk.getFullPath());
                   }
                 }
               } catch (RegionDestroyedException ignore) {
@@ -1592,7 +1593,7 @@ public class PartitionedRegionDataStore implements HasCachePerfStats {
         if (bucketRegion.getPartitionedRegion().isShadowPR()) {
           if (bucketRegion.getPartitionedRegion().getColocatedWithRegion() != null) {
             bucketRegion.getPartitionedRegion().getColocatedWithRegion().getRegionAdvisor()
-                .getBucketAdvisor(bucketId).setShadowBucketDestroyed(true);
+                .getBucketAdvisor(bucketId).markAllShadowBucketsAsDestroyed();
           }
         }
         bucketAdvisor.getProxyBucketRegion().removeBucket();
@@ -2603,31 +2604,23 @@ public class PartitionedRegionDataStore implements HasCachePerfStats {
    * <i>Test Method</i> Return the list of all the bucket names in this data store.
    *
    */
-  public List getLocalBucketsListTestOnly() {
-    final List bucketList = new ArrayList();
-    visitBuckets(new BucketVisitor() {
-      @Override
-      public void visit(Integer bucketId, Region r) {
-        bucketList.add(bucketId);
-      }
-    });
+  public List<Integer> getLocalBucketsListTestOnly() {
+    final List<Integer> bucketList = new ArrayList<>();
+    visitBuckets((bucketId, r) -> bucketList.add(bucketId));
     return bucketList;
   }
 
   /**
    * <i>Test Method</i> Return the list of all the primary bucket ids in this data store.
-   *
    */
-  public List getLocalPrimaryBucketsListTestOnly() {
-    final List primaryBucketList = new ArrayList();
-    visitBuckets(new BucketVisitor() {
-      @Override
-      public void visit(Integer bucketId, Region r) {
-        BucketRegion br = (BucketRegion) r;
-        BucketAdvisor ba = (BucketAdvisor) br.getDistributionAdvisor();
-        if (ba.isPrimary()) {
-          primaryBucketList.add(bucketId);
-        }
+  @VisibleForTesting
+  public List<Integer> getLocalPrimaryBucketsListTestOnly() {
+    List<Integer> primaryBucketList = new ArrayList<>();
+    visitBuckets((bucketId, region) -> {
+      BucketRegion bucketRegion = (BucketRegion) region;
+      BucketAdvisor bucketAdvisor = (BucketAdvisor) bucketRegion.getDistributionAdvisor();
+      if (bucketAdvisor.isPrimary()) {
+        primaryBucketList.add(bucketId);
       }
     });
     return primaryBucketList;
@@ -2637,16 +2630,13 @@ public class PartitionedRegionDataStore implements HasCachePerfStats {
    * <i>Test Method</i> Return the list of all the non primary bucket ids in this data store.
    *
    */
-  public List getLocalNonPrimaryBucketsListTestOnly() {
-    final List nonPrimaryBucketList = new ArrayList();
-    visitBuckets(new BucketVisitor() {
-      @Override
-      public void visit(Integer bucketId, Region r) {
-        BucketRegion br = (BucketRegion) r;
-        BucketAdvisor ba = (BucketAdvisor) br.getDistributionAdvisor();
-        if (!ba.isPrimary()) {
-          nonPrimaryBucketList.add(bucketId);
-        }
+  public List<Integer> getLocalNonPrimaryBucketsListTestOnly() {
+    final List<Integer> nonPrimaryBucketList = new ArrayList<>();
+    visitBuckets((bucketId, r) -> {
+      BucketRegion br = (BucketRegion) r;
+      BucketAdvisor ba = (BucketAdvisor) br.getDistributionAdvisor();
+      if (!ba.isPrimary()) {
+        nonPrimaryBucketList.add(bucketId);
       }
     });
     return nonPrimaryBucketList;
@@ -2971,7 +2961,7 @@ public class PartitionedRegionDataStore implements HasCachePerfStats {
   public void executeOnDataStore(final Set localKeys, final Function function, final Object object,
       final int prid, final int[] bucketArray, final boolean isReExecute,
       final PartitionedRegionFunctionStreamingMessage msg, long time, ServerConnection servConn,
-      int transactionID) {
+      int transactionID, Object principal) {
 
     if (!areAllBucketsHosted(bucketArray)) {
       throw new BucketMovedException(
@@ -2986,7 +2976,7 @@ public class PartitionedRegionDataStore implements HasCachePerfStats {
         new RegionFunctionContextImpl(getPartitionedRegion().getCache(), function.getId(),
             this.partitionedRegion, object, localKeys, ColocationHelper
                 .constructAndGetAllColocatedLocalDataSet(this.partitionedRegion, bucketArray),
-            bucketArray, resultSender, isReExecute);
+            bucketArray, resultSender, isReExecute, principal);
 
     FunctionStats stats = FunctionStatsManager.getFunctionStats(function.getId(), dm.getSystem());
     long start = stats.startFunctionExecution(function.hasResult());

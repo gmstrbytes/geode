@@ -46,9 +46,9 @@ import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.UpdateAttributesProcessor;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
 import org.apache.geode.internal.serialization.StaticSerialization;
-import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.logging.internal.executors.LoggingThread;
 import org.apache.geode.logging.internal.log4j.api.LogService;
 
@@ -231,6 +231,15 @@ public class GatewaySenderAdvisor extends DistributionAdvisor {
           String.format(
               "Cannot create Gateway Sender %s with isDiskSynchronous %s because another cache has the same Gateway Sender defined with isDiskSynchronous %s",
               sp.Id, sp.isDiskSynchronous, sender.isDiskSynchronous()));
+    }
+    if (sp.getDistributedMember().getVersion().isNotOlderThan(KnownVersion.GEODE_1_14_0)) {
+      if (sp.enforceThreadsConnectSameReceiver != sender.getEnforceThreadsConnectSameReceiver()) {
+        throw new IllegalStateException(
+            String.format(
+                "Cannot create Gateway Sender %s with enforceThreadsConnectSameReceiver %s because another cache has the same Gateway Sender defined with enforceThreadsConnectSameReceiver %s",
+                sp.Id, sp.enforceThreadsConnectSameReceiver,
+                sender.getEnforceThreadsConnectSameReceiver()));
+      }
     }
   }
 
@@ -532,6 +541,8 @@ public class GatewaySenderAdvisor extends DistributionAdvisor {
 
     public ServerLocation serverLocation;
 
+    public boolean enforceThreadsConnectSameReceiver = false;
+
     public GatewaySenderProfile(InternalDistributedMember memberId, int version) {
       super(memberId, version);
     }
@@ -540,6 +551,12 @@ public class GatewaySenderAdvisor extends DistributionAdvisor {
 
     @Override
     public void fromData(DataInput in,
+        DeserializationContext context) throws IOException, ClassNotFoundException {
+      fromDataPre_GEODE_1_14_0_0(in, context);
+      this.enforceThreadsConnectSameReceiver = in.readBoolean();
+    }
+
+    public void fromDataPre_GEODE_1_14_0_0(DataInput in,
         DeserializationContext context) throws IOException, ClassNotFoundException {
       super.fromData(in, context);
       this.Id = DataSerializer.readString(in);
@@ -557,7 +574,7 @@ public class GatewaySenderAdvisor extends DistributionAdvisor {
       this.senderEventListenerClassNames = DataSerializer.readArrayList(in);
       this.isDiskSynchronous = in.readBoolean();
       this.dispatcherThreads = in.readInt();
-      if (StaticSerialization.getVersionForDataStream(in).compareTo(Version.GFE_90) < 0) {
+      if (StaticSerialization.getVersionForDataStream(in).isOlderThan(KnownVersion.GFE_90)) {
         Gateway.OrderPolicy oldOrderPolicy = DataSerializer.readObject(in);
         if (oldOrderPolicy != null) {
           if (oldOrderPolicy.name().equals(OrderPolicy.KEY.name())) {
@@ -583,6 +600,12 @@ public class GatewaySenderAdvisor extends DistributionAdvisor {
     @Override
     public void toData(DataOutput out,
         SerializationContext context) throws IOException {
+      toDataPre_GEODE_1_14_0_0(out, context);
+      out.writeBoolean(enforceThreadsConnectSameReceiver);
+    }
+
+    public void toDataPre_GEODE_1_14_0_0(DataOutput out,
+        SerializationContext context) throws IOException {
       super.toData(out, context);
       DataSerializer.writeString(Id, out);
       out.writeLong(startTime);
@@ -599,7 +622,7 @@ public class GatewaySenderAdvisor extends DistributionAdvisor {
       DataSerializer.writeArrayList(senderEventListenerClassNames, out);
       out.writeBoolean(isDiskSynchronous);
       out.writeInt(dispatcherThreads);
-      if (StaticSerialization.getVersionForDataStream(out).compareTo(Version.GFE_90) < 0
+      if (StaticSerialization.getVersionForDataStream(out).isOlderThan(KnownVersion.GFE_90)
           && this.orderPolicy != null) {
         String orderPolicyName = this.orderPolicy.name();
         if (orderPolicyName.equals(Gateway.OrderPolicy.KEY.name())) {
@@ -683,10 +706,11 @@ public class GatewaySenderAdvisor extends DistributionAdvisor {
     }
 
     @Immutable
-    private static final Version[] serializationVersions = new Version[] {Version.GFE_80};
+    private static final KnownVersion[] serializationVersions =
+        new KnownVersion[] {KnownVersion.GFE_80, KnownVersion.GEODE_1_14_0};
 
     @Override
-    public Version[] getSerializationVersions() {
+    public KnownVersion[] getSerializationVersions() {
       return serializationVersions;
     }
 

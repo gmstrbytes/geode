@@ -15,9 +15,10 @@
 
 package org.apache.geode.management.internal.cli.commands;
 
+import static org.apache.geode.management.internal.cli.commands.StartMemberUtils.resolveWorkingDirectory;
+
 import java.io.File;
 import java.io.IOException;
-import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -127,12 +128,12 @@ public class StartLocatorCommand extends OfflineGfshCommand {
       memberName = StartMemberUtils.getNameGenerator().generate('-');
     }
 
-    workingDirectory = StartMemberUtils.resolveWorkingDir(
-        workingDirectory == null ? null : new File(workingDirectory), new File(memberName));
+    String resolvedWorkingDirectory = resolveWorkingDirectory(workingDirectory, memberName);
 
     return doStartLocator(memberName, bindAddress, classpath, force, group, hostnameForClients,
         jmxManagerHostnameForClients, includeSystemClasspath, locators, logLevel, mcastBindAddress,
-        mcastPort, port, workingDirectory, gemfirePropertiesFile, gemfireSecurityPropertiesFile,
+        mcastPort, port, resolvedWorkingDirectory, gemfirePropertiesFile,
+        gemfireSecurityPropertiesFile,
         initialHeap, maxHeap, jvmArgsOpts, connect, enableSharedConfiguration,
         loadSharedConfigurationFromDirectory, clusterConfigDir, httpServicePort,
         httpServiceBindAddress, redirectOutput);
@@ -196,8 +197,6 @@ public class StartLocatorCommand extends OfflineGfshCommand {
     StartMemberUtils.setPropertyIfNotNull(gemfireProperties,
         ConfigurationProperties.LOAD_CLUSTER_CONFIGURATION_FROM_DIR,
         loadSharedConfigurationFromDirectory);
-    StartMemberUtils.setPropertyIfNotNull(gemfireProperties,
-        ConfigurationProperties.CLUSTER_CONFIGURATION_DIR, clusterConfigDir);
     StartMemberUtils.setPropertyIfNotNull(gemfireProperties,
         ConfigurationProperties.HTTP_SERVICE_PORT, httpServicePort);
     StartMemberUtils.setPropertyIfNotNull(gemfireProperties,
@@ -316,9 +315,9 @@ public class StartLocatorCommand extends OfflineGfshCommand {
 
     infoResult.addLine(locatorState.toString());
     String locatorHostName;
-    InetAddress bindAddr = locatorLauncher.getBindAddress();
+    String bindAddr = locatorLauncher.getBindAddressString();
     if (bindAddr != null) {
-      locatorHostName = bindAddr.getCanonicalHostName();
+      locatorHostName = bindAddr;
     } else {
       locatorHostName = StringUtils.defaultIfBlank(locatorLauncher.getHostnameForClients(),
           HostUtils.getLocalHost());
@@ -392,21 +391,18 @@ public class StartLocatorCommand extends OfflineGfshCommand {
 
         connectSuccess = true;
         responseFailureMessage = null;
-      } catch (SecurityException ignore) {
-        getGfsh().logToFile(ignore.getMessage(), ignore);
+      } catch (SecurityException | AuthenticationFailedException e) {
+        getGfsh().logToFile(e.getMessage(), e);
         jmxManagerAuthEnabled = true;
         break; // no need to continue after SecurityException
-      } catch (AuthenticationFailedException ignore) {
-        getGfsh().logToFile(ignore.getMessage(), ignore);
-        jmxManagerAuthEnabled = true;
-        break; // no need to continue after AuthenticationFailedException
-      } catch (SSLException ignore) {
+      } // no need to continue after AuthenticationFailedException
+      catch (SSLException e) {
         // another type of SSL error occurred (possibly a configuration issue); pass the buck...
-        getGfsh().logToFile(ignore.getMessage(), ignore);
+        getGfsh().logToFile(e.getMessage(), e);
         responseFailureMessage = "Check your SSL configuration and try again.";
-      } catch (Exception ignore) {
-        getGfsh().logToFile(ignore.getMessage(), ignore);
-        responseFailureMessage = "Failed to connect; unknown cause: " + ignore.getMessage();
+      } catch (Exception e) {
+        getGfsh().logToFile(e.getMessage(), e);
+        responseFailureMessage = "Failed to connect; unknown cause: " + e.getMessage();
       }
     }
 
@@ -448,6 +444,7 @@ public class StartLocatorCommand extends OfflineGfshCommand {
     }
   }
 
+  @SuppressWarnings("deprecation")
   String[] createStartLocatorCommandLine(final LocatorLauncher launcher,
       final File gemfirePropertiesFile, final File gemfireSecurityPropertiesFile,
       final Properties gemfireProperties, final String userClasspath,
@@ -485,8 +482,8 @@ public class StartLocatorCommand extends OfflineGfshCommand {
       commandLine.add(launcher.getMemberName());
     }
 
-    if (launcher.getBindAddress() != null) {
-      commandLine.add("--bind-address=" + launcher.getBindAddress().getHostAddress());
+    if (launcher.getBindAddressString() != null) {
+      commandLine.add("--bind-address=" + launcher.getBindAddressString());
     }
 
     if (launcher.isDebugging() || isDebugging()) {

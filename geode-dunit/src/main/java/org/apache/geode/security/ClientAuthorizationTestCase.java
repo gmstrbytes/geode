@@ -14,6 +14,7 @@
  */
 package org.apache.geode.security;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.SECURITY_CLIENT_ACCESSOR;
 import static org.apache.geode.distributed.ConfigurationProperties.SECURITY_CLIENT_ACCESSOR_PP;
 import static org.apache.geode.distributed.ConfigurationProperties.SECURITY_CLIENT_AUTHENTICATOR;
@@ -71,11 +72,11 @@ import org.apache.geode.cache.query.SelectResults;
 import org.apache.geode.cache.query.Struct;
 import org.apache.geode.distributed.ConfigurationProperties;
 import org.apache.geode.distributed.internal.DistributionConfig;
-import org.apache.geode.internal.AvailablePort.Keeper;
 import org.apache.geode.internal.AvailablePortHelper;
 import org.apache.geode.internal.cache.LocalRegion;
 import org.apache.geode.internal.cache.entries.AbstractRegionEntry;
 import org.apache.geode.internal.cache.tier.sockets.ServerConnection;
+import org.apache.geode.internal.membership.utils.AvailablePort.Keeper;
 import org.apache.geode.security.generator.AuthzCredentialGenerator;
 import org.apache.geode.security.generator.AuthzCredentialGenerator.ClassCode;
 import org.apache.geode.security.generator.CredentialGenerator;
@@ -251,7 +252,7 @@ public abstract class ClientAuthorizationTestCase extends JUnit4DistributedTestC
   }
 
   protected static Region getSubregion() {
-    return getCache().getRegion(regionName + '/' + SUBREGION_NAME);
+    return getCache().getRegion(regionName + SEPARATOR + SUBREGION_NAME);
   }
 
   private static Region createSubregion(final Region region) {
@@ -692,7 +693,8 @@ public abstract class ClientAuthorizationTestCase extends JUnit4DistributedTestC
           // Assume it has been already initialized
           DynamicRegionFactory drf = DynamicRegionFactory.get();
           Region subregion = drf.createDynamicRegion(regionName, SUBREGION_NAME);
-          assertEquals('/' + regionName + '/' + SUBREGION_NAME, subregion.getFullPath());
+          assertEquals(SEPARATOR + regionName + SEPARATOR + SUBREGION_NAME,
+              subregion.getFullPath());
 
         } else if (op.isRegionDestroy()) {
           breakLoop = true;
@@ -782,9 +784,9 @@ public abstract class ClientAuthorizationTestCase extends JUnit4DistributedTestC
       if ((opFlags & OpFlags.USE_OLDCONN) == 0) {
         Properties opCredentials;
         int newRnd = random.nextInt(100) + 1;
-        String currentRegionName = '/' + regionName;
+        String currentRegionName = SEPARATOR + regionName;
         if ((opFlags & OpFlags.USE_SUBREGION) > 0) {
-          currentRegionName += ('/' + SUBREGION_NAME);
+          currentRegionName += (SEPARATOR + SUBREGION_NAME);
         }
 
         String credentialsTypeStr;

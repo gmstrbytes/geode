@@ -95,9 +95,10 @@ import org.apache.geode.internal.sequencelog.RegionLogger;
 import org.apache.geode.internal.serialization.ByteArrayDataInput;
 import org.apache.geode.internal.serialization.DataSerializableFixedID;
 import org.apache.geode.internal.serialization.DeserializationContext;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.SerializationContext;
 import org.apache.geode.internal.serialization.StaticSerialization;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.Versioning;
 import org.apache.geode.internal.util.ObjectIntProcedure;
 import org.apache.geode.logging.internal.executors.LoggingThread;
 import org.apache.geode.logging.internal.log4j.api.LogService;
@@ -255,7 +256,8 @@ public class InitialImageOperation {
    * @param targetReinitialized true if candidate should wait until initialized before responding
    * @param recoveredRVV recovered rvv
    * @return true if succeeded to get image
-   * @throws org.apache.geode.cache.TimeoutException
+   * @throws org.apache.geode.cache.TimeoutException when it is unable to get a reply within the
+   *         limit.
    */
   GIIStatus getFromOne(Set recipientSet, boolean targetReinitialized,
       CacheDistributionAdvisor.InitialImageAdvice advice, boolean recoveredFromDisk,
@@ -263,7 +265,7 @@ public class InitialImageOperation {
     final boolean isDebugEnabled = logger.isDebugEnabled();
 
     if (VMOTION_DURING_GII) {
-      /**
+      /*
        * TODO (ashetkar): recipientSet may contain more than one member. Ensure only the gii-source
        * member is vMotioned. The test hook may need to be placed at another point.
        */
@@ -337,14 +339,14 @@ public class InitialImageOperation {
       final ClusterDistributionManager dm =
           (ClusterDistributionManager) this.region.getDistributionManager();
       boolean allowDeltaGII = true;
-      if (FORCE_FULL_GII || recipient.getVersionObject().compareTo(Version.GFE_80) < 0) {
+      if (FORCE_FULL_GII || recipient.getVersion().isOlderThan(KnownVersion.GFE_80)) {
         allowDeltaGII = false;
       }
       Set keysOfUnfinishedOps = null;
       RegionVersionVector received_rvv = null;
       RegionVersionVector remote_rvv = null;
       if (this.region.getConcurrencyChecksEnabled()
-          && recipient.getVersionObject().compareTo(Version.GFE_80) >= 0) {
+          && recipient.getVersion().isNotOlderThan(KnownVersion.GFE_80)) {
         if (internalBeforeRequestRVV != null
             && internalBeforeRequestRVV.getRegionName().equals(this.region.getName())) {
           internalBeforeRequestRVV.run();
@@ -376,7 +378,7 @@ public class InitialImageOperation {
       }
 
       Boolean inhibitFlush = (Boolean) inhibitStateFlush.get();
-      if (!inhibitFlush.booleanValue() && !this.region.doesNotDistribute()) {
+      if (!inhibitFlush && !this.region.doesNotDistribute()) {
         if (region instanceof BucketRegionQueue) {
           // get the corresponding userPRs and do state flush on all of them
           // TODO we should be able to do this state flush with a single
@@ -455,7 +457,8 @@ public class InitialImageOperation {
                   this.region.getFullPath());
             }
             m.versionVector = null;
-          } else if (keysOfUnfinishedOps.size() > MAXIMUM_UNFINISHED_OPERATIONS) {
+          } else if (keysOfUnfinishedOps != null
+              && keysOfUnfinishedOps.size() > MAXIMUM_UNFINISHED_OPERATIONS) {
             if (isDebugEnabled) {
               logger.debug(
                   "Region {} has {} unfinished operations, which exceeded threshold {}, do full GII instead",
@@ -745,7 +748,7 @@ public class InitialImageOperation {
           Set recipients = this.region.getCacheDistributionAdvisor().adviseReplicates();
           for (Iterator it = recipients.iterator(); it.hasNext();) {
             InternalDistributedMember mbr = (InternalDistributedMember) it.next();
-            if (mbr.getVersionObject().compareTo(Version.GFE_80) < 0) {
+            if (mbr.getVersion().isOlderThan(KnownVersion.GFE_80)) {
               it.remove();
             }
           }
@@ -814,7 +817,7 @@ public class InitialImageOperation {
    * @param entries entries to add to the region
    * @return false if should abort (region was destroyed or cache was closed)
    */
-  boolean processChunk(List entries, InternalDistributedMember sender, Version remoteVersion)
+  boolean processChunk(List entries, InternalDistributedMember sender)
       throws IOException, ClassNotFoundException {
     final boolean isDebugEnabled = logger.isDebugEnabled();
     final boolean isTraceEnabled = logger.isTraceEnabled();
@@ -841,11 +844,8 @@ public class InitialImageOperation {
       if (entryCount <= 1000 && isDebugEnabled) {
         keys = new HashSet();
       }
-      final ByteArrayDataInput in = new ByteArrayDataInput();
-      List<Entry> entriesToSynchronize = null;
-      if (this.isSynchronizing) {
-        entriesToSynchronize = new ArrayList<>();
-      }
+      List<Entry> entriesToSynchronize = new ArrayList<>();
+
       for (int i = 0; i < entryCount; i++) {
         // stream is null-terminated
         if (internalDuringApplyDelta != null && !internalDuringApplyDelta.isRunning
@@ -889,13 +889,6 @@ public class InitialImageOperation {
         final long lastModified = entry.getLastModified(this.region.getDistributionManager());
 
         Object tmpValue = entry.value;
-        byte[] tmpBytes = null;
-
-        {
-          if (tmpValue instanceof byte[]) {
-            tmpBytes = (byte[]) tmpValue;
-          }
-        }
 
         boolean didIIP = false;
         boolean wasRecovered = false;
@@ -937,7 +930,7 @@ public class InitialImageOperation {
                     tag.replaceNullIDs(sender);
                   }
                   boolean record;
-                  if (this.region.getVersionVector() != null) {
+                  if (this.region.getVersionVector() != null && tag != null) {
                     this.region.getVersionVector().recordVersion(tag.getMemberID(), tag);
                     record = true;
                   } else {
@@ -951,9 +944,7 @@ public class InitialImageOperation {
                       entriesToSynchronize.add(entry);
                     }
                   }
-                } catch (RegionDestroyedException e) {
-                  return false;
-                } catch (CancelException e) {
+                } catch (RegionDestroyedException | CancelException e) {
                   return false;
                 }
                 didIIP = true;
@@ -988,7 +979,7 @@ public class InitialImageOperation {
                   "processChunk:initialImagePut:key={},lastModified={},tmpValue={},wasRecovered={},tag={}",
                   entry.key, lastModified, tmpValue, wasRecovered, tag);
             }
-            if (this.region.getVersionVector() != null) {
+            if (this.region.getVersionVector() != null && tag != null) {
               this.region.getVersionVector().recordVersion(tag.getMemberID(), tag);
             }
             this.entries.initialImagePut(entry.key, lastModified, tmpValue, wasRecovered, false,
@@ -996,12 +987,9 @@ public class InitialImageOperation {
             if (this.isSynchronizing) {
               entriesToSynchronize.add(entry);
             }
-          } catch (RegionDestroyedException e) {
-            return false;
-          } catch (CancelException e) {
+          } catch (RegionDestroyedException | CancelException e) {
             return false;
           }
-          didIIP = true;
         }
       }
       if (this.isSynchronizing && !entriesToSynchronize.isEmpty()) {
@@ -1189,7 +1177,7 @@ public class InitialImageOperation {
         region.recordEventState(msg.getSender(), msg.eventState);
       }
       if (msg.versionVector != null
-          && msg.getSender().getVersionObject().compareTo(Version.GFE_80) < 0
+          && msg.getSender().getVersion().isOlderThan(KnownVersion.GFE_80)
           && region.getConcurrencyChecksEnabled()) {
         // for older version, save received rvv from RegionStateMessage
         logger.debug("Applying version vector to {}: {}", region.getName(), msg.versionVector);
@@ -1321,7 +1309,7 @@ public class InitialImageOperation {
               // bug 37461: don't allow abort flag to be reset
               boolean isAborted = this.abort; // volatile fetch
               if (!isAborted) {
-                isAborted = !processChunk(m.entries, m.getSender(), m.remoteVersion);
+                isAborted = !processChunk(m.entries, m.getSender());
                 if (isAborted) {
                   this.abort = true; // volatile store
                 } else {
@@ -1438,8 +1426,7 @@ public class InitialImageOperation {
     public String toString() {
       // bug 37189 These strings are a work-around for an escaped reference
       // in ReplyProcessor21 constructor
-      String msgsBeingProcessedStr = (this.msgsBeingProcessed == null) ? "nullRef"
-          : String.valueOf(this.msgsBeingProcessed.get());
+      String msgsBeingProcessedStr = String.valueOf(this.msgsBeingProcessed.get());
       String regionStr = (InitialImageOperation.this.region == null) ? "nullRef"
           : InitialImageOperation.this.region.getFullPath();
       String numMembersStr = (this.members == null) ? "nullRef" : String.valueOf(numMembers());
@@ -1585,7 +1572,7 @@ public class InitialImageOperation {
 
     /** The versions in which this message was modified */
     @Immutable
-    private static final Version[] dsfidVersions = null;
+    private static final KnownVersion[] dsfidVersions = null;
 
     @Override
     public int getProcessorId() {
@@ -1599,7 +1586,7 @@ public class InitialImageOperation {
     }
 
     public boolean goWithFullGII(DistributedRegion rgn, RegionVersionVector requesterRVV) {
-      if (getSender().getVersionObject().compareTo(Version.GFE_80) < 0) {
+      if (getSender().getVersion().isOlderThan(KnownVersion.GFE_80)) {
         // pre-8.0 could not handle a delta-GII
         return true;
       }
@@ -1723,7 +1710,8 @@ public class InitialImageOperation {
               if (isGiiDebugEnabled) {
                 RegionVersionHolder holderOfRequest =
                     this.versionVector.getHolderForMember(this.lostMemberVersionID);
-                if (holderToSync.isNewerThanOrCanFillExceptionsFor(holderOfRequest)) {
+                if (holderToSync != null
+                    && holderToSync.isNewerThanOrCanFillExceptionsFor(holderOfRequest)) {
                   logger.trace(LogMarker.INITIAL_IMAGE_VERBOSE,
                       "synchronizeWith detected mismatch region version holder for lost member {}. Old is {}, new is {}",
                       lostMemberVersionID, holderOfRequest, holderToSync);
@@ -1744,7 +1732,7 @@ public class InitialImageOperation {
             if (eventState != null && eventState.size() > 0) {
               RegionStateMessage.send(dm, getSender(), this.processorId, eventState, true);
             }
-          } else if (getSender().getVersionObject().compareTo(Version.GFE_80) < 0) {
+          } else if (getSender().getVersion().isOlderThan(KnownVersion.GFE_80)) {
             // older versions of the product expect a RegionStateMessage at this point
             if (rgn.getConcurrencyChecksEnabled() && this.versionVector == null
                 && !recoveringForLostMember) {
@@ -1992,6 +1980,10 @@ public class InitialImageOperation {
         } else {
           it = rgn.getBestIterator(includeValues);
         }
+
+        final KnownVersion knownVersion = Versioning
+            .getKnownVersionOrDefault(sender.getVersion(), KnownVersion.CURRENT);
+
         do {
           flowControl.acquirePermit();
           int currentChunkSize = 0;
@@ -2038,7 +2030,7 @@ public class InitialImageOperation {
                     entry.key = key;
                     entry.setVersionTag(stamp.asVersionTag());
                     fillRes = mapEntry.fillInValue(rgn, entry, in, rgn.getDistributionManager(),
-                        sender.getVersionObject());
+                        knownVersion);
                     if (versionVector != null) {
                       if (logger.isTraceEnabled(LogMarker.INITIAL_IMAGE_VERBOSE)) {
                         logger.trace(LogMarker.INITIAL_IMAGE_VERBOSE,
@@ -2050,7 +2042,7 @@ public class InitialImageOperation {
                   entry = new InitialImageOperation.Entry();
                   entry.key = key;
                   fillRes = mapEntry.fillInValue(rgn, entry, in, rgn.getDistributionManager(),
-                      sender.getVersionObject());
+                      knownVersion);
                 }
               } catch (DiskAccessException dae) {
                 rgn.handleDiskAccessException(dae);
@@ -2162,7 +2154,7 @@ public class InitialImageOperation {
     }
 
     @Override
-    public Version[] getSerializationVersions() {
+    public KnownVersion[] getSerializationVersions() {
       return dsfidVersions;
     }
 
@@ -2440,9 +2432,11 @@ public class InitialImageOperation {
       } finally {
         if (received_rvv == null) {
           if (isGiiDebugEnabled) {
-            logger.trace(LogMarker.INITIAL_IMAGE_VERBOSE,
-                "{} did not send back rvv. Maybe it's non-persistent proxy region or remote region {} not found or not initialized. Nothing to do.",
-                reply.getSender(), region.getFullPath());
+            if (reply != null) {
+              logger.trace(LogMarker.INITIAL_IMAGE_VERBOSE,
+                  "{} did not send back rvv. Maybe it's non-persistent proxy region or remote region {} not found or not initialized. Nothing to do.",
+                  reply.getSender(), region.getFullPath());
+            }
           }
         }
         super.process(msg);
@@ -2802,12 +2796,12 @@ public class InitialImageOperation {
      */
     private Map<VersionSource, Long> gcVersions;
 
-    /** the {@link Version} of the remote peer */
-    private transient Version remoteVersion;
+    /** the {@link KnownVersion} of the remote peer */
+    private transient KnownVersion remoteVersion;
 
     /** The versions in which this message was modified */
     @Immutable
-    private static final Version[] dsfidVersions = null;
+    private static final KnownVersion[] dsfidVersions = null;
 
     @Override
     public boolean getInlineProcess() {
@@ -2991,7 +2985,7 @@ public class InitialImageOperation {
     }
 
     @Override
-    public Version[] getSerializationVersions() {
+    public KnownVersion[] getSerializationVersions() {
       return dsfidVersions;
     }
   }
@@ -3143,7 +3137,7 @@ public class InitialImageOperation {
     }
 
     @Override
-    public Version[] getSerializationVersions() {
+    public KnownVersion[] getSerializationVersions() {
       return null;
     }
 
@@ -3437,7 +3431,7 @@ public class InitialImageOperation {
     }
 
     @Override
-    public Version[] getSerializationVersions() {
+    public KnownVersion[] getSerializationVersions() {
       return null;
     }
   }
@@ -3907,7 +3901,7 @@ public class InitialImageOperation {
             ex.getMessage(), ex);
       }
 
-      /**
+      /*
        * now that interest is in place we need to flush operations to the image provider
        */
       for (String regionName : regionsWithInterest) {

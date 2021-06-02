@@ -14,7 +14,9 @@
  */
 package org.apache.geode.cache30;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.apache.geode.distributed.ConfigurationProperties.ROLES;
+import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPort;
 import static org.apache.geode.test.dunit.IgnoredException.addIgnoredException;
 import static org.apache.geode.test.util.ResourceUtils.createTempFileFromResource;
 import static org.junit.Assert.assertEquals;
@@ -108,7 +110,6 @@ import org.apache.geode.cache.server.ServerLoadProbeAdapter;
 import org.apache.geode.cache.server.ServerMetrics;
 import org.apache.geode.cache.util.ObjectSizer;
 import org.apache.geode.cache.util.TransactionListenerAdapter;
-import org.apache.geode.internal.AvailablePort;
 import org.apache.geode.internal.AvailablePortHelper;
 import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.InternalInstantiator;
@@ -121,6 +122,7 @@ import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.PoolFactoryImpl;
 import org.apache.geode.internal.cache.functions.TestFunction;
 import org.apache.geode.internal.cache.partitioned.fixed.QuarterPartitionResolver;
+import org.apache.geode.internal.cache.persistence.DefaultDiskDirs;
 import org.apache.geode.internal.cache.xmlcache.CacheCreation;
 import org.apache.geode.internal.cache.xmlcache.CacheTransactionManagerCreation;
 import org.apache.geode.internal.cache.xmlcache.CacheXml;
@@ -197,6 +199,7 @@ public abstract class CacheXml66DUnitTest extends CacheXmlTestCase {
     assertEquals(0, cp.getServers().size());
     assertEquals(createINSA(ALIAS2, 3777), cp.getLocators().get(0));
     assertEquals(PoolFactory.DEFAULT_FREE_CONNECTION_TIMEOUT, cp.getFreeConnectionTimeout());
+    assertEquals(PoolFactory.DEFAULT_SERVER_CONNECTION_TIMEOUT, cp.getServerConnectionTimeout());
     assertEquals(PoolFactory.DEFAULT_LOAD_CONDITIONING_INTERVAL, cp.getLoadConditioningInterval());
     assertEquals(PoolFactory.DEFAULT_SOCKET_BUFFER_SIZE, cp.getSocketBufferSize());
     assertEquals(PoolFactory.DEFAULT_THREAD_LOCAL_CONNECTIONS, cp.getThreadLocalConnections());
@@ -265,7 +268,8 @@ public abstract class CacheXml66DUnitTest extends CacheXmlTestCase {
     CacheCreation cache = new CacheCreation();
     PoolFactory f = cache.createPoolFactory();
     f.addServer(ALIAS2, 3777).addServer(ALIAS1, 3888);
-    f.setFreeConnectionTimeout(12345).setLoadConditioningInterval(12345).setSocketBufferSize(12345)
+    f.setFreeConnectionTimeout(12345).setServerConnectionTimeout(111)
+        .setLoadConditioningInterval(12345).setSocketBufferSize(12345)
         .setThreadLocalConnections(true).setPRSingleHopEnabled(true).setReadTimeout(12345)
         .setMinConnections(12346).setMaxConnections(12347).setRetryAttempts(12348)
         .setIdleTimeout(12349).setPingInterval(12350).setStatisticInterval(12351)
@@ -293,6 +297,7 @@ public abstract class CacheXml66DUnitTest extends CacheXmlTestCase {
     assertEquals(createINSA(ALIAS2, 3777), cp.getServers().get(0));
     assertEquals(createINSA(ALIAS1, 3888), cp.getServers().get(1));
     assertEquals(12345, cp.getFreeConnectionTimeout());
+    assertEquals(111, cp.getServerConnectionTimeout());
     assertEquals(12345, cp.getLoadConditioningInterval());
     assertEquals(12345, cp.getSocketBufferSize());
     assertEquals(true, cp.getThreadLocalConnections());
@@ -527,9 +532,9 @@ public abstract class CacheXml66DUnitTest extends CacheXmlTestCase {
     ClientSubscriptionConfig chaqf = server.getClientSubscriptionConfig();
     assertEquals("entry", chaqf.getEvictionPolicy());
     assertEquals(501, chaqf.getCapacity());
-    File curDir = new File(".").getAbsoluteFile();
+    File defaultDiskDir = DefaultDiskDirs.getDefaultDiskDirs()[0].getAbsoluteFile();
     File lockFile =
-        new File(curDir, "DRLK_IF" + GemFireCacheImpl.getDefaultDiskStoreName() + ".lk");
+        new File(defaultDiskDir, "DRLK_IF" + GemFireCacheImpl.getDefaultDiskStoreName() + ".lk");
     assertTrue(lockFile.exists());
   }
 
@@ -569,8 +574,8 @@ public abstract class CacheXml66DUnitTest extends CacheXmlTestCase {
 
     setXmlFile(findFile("ewtest.xml"));
 
-    String regionName_west = "orders/west";
-    String regionName_east = "orders/east";
+    String regionName_west = "orders" + SEPARATOR + "west";
+    String regionName_east = "orders" + SEPARATOR + "east";
 
     Cache cache = getCache();
 
@@ -2091,9 +2096,9 @@ public abstract class CacheXml66DUnitTest extends CacheXmlTestCase {
     Cache c = getCache();
     assertNotNull(c);
 
-    Region cust = c.getRegion(Region.SEPARATOR + "Customer");
+    Region cust = c.getRegion(SEPARATOR + "Customer");
     assertNotNull(cust);
-    Region order = c.getRegion(Region.SEPARATOR + "Order");
+    Region order = c.getRegion(SEPARATOR + "Order");
     assertNotNull(order);
     String coLocatedRegion = order.getAttributes().getPartitionAttributes().getColocatedWith();
     assertEquals("Customer", coLocatedRegion);
@@ -2105,9 +2110,9 @@ public abstract class CacheXml66DUnitTest extends CacheXmlTestCase {
     setXmlFile(findFile("coLocation.xml"));
     Cache c = getCache();
     assertNotNull(c);
-    Region cust = c.getRegion(Region.SEPARATOR + "Customer");
+    Region cust = c.getRegion(SEPARATOR + "Customer");
     assertNotNull(cust);
-    Region order = c.getRegion(Region.SEPARATOR + "Order");
+    Region order = c.getRegion(SEPARATOR + "Order");
     assertNotNull(order);
 
     assertTrue(cust.getAttributes().getPartitionAttributes().getColocatedWith() == null);
@@ -2428,7 +2433,7 @@ public abstract class CacheXml66DUnitTest extends CacheXmlTestCase {
     addIgnoredException("Socket Closed");
     getSystem();
     VM vm0 = Host.getHost(0).getVM(0);
-    final int port = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
+    final int port = getRandomAvailableTCPPort();
     vm0.invoke(new SerializableCallable("Create cache server") {
       @Override
       public Object call() throws IOException {

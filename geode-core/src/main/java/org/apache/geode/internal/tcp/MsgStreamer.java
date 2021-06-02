@@ -27,6 +27,7 @@ import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectIterator;
 
 import org.apache.geode.DataSerializer;
+import org.apache.geode.annotations.VisibleForTesting;
 import org.apache.geode.distributed.internal.DMStats;
 import org.apache.geode.distributed.internal.DistributionMessage;
 import org.apache.geode.internal.Assert;
@@ -35,8 +36,8 @@ import org.apache.geode.internal.HeapDataOutputStream;
 import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.ObjToByteArraySerializer;
 import org.apache.geode.internal.net.BufferPool;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.serialization.StaticSerialization;
-import org.apache.geode.internal.serialization.Version;
 import org.apache.geode.util.internal.GeodeGlossary;
 
 /**
@@ -129,7 +130,8 @@ public class MsgStreamer extends OutputStream
     this.stats = stats;
     this.msg = msg;
     this.cons = cons;
-    this.buffer = bufferPool.acquireDirectSenderBuffer(sendBufferSize);
+    int bufferSize = Math.min(sendBufferSize, Connection.MAX_MSG_SIZE);
+    this.buffer = bufferPool.acquireDirectSenderBuffer(bufferSize);
     this.buffer.clear();
     this.buffer.position(Connection.MSG_HEADER_BYTES);
     this.msgId = MsgIdGenerator.NO_MSG_ID;
@@ -147,7 +149,7 @@ public class MsgStreamer extends OutputStream
       final boolean directReply, final DMStats stats, BufferPool bufferPool) {
     final Connection firstCon = (Connection) cons.get(0);
     // split into different versions if required
-    Version version;
+    KnownVersion version;
     final int numCons = cons.size();
     if (numCons > 1) {
       Connection con;
@@ -155,7 +157,9 @@ public class MsgStreamer extends OutputStream
       int numVersioned = 0;
       for (Object c : cons) {
         con = (Connection) c;
-        if ((version = con.getRemoteVersion()) != null) {
+        version = con.getRemoteVersion();
+        if (version != null
+            && KnownVersion.CURRENT_ORDINAL > version.ordinal()) {
           if (versionToConnMap == null) {
             versionToConnMap = new Object2ObjectOpenHashMap();
           }
@@ -181,15 +185,17 @@ public class MsgStreamer extends OutputStream
         if (numCons > numVersioned) {
           // allocating list of numCons size so that as the result of
           // getSentConnections it may not need to be reallocted later
-          final ArrayList<Object> unversionedCons = new ArrayList<Object>(numCons);
+          final ArrayList<Object> currentVersionConnections = new ArrayList<Object>(numCons);
           for (Object c : cons) {
             con = (Connection) c;
-            if ((version = con.getRemoteVersion()) == null) {
-              unversionedCons.add(con);
+            version = con.getRemoteVersion();
+            if (version == null || version.ordinal() >= KnownVersion.CURRENT_ORDINAL) {
+              currentVersionConnections.add(con);
             }
           }
-          streamers.add(new MsgStreamer(unversionedCons, msg, directReply, stats, sendBufferSize,
-              bufferPool));
+          streamers.add(
+              new MsgStreamer(currentVersionConnections, msg, directReply, stats, sendBufferSize,
+                  bufferPool));
         }
         for (ObjectIterator<Object2ObjectMap.Entry> itr =
             versionToConnMap.object2ObjectEntrySet().fastIterator(); itr.hasNext();) {
@@ -197,7 +203,7 @@ public class MsgStreamer extends OutputStream
           Object ver = entry.getKey();
           Object l = entry.getValue();
           streamers.add(new VersionedMsgStreamer((List<?>) l, msg, directReply, stats,
-              bufferPool, sendBufferSize, (Version) ver));
+              bufferPool, sendBufferSize, (KnownVersion) ver));
         }
         return new MsgStreamerList(streamers);
       }
@@ -304,7 +310,7 @@ public class MsgStreamer extends OutputStream
     if (isOverflowMode()) {
       if (this.overflowBuf == null) {
         this.overflowBuf = new HeapDataOutputStream(
-            this.buffer.capacity() - Connection.MSG_HEADER_BYTES, Version.CURRENT);
+            this.buffer.capacity() - Connection.MSG_HEADER_BYTES, KnownVersion.CURRENT);
       }
       return;
     }
@@ -343,6 +349,11 @@ public class MsgStreamer extends OutputStream
     startSerialization();
     this.buffer.clear();
     this.buffer.position(Connection.MSG_HEADER_BYTES);
+  }
+
+  @VisibleForTesting
+  protected ByteBuffer getBuffer() {
+    return buffer;
   }
 
   @Override
@@ -930,7 +941,7 @@ public class MsgStreamer extends OutputStream
         // we don't even have room to write the length field so just create
         // the overflowBuf
         this.overflowBuf = new HeapDataOutputStream(
-            this.buffer.capacity() - Connection.MSG_HEADER_BYTES, Version.CURRENT);
+            this.buffer.capacity() - Connection.MSG_HEADER_BYTES, KnownVersion.CURRENT);
         this.overflowBuf.writeAsSerializedByteArray(v);
         return;
       }

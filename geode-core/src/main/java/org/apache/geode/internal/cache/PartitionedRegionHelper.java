@@ -14,9 +14,10 @@
  */
 package org.apache.geode.internal.cache;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
+import static org.apache.geode.cache.Region.SEPARATOR_CHAR;
 import static org.apache.geode.internal.cache.LocalRegion.InitializationLevel.ANY_INIT;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -30,7 +31,6 @@ import org.apache.logging.log4j.Logger;
 
 import org.apache.geode.CancelException;
 import org.apache.geode.annotations.Immutable;
-import org.apache.geode.cache.AttributesFactory;
 import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.CacheWriterException;
 import org.apache.geode.cache.DataPolicy;
@@ -43,9 +43,8 @@ import org.apache.geode.cache.FixedPartitionResolver;
 import org.apache.geode.cache.Operation;
 import org.apache.geode.cache.PartitionResolver;
 import org.apache.geode.cache.Region;
-import org.apache.geode.cache.RegionAttributes;
 import org.apache.geode.cache.RegionExistsException;
-import org.apache.geode.cache.Scope;
+import org.apache.geode.cache.RegionShortcut;
 import org.apache.geode.cache.partition.PartitionNotAvailableException;
 import org.apache.geode.cache.util.CacheListenerAdapter;
 import org.apache.geode.cache.util.CacheWriterAdapter;
@@ -210,9 +209,7 @@ public class PartitionedRegionHelper {
         logger.debug("Creating root Partitioned Admin Region {}",
             PartitionedRegionHelper.PR_ROOT_REGION_NAME);
       }
-      AttributesFactory factory = new AttributesFactory();
-      factory.setScope(Scope.DISTRIBUTED_ACK);
-      factory.setDataPolicy(DataPolicy.REPLICATE);
+      InternalRegionFactory factory = cache.createInternalRegionFactory(RegionShortcut.REPLICATE);
       factory.addCacheListener(new FixedPartitionAttributesListener());
       if (Boolean.getBoolean(GeodeGlossary.GEMFIRE_PREFIX + "PRDebug")) {
         factory.addCacheListener(new CacheListenerAdapter() {
@@ -263,7 +260,6 @@ public class PartitionedRegionHelper {
         });
       }
 
-      RegionAttributes ra = factory.create();
       // Create anonymous stats holder for Partitioned Region meta data
       final HasCachePerfStats prMetaStatsHolder = new HasCachePerfStats() {
         @Override
@@ -273,18 +269,16 @@ public class PartitionedRegionHelper {
         }
       };
 
+      factory.setIsUsedForPartitionedRegionAdmin(true);
+      factory.setInternalRegion(true);
+      factory.setCachePerfStatsHolder(prMetaStatsHolder);
+
       try {
-        root = (DistributedRegion) cache.createVMRegion(PR_ROOT_REGION_NAME, ra,
-            new InternalRegionArguments().setIsUsedForPartitionedRegionAdmin(true)
-                .setInternalRegion(true).setCachePerfStatsHolder(prMetaStatsHolder));
+        root = (DistributedRegion) factory.create(PR_ROOT_REGION_NAME);
         root.getDistributionAdvisor().addMembershipListener(new MemberFailureListener(cache));
       } catch (RegionExistsException ignore) {
         // we avoid this before hand, but yet we have to catch it
         root = (DistributedRegion) cache.getRegion(PR_ROOT_REGION_NAME, true);
-      } catch (IOException ieo) {
-        Assert.assertTrue(false, "IOException creating Partitioned Region root: " + ieo);
-      } catch (ClassNotFoundException cne) {
-        Assert.assertTrue(false, "ClassNotFoundExcpetion creating Partitioned Region root: " + cne);
       }
     }
     Assert.assertTrue(root != null,
@@ -582,7 +576,7 @@ public class PartitionedRegionHelper {
         resolveKey = resolver.getRoutingObject(event);
         if (resolveKey == null) {
           throw new IllegalStateException(
-              "The RoutingObject returned by PartitionResolver is null.");
+              "The RoutingObject returned by PartitionResolver is null. Resolver: " + resolver);
         }
       }
       // Finally, calculate the hash.
@@ -710,7 +704,7 @@ public class PartitionedRegionHelper {
     } finally {
       LocalRegion.setThreadInitLevelRequirement(oldLevel);
     }
-    if (region == null || !(region instanceof PartitionedRegion)) {
+    if (!(region instanceof PartitionedRegion)) {
       return null;
     }
 
@@ -730,7 +724,7 @@ public class PartitionedRegionHelper {
   }
 
   private static final String BUCKET_FULL_PATH_PREFIX =
-      PR_ROOT_REGION_NAME + Region.SEPARATOR + BUCKET_REGION_PREFIX;
+      PR_ROOT_REGION_NAME + SEPARATOR + BUCKET_REGION_PREFIX;
 
   /**
    * Get the bucket string by parsing the region fullPath
@@ -745,7 +739,7 @@ public class PartitionedRegionHelper {
     int idxStartRoot = bucketFullPath.indexOf(BUCKET_FULL_PATH_PREFIX);
     // parse bucketString
     if (idxStartRoot != -1) {
-      int idxEndRoot = idxStartRoot + PR_ROOT_REGION_NAME.length() + Region.SEPARATOR.length();
+      int idxEndRoot = idxStartRoot + PR_ROOT_REGION_NAME.length() + SEPARATOR.length();
       return bucketFullPath.substring(idxEndRoot);
     }
 
@@ -758,7 +752,7 @@ public class PartitionedRegionHelper {
   public static String getBucketFullPath(String prFullPath, int bucketId) {
     String name = getBucketName(prFullPath, bucketId);
     if (name != null)
-      return Region.SEPARATOR + PR_ROOT_REGION_NAME + Region.SEPARATOR + name;
+      return SEPARATOR + PR_ROOT_REGION_NAME + SEPARATOR + name;
 
     return null;
 
@@ -766,15 +760,15 @@ public class PartitionedRegionHelper {
 
   public static String escapePRPath(String prFullPath) {
     String escaped = prFullPath.replace("_", "__");
-    escaped = escaped.replace(Region.SEPARATOR_CHAR, '_');
+    escaped = escaped.replace(SEPARATOR_CHAR, '_');
     return escaped;
   }
 
 
-  public static final String TWO_SEPARATORS = Region.SEPARATOR + Region.SEPARATOR;
+  public static final String TWO_SEPARATORS = SEPARATOR + SEPARATOR;
 
   public static String unescapePRPath(String escapedPath) {
-    String path = escapedPath.replace('_', Region.SEPARATOR_CHAR);
+    String path = escapedPath.replace('_', SEPARATOR_CHAR);
     path = path.replace(TWO_SEPARATORS, "_");
     return path;
   }
@@ -819,7 +813,7 @@ public class PartitionedRegionHelper {
   public static boolean isSubRegion(String fullPath) {
     boolean isSubRegion = false;
     if (null != fullPath) {
-      int idx = fullPath.indexOf(Region.SEPARATOR, Region.SEPARATOR.length());
+      int idx = fullPath.indexOf(SEPARATOR, SEPARATOR.length());
       if (idx >= 0)
         isSubRegion = true;
     }

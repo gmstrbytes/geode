@@ -46,6 +46,7 @@ import org.apache.geode.cache.InterestResultPolicy;
 import org.apache.geode.cache.Operation;
 import org.apache.geode.cache.RegionDestroyedException;
 import org.apache.geode.cache.client.ServerRefusedConnectionException;
+import org.apache.geode.cache.client.SocketFactory;
 import org.apache.geode.cache.client.internal.ClientUpdater;
 import org.apache.geode.cache.client.internal.Endpoint;
 import org.apache.geode.cache.client.internal.EndpointManager;
@@ -59,6 +60,7 @@ import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.distributed.internal.InternalDistributedSystem.DisconnectListener;
 import org.apache.geode.distributed.internal.ServerLocation;
 import org.apache.geode.distributed.internal.membership.InternalDistributedMember;
+import org.apache.geode.distributed.internal.tcpserver.HostAndPort;
 import org.apache.geode.internal.Assert;
 import org.apache.geode.internal.InternalDataSerializer;
 import org.apache.geode.internal.InternalInstantiator;
@@ -81,10 +83,11 @@ import org.apache.geode.internal.net.SocketCreator;
 import org.apache.geode.internal.offheap.annotations.Released;
 import org.apache.geode.internal.sequencelog.EntryLogger;
 import org.apache.geode.internal.serialization.ByteArrayDataInput;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.statistics.StatisticsTypeFactoryImpl;
 import org.apache.geode.logging.internal.executors.LoggingThread;
 import org.apache.geode.logging.internal.log4j.api.LogService;
+import org.apache.geode.pdx.PdxSerializationException;
 import org.apache.geode.security.AuthenticationFailedException;
 import org.apache.geode.security.AuthenticationRequiredException;
 import org.apache.geode.security.GemFireSecurityException;
@@ -271,10 +274,11 @@ public class CacheClientUpdater extends LoggingThread implements ClientUpdater, 
   public CacheClientUpdater(String name, ServerLocation location, boolean primary,
       DistributedSystem ids, ClientSideHandshake handshake, QueueManager qManager,
       EndpointManager eManager, Endpoint endpoint, int handshakeTimeout,
-      SocketCreator socketCreator) throws AuthenticationRequiredException,
+      SocketCreator socketCreator, SocketFactory socketFactory)
+      throws AuthenticationRequiredException,
       AuthenticationFailedException, ServerRefusedConnectionException {
     this(name, location, primary, ids, handshake, qManager, eManager, endpoint, handshakeTimeout,
-        socketCreator, new StatisticsProvider());
+        socketCreator, new StatisticsProvider(), socketFactory);
   }
 
   /**
@@ -284,7 +288,8 @@ public class CacheClientUpdater extends LoggingThread implements ClientUpdater, 
   public CacheClientUpdater(String name, ServerLocation location, boolean primary,
       DistributedSystem distributedSystem, ClientSideHandshake handshake, QueueManager qManager,
       EndpointManager eManager, Endpoint endpoint, int handshakeTimeout,
-      SocketCreator socketCreator, StatisticsProvider statisticsProvider)
+      SocketCreator socketCreator, StatisticsProvider statisticsProvider,
+      SocketFactory socketFactory)
       throws AuthenticationRequiredException,
       AuthenticationFailedException, ServerRefusedConnectionException {
     super(name);
@@ -315,8 +320,9 @@ public class CacheClientUpdater extends LoggingThread implements ClientUpdater, 
       int socketBufferSize =
           Integer.getInteger("BridgeServer.SOCKET_BUFFER_SIZE", DEFAULT_SOCKET_BUFFER_SIZE);
 
-      mySock = socketCreator.connectForClient(location.getHostName(), location.getPort(),
-          handshakeTimeout, socketBufferSize);
+      mySock = socketCreator.forClient().connect(
+          new HostAndPort(location.getHostName(), location.getPort()),
+          handshakeTimeout, socketBufferSize, socketFactory::createSocket);
       mySock.setTcpNoDelay(true);
       mySock.setSendBufferSize(socketBufferSize);
 
@@ -557,7 +563,7 @@ public class CacheClientUpdater extends LoggingThread implements ClientUpdater, 
    * the server.
    */
   private Message initializeMessage() {
-    Message message = new Message(2, Version.CURRENT);
+    Message message = new Message(2, KnownVersion.CURRENT);
     message.setComms(this.socket, this.in, this.out, this.commBuffer, this.stats);
     return message;
   }
@@ -1786,10 +1792,9 @@ public class CacheClientUpdater extends LoggingThread implements ClientUpdater, 
   private Object deserialize(byte[] serializedBytes) {
     Object deserializedObject = serializedBytes;
     // This is a debugging method so ignore all exceptions like ClassNotFoundException
-    try {
-      ByteArrayDataInput dis = new ByteArrayDataInput(serializedBytes);
+    try (ByteArrayDataInput dis = new ByteArrayDataInput(serializedBytes)) {
       deserializedObject = DataSerializer.readObject(dis);
-    } catch (ClassNotFoundException | IOException ignore) {
+    } catch (ClassNotFoundException | IOException | PdxSerializationException e) {
     }
     return deserializedObject;
   }

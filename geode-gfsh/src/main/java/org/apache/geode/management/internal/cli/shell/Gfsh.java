@@ -49,14 +49,14 @@ import org.apache.geode.internal.GemFireVersion;
 import org.apache.geode.internal.lang.ClassUtils;
 import org.apache.geode.internal.logging.Banner;
 import org.apache.geode.internal.process.signal.AbstractSignalNotificationHandler;
-import org.apache.geode.internal.serialization.Version;
+import org.apache.geode.internal.serialization.KnownVersion;
 import org.apache.geode.internal.util.ArgumentRedactor;
 import org.apache.geode.internal.util.HostName;
 import org.apache.geode.internal.util.SunAPINotFoundException;
 import org.apache.geode.logging.internal.executors.LoggingThread;
 import org.apache.geode.management.cli.CommandProcessingException;
 import org.apache.geode.management.cli.Result;
-import org.apache.geode.management.internal.cli.CliUtil;
+import org.apache.geode.management.internal.cli.CliUtils;
 import org.apache.geode.management.internal.cli.CommandManager;
 import org.apache.geode.management.internal.cli.GfshParser;
 import org.apache.geode.management.internal.cli.LogWrapper;
@@ -194,7 +194,9 @@ public class Gfsh extends JLineShell {
     this.ansiHandler = ANSIHandler.getInstance(this.gfshConfig.isANSISupported());
 
     // 3. log system properties & gfsh environment TODO: change GFSH to use Geode logging
-    this.gfshFileLogger.info(new Banner().getString());
+    @SuppressWarnings("deprecation")
+    final Banner banner = new Banner();
+    this.gfshFileLogger.info(banner.getString());
 
     // 4. Customized History implementation
     this.gfshHistory = new GfshHistory();
@@ -383,7 +385,7 @@ public class Gfsh extends JLineShell {
     }
 
     final int maxLineLength = terminalWidth - 1;
-    final StringBuffer stringBuf = new StringBuffer();
+    final StringBuilder stringBuf = new StringBuilder();
     int index = 0;
     int startOfCurrentLine = 0;
     while (index < string.length()) {
@@ -405,7 +407,7 @@ public class Gfsh extends JLineShell {
 
       // If the line was terminated with a newline character
       if (index != string.length() && string.charAt(index) == '\n') {
-        stringBuf.append(string.substring(startOfCurrentLine, index));
+        stringBuf.append(string, startOfCurrentLine, index);
         stringBuf.append(LINE_SEPARATOR);
         index++;
         startOfCurrentLine = index;
@@ -413,7 +415,7 @@ public class Gfsh extends JLineShell {
         // If the end of the string was reached or the last character just happened to be a space
         // character
       } else if (index == string.length() || string.charAt(index) == ' ') {
-        stringBuf.append(string.substring(startOfCurrentLine, index));
+        stringBuf.append(string, startOfCurrentLine, index);
         if (index != string.length()) {
           stringBuf.append(LINE_SEPARATOR);
           index++;
@@ -424,11 +426,11 @@ public class Gfsh extends JLineShell {
 
         // If no spaces were found then there's no logical way to split the string
         if (spaceCharIndex == -1 || spaceCharIndex < startOfCurrentLine) {
-          stringBuf.append(string.substring(startOfCurrentLine, index)).append(LINE_SEPARATOR);
+          stringBuf.append(string, startOfCurrentLine, index).append(LINE_SEPARATOR);
 
           // Else split the string cleanly between words
         } else {
-          stringBuf.append(string.substring(startOfCurrentLine, spaceCharIndex))
+          stringBuf.append(string, startOfCurrentLine, spaceCharIndex)
               .append(LINE_SEPARATOR);
           index = spaceCharIndex + 1;
         }
@@ -467,7 +469,7 @@ public class Gfsh extends JLineShell {
     env.put(ENV_APP_COLLECTION_LIMIT, String.valueOf(DEFAULT_APP_COLLECTION_LIMIT));
     env.put(ENV_APP_QUERY_RESULTS_DISPLAY_MODE, DEFAULT_APP_QUERY_RESULTS_DISPLAY_MODE);
     env.put(ENV_APP_QUIET_EXECUTION, String.valueOf(DEFAULT_APP_QUIET_EXECUTION));
-    env.put(ENV_APP_RESULT_VIEWER, String.valueOf(DEFAULT_APP_RESULT_VIEWER));
+    env.put(ENV_APP_RESULT_VIEWER, DEFAULT_APP_RESULT_VIEWER);
   }
 
   public AbstractSignalNotificationHandler getSignalHandler() {
@@ -673,13 +675,12 @@ public class Gfsh extends JLineShell {
     if (full) {
       return GemFireVersion.asString();
     } else {
-
       return GemFireVersion.getGemFireVersion();
     }
   }
 
   public String getGeodeSerializationVersion() {
-    return Version.CURRENT.getName();
+    return KnownVersion.CURRENT.getName();
   }
 
   public String getWelcomeMessage() {
@@ -706,7 +707,7 @@ public class Gfsh extends JLineShell {
         if (useExternalViewer(commandResult)) {
           // - Save file and pass to less so that viewer can scroll through
           // results
-          CliUtil.runLessCommandAsExternalViewer(commandResult);
+          CliUtils.runLessCommandAsExternalViewer(commandResult);
         } else {
           if (!isScriptRunning) {
             // Normal Command

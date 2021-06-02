@@ -16,7 +16,7 @@ package org.apache.geode.connectors.jdbc.internal.cli;
 
 import org.apache.geode.annotations.Experimental;
 import org.apache.geode.cache.execute.FunctionContext;
-import org.apache.geode.internal.util.DriverJarUtil;
+import org.apache.geode.internal.util.DriverJarUtils;
 import org.apache.geode.management.cli.CliFunction;
 import org.apache.geode.management.internal.functions.CliFunctionResult;
 
@@ -36,17 +36,17 @@ public class RegisterDriverFunction extends CliFunction<Object[]> {
   public CliFunctionResult executeFunction(FunctionContext<Object[]> context) {
     try {
       String driverClassName = (String) context.getArguments()[0];
-      DriverJarUtil util = getDriverJarUtil();
+      DriverJarUtils util = getDriverJarUtil();
       util.registerDriver(driverClassName);
       return new CliFunctionResult(context.getMemberName(), CliFunctionResult.StatusState.OK,
-          driverClassName + " was succesfully registered.");
+          driverClassName + " was successfully registered.");
     } catch (Exception ex) {
       return new CliFunctionResult(context.getMemberName(), CliFunctionResult.StatusState.ERROR,
           ex.getMessage());
     }
   }
 
-  DriverJarUtil getDriverJarUtil() {
-    return new DriverJarUtil();
+  DriverJarUtils getDriverJarUtil() {
+    return new DriverJarUtils();
   }
 }

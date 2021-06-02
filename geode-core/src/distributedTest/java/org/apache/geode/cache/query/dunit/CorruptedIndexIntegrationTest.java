@@ -15,6 +15,7 @@
 
 package org.apache.geode.cache.query.dunit;
 
+import static org.apache.geode.cache.Region.SEPARATOR;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
@@ -45,7 +46,7 @@ public class CorruptedIndexIntegrationTest extends JUnit4CacheTestCase {
   @Test
   public void putMustSucceedAndIndexInvalidatedWhenAPutCorruptsAnIndex() throws Exception {
 
-    String queryString = "SELECT * FROM /REGION_NAME WHERE ID = 3";
+    String queryString = "SELECT * FROM " + SEPARATOR + "REGION_NAME WHERE ID = 3";
     String regionName = "REGION_NAME";
 
     Cache cache = getCache();
@@ -54,9 +55,9 @@ public class CorruptedIndexIntegrationTest extends JUnit4CacheTestCase {
         cache.createRegionFactory().setDataPolicy(DataPolicy.PARTITION).create(regionName);
 
     QueryService queryService = cache.getQueryService();
-    Index idIndex = queryService.createIndex("idIndex", "ID", "/" + regionName);
+    Index idIndex = queryService.createIndex("idIndex", "ID", SEPARATOR + regionName);
     Index exceptionIndex =
-        queryService.createIndex("exceptionIndex", "throwExceptionMethod", "/" + regionName);
+        queryService.createIndex("exceptionIndex", "throwExceptionMethod", SEPARATOR + regionName);
 
     IntStream.rangeClosed(1, 3).forEach(i -> region.put(i, new Portfolio(i)));
 
@@ -72,7 +73,7 @@ public class CorruptedIndexIntegrationTest extends JUnit4CacheTestCase {
   @Test
   public void indexCreationMustFailIfRegionEntriesAreNotCompatible() throws Exception {
 
-    String queryString = "SELECT * FROM /REGION_NAME WHERE ID = 3";
+    String queryString = "SELECT * FROM " + SEPARATOR + "REGION_NAME WHERE ID = 3";
     String regionName = "REGION_NAME";
 
     Cache cache = getCache();
@@ -84,9 +85,9 @@ public class CorruptedIndexIntegrationTest extends JUnit4CacheTestCase {
 
     IntStream.rangeClosed(1, 3).forEach(i -> region.put(i, new Portfolio(i)));
 
-    Index idIndex = queryService.createIndex("idIndex", "ID", "/" + regionName);
+    Index idIndex = queryService.createIndex("idIndex", "ID", SEPARATOR + regionName);
     try {
-      queryService.createIndex("exceptionIndex", "throwExceptionMethod", "/" + regionName);
+      queryService.createIndex("exceptionIndex", "throwExceptionMethod", SEPARATOR + regionName);
       fail();
     } catch (Exception exception) {
       System.out.println("Exception expected!");
@@ -142,7 +143,7 @@ public class CorruptedIndexIntegrationTest extends JUnit4CacheTestCase {
     region.put(1, p);
 
     QueryService queryService = cache.getQueryService();
-    Index keyIndex1 = queryService.createIndex(INDEX_NAME, "positions[*]", "/portfolio");
+    Index keyIndex1 = queryService.createIndex(INDEX_NAME, "positions[*]", SEPARATOR + "portfolio");
 
     Portfolio p2 = new Portfolio(3, 4);
     HashMap map2 = new HashMap();
@@ -159,7 +160,8 @@ public class CorruptedIndexIntegrationTest extends JUnit4CacheTestCase {
 
     SelectResults results = (SelectResults) queryService
         .newQuery(
-            "select * from /portfolio p where p.positions['AOL'] = 'hello' OR p.positions['IBM'] = 2")
+            "select * from " + SEPARATOR
+                + "portfolio p where p.positions['AOL'] = 'hello' OR p.positions['IBM'] = 2")
         .execute();
     assertEquals("Correct results expected from the query execution ", 2, results.size());
     assertEquals("No index must be used while executing the query ", 0,
@@ -188,7 +190,7 @@ public class CorruptedIndexIntegrationTest extends JUnit4CacheTestCase {
     region.put(1, p);
 
     QueryService queryService = cache.getQueryService();
-    Index keyIndex1 = queryService.createIndex(INDEX_NAME, "positions[*]", "/portfolio");
+    Index keyIndex1 = queryService.createIndex(INDEX_NAME, "positions[*]", SEPARATOR + "portfolio");
 
     Portfolio p2 = new Portfolio(3, 4);
     HashMap map2 = new HashMap();
@@ -214,7 +216,8 @@ public class CorruptedIndexIntegrationTest extends JUnit4CacheTestCase {
 
     SelectResults results = (SelectResults) queryService
         .newQuery(
-            "select * from /portfolio p where p.positions['AOL'] = 'hello' OR p.positions['IBM'] = 2")
+            "select * from " + SEPARATOR
+                + "portfolio p where p.positions['AOL'] = 'hello' OR p.positions['IBM'] = 2")
         .execute();
     assertEquals("Correct results expected from the query execution ", 2, results.size());
     assertEquals("No index must be used while executing the query ", 0,
@@ -252,7 +255,7 @@ public class CorruptedIndexIntegrationTest extends JUnit4CacheTestCase {
 
     QueryService queryService = cache.getQueryService();
     try {
-      queryService.createIndex(INDEX_NAME, "positions[*]", "/portfolio");
+      queryService.createIndex(INDEX_NAME, "positions[*]", SEPARATOR + "portfolio");
       fail();
     } catch (Exception exception) {
       System.out.println("Expected Exception " + exception);
@@ -266,7 +269,8 @@ public class CorruptedIndexIntegrationTest extends JUnit4CacheTestCase {
 
     SelectResults results = (SelectResults) queryService
         .newQuery(
-            "select * from /portfolio p where p.positions['AOL'] = 'hello' OR p.positions['IBM'] = 2")
+            "select * from " + SEPARATOR
+                + "portfolio p where p.positions['AOL'] = 'hello' OR p.positions['IBM'] = 2")
         .execute();
     assertEquals("Current results expected from the query execution ", 2, results.size());
     assertEquals("No index must be used while executing the query ", 0,
@@ -301,7 +305,7 @@ public class CorruptedIndexIntegrationTest extends JUnit4CacheTestCase {
     assertEquals("Put must be successful", 2, region.size());
 
     QueryService queryService = cache.getQueryService();
-    Index keyIndex1 = queryService.createIndex(INDEX_NAME, "positions[*]", "/portfolio");
+    Index keyIndex1 = queryService.createIndex(INDEX_NAME, "positions[*]", SEPARATOR + "portfolio");
     assertEquals("Index must be valid", true, keyIndex1.isValid());
 
     QueryObserverImpl observer = new QueryObserverImpl();
@@ -309,7 +313,8 @@ public class CorruptedIndexIntegrationTest extends JUnit4CacheTestCase {
 
     SelectResults results = (SelectResults) queryService
         .newQuery(
-            "select * from /portfolio p where p.positions['AOL'] = 'hello' OR p.positions['IBM'] = 2")
+            "select * from " + SEPARATOR
+                + "portfolio p where p.positions['AOL'] = 'hello' OR p.positions['IBM'] = 2")
         .execute();
     assertEquals("Current results expected from the query execution ", 2, results.size());
     assertEquals("Index must be used while executing the query ", 2, observer.indexesUsed.size());

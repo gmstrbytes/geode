@@ -125,6 +125,14 @@ public class CompositeOutputStream extends OutputStream implements Iterable<Outp
     }
   }
 
+  @Override
+  public void write(byte[] b, int off, int len) throws IOException {
+    Set<OutputStream> outputStreams = this.streams;
+    for (OutputStream out : outputStreams) {
+      out.write(b, off, len);
+    }
+  }
+
   /**
    * Flushes this output stream and forces any buffered output bytes to be written out to the
    * stream.
@@ -133,7 +141,7 @@ public class CompositeOutputStream extends OutputStream implements Iterable<Outp
    * method of its underlying output stream.
    *
    * @exception IOException if an I/O error occurs.
-   * @see java.io.FilterOutputStream#out
+   * @see OutputStream#flush()
    */
   @Override
   public void flush() throws IOException {
@@ -150,8 +158,7 @@ public class CompositeOutputStream extends OutputStream implements Iterable<Outp
    * method, and then calls the <code>close</code> method of its underlying output stream.
    *
    * @exception IOException if an I/O error occurs.
-   * @see java.io.FilterOutputStream#flush()
-   * @see java.io.FilterOutputStream#out
+   * @see OutputStream#flush()
    */
   @Override
   public void close() throws IOException {
